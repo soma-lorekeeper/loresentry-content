@@ -8,5 +8,5 @@ for search. Publishes content change events to Kafka so downstream services such
 as `loresentry-graph-rag` can stay in sync.
 
 - Stack: Spring Boot
-- Database: MySQL
+- Database: PostgreSQL
 - Deployed to the `prod` namespace of the `lore-sentry-k8s` EKS cluster via Argo CD
