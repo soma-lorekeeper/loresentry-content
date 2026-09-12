@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: content
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8000
+  shutdown: graceful
