@@ -1,6 +1,5 @@
 package com.loresentry.content.media;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,6 +8,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -18,9 +18,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequ
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 @Service
-public class ImageService {
-
-    private static final int MAX_FILE_NAME_LENGTH = 255;
+public class MediaStorageService {
 
     private static final Map<String, String> EXTENSIONS = Map.of(
             "image/png", "png",
@@ -28,28 +26,22 @@ public class ImageService {
             "image/webp", "webp",
             "image/gif", "gif");
 
-    private final ImageRepository repository;
-
     private final S3Client s3Client;
 
     private final S3Presigner presigner;
 
     private final MediaProperties properties;
 
-    public ImageService(ImageRepository repository, S3Client s3Client, S3Presigner presigner, MediaProperties properties) {
-        this.repository = repository;
+    public MediaStorageService(S3Client s3Client, S3Presigner presigner, MediaProperties properties) {
         this.s3Client = s3Client;
         this.presigner = presigner;
         this.properties = properties;
     }
 
-    public UploadTicket createUpload(UUID projectId, String fileName, String contentType, Long sizeBytes) {
+    public UploadTicket createImageUploadTicket(UUID projectId, String contentType, long sizeBytes) {
         String normalizedType = validateContentType(contentType);
         long size = validateSize(sizeBytes);
-        String name = validateFileName(fileName);
-
-        String key = "projects/" + projectId + "/images/" + UUID.randomUUID() + "." + EXTENSIONS.get(normalizedType);
-        ImageRecord image = repository.insertPending(projectId, name, key, normalizedType, size);
+        String key = imageKey(projectId, normalizedType);
 
         PutObjectRequest putObject = PutObjectRequest.builder()
                 .bucket(properties.bucket())
@@ -64,7 +56,6 @@ public class ImageService {
                 .build());
 
         return new UploadTicket(
-                image.id(),
                 key,
                 presigned.url().toString(),
                 presigned.httpRequest().method().name(),
@@ -73,33 +64,30 @@ public class ImageService {
                 publicUrl(key));
     }
 
-    public ImageRecord complete(UUID projectId, UUID imageId) {
-        ImageRecord image = get(projectId, imageId);
-        if (image.status() == ImageStatus.COMMITTED) {
-            return image;
-        }
-
+    public StoredObject verifyUploaded(String key, long expectedSizeBytes) {
         HeadObjectResponse head;
         try {
             head = s3Client.headObject(HeadObjectRequest.builder()
                     .bucket(properties.bucket())
-                    .key(image.s3Key())
+                    .key(key)
                     .build());
         } catch (NoSuchKeyException exception) {
-            throw new ObjectNotUploadedException("object " + image.s3Key() + " has not been uploaded");
+            throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
         }
 
-        if (head.contentLength() == null || head.contentLength() != image.sizeBytes()) {
-            throw new ObjectNotUploadedException("object " + image.s3Key() + " size " + head.contentLength()
-                    + " does not match the declared size " + image.sizeBytes());
+        if (head.contentLength() == null || head.contentLength() != expectedSizeBytes) {
+            throw new ObjectNotUploadedException("object " + key + " size " + head.contentLength()
+                    + " does not match the declared size " + expectedSizeBytes);
         }
 
-        return repository.markCommitted(image);
+        return new StoredObject(key, head.contentType(), head.contentLength());
     }
 
-    public ImageRecord get(UUID projectId, UUID imageId) {
-        return repository.find(projectId, imageId)
-                .orElseThrow(() -> new ImageNotFoundException(projectId, imageId));
+    public void delete(String key) {
+        s3Client.deleteObject(DeleteObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(key)
+                .build());
     }
 
     public String publicUrl(String key) {
@@ -108,6 +96,10 @@ public class ImageService {
             base = base.substring(0, base.length() - 1);
         }
         return base + "/" + key;
+    }
+
+    static String imageKey(UUID projectId, String contentType) {
+        return "projects/" + projectId + "/images/" + UUID.randomUUID() + "." + EXTENSIONS.get(contentType);
     }
 
     private String validateContentType(String contentType) {
@@ -122,8 +114,8 @@ public class ImageService {
         return normalized;
     }
 
-    private long validateSize(Long sizeBytes) {
-        if (sizeBytes == null || sizeBytes <= 0) {
+    private long validateSize(long sizeBytes) {
+        if (sizeBytes <= 0) {
             throw new InvalidUploadRequestException("sizeBytes must be a positive number");
         }
         if (sizeBytes > properties.maxSizeBytes()) {
@@ -131,17 +123,6 @@ public class ImageService {
                     + properties.maxSizeBytes() + " bytes");
         }
         return sizeBytes;
-    }
-
-    private String validateFileName(String fileName) {
-        if (fileName == null || fileName.isBlank()) {
-            throw new InvalidUploadRequestException("fileName is required");
-        }
-        String trimmed = fileName.trim();
-        if (trimmed.length() > MAX_FILE_NAME_LENGTH) {
-            throw new InvalidUploadRequestException("fileName must be at most " + MAX_FILE_NAME_LENGTH + " characters");
-        }
-        return trimmed;
     }
 
     private static Map<String, String> requiredHeaders(PresignedPutObjectRequest presigned) {
@@ -163,9 +144,5 @@ public class ImageService {
             upper = c == '-';
         }
         return out.toString();
-    }
-
-    Duration uploadUrlTtl() {
-        return properties.uploadUrlTtl();
     }
 }
