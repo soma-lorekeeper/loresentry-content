@@ -40,7 +40,6 @@ Boot 4 moved several test annotations. The one this repo uses is
 | --- | --- | --- |
 | `GET` | `/health` | `{"status":"ok"}`. Used by the Kubernetes probes. |
 | `GET` | `/` | `{"service":"content-api"}` |
-
 | `GET` | `/health/db` | Reports whether the PostgreSQL connection works. `503` with the driver error otherwise. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
