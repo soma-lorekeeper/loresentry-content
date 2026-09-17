@@ -18,3 +18,15 @@ spring:
 server:
   port: 8000
   shutdown: graceful
+
+media:
+  bucket: ${MEDIA_BUCKET:}
+  region: ${MEDIA_REGION:ap-northeast-2}
+  public-base-url: ${MEDIA_PUBLIC_BASE_URL:}
+  upload-url-ttl: 5m
+  max-size-bytes: 10485760
+  allowed-content-types:
+    - image/png
+    - image/jpeg
+    - image/webp
+    - image/gif
