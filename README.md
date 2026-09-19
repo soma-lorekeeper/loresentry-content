@@ -45,6 +45,34 @@ Boot 4 moved several test annotations. The one this repo uses is
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`.
 
+## Schema
+
+Flyway runs on startup and applies `src/main/resources/db/migration` to the
+`content` database. `V2` seeds the seven global base folders.
+
+| Table | Purpose |
+| --- | --- |
+| `projects` | Top-level unit of creative material, owned by an authentication user id |
+| `base_folders` | Global folders (worldview, character, location, manuscript, organization, item, event), seeded once |
+| `episode_folders` | Per-project episode folders under the manuscript — the only user-created folder |
+| `document` | The single source of truth for a document: whole Markdown body, `rank`, `revision_no` for conditional saves |
+| `document_properties` | Text properties such as description and alias |
+| `document_relations` | Relation chips; the source data for the graph and timeline |
+| `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE` |
+| `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING` run per project |
+| `refresh_document_drafts` | Per-document refresh work: base version, left and right snapshots, draft revision |
+| `outbox_events` | Real document changes waiting to be published to Kafka |
+
+Rules the database enforces:
+
+- A document with an `episode_id` must be in the manuscript folder, and the
+  episode must belong to the same project.
+- `OPEN`, `APPLIED` and `STALE` drafts must carry both snapshots and the left
+  revision.
+- `rank` columns use the `C` collation so fractional-index strings sort bytewise.
+
+Users are referenced by id only; there are no cross-database foreign keys.
+
 ## Media storage (S3)
 
 User images are meant to go **browser → S3 directly**: this service issues a
@@ -106,8 +134,10 @@ curl localhost:8000/health
 Covers context startup, that virtual threads are actually enabled, the health
 endpoints through `MockMvc`, and `MediaStorageService`: the presigner runs for
 real against static test credentials so the URL shape and signed headers are
-checked, while `HeadObject` and `DeleteObject` are mocked. No AWS or network
-access required.
+checked, while `HeadObject` and `DeleteObject` are mocked. No AWS access
+required. `MigrationTest` applies the Flyway migrations to a `postgres:18`
+container through Testcontainers and checks the seed and key constraints, so
+Docker must be running.
 
 ## Deploy
 
@@ -126,8 +156,7 @@ Deployed to the `prod` namespace of the `lore-sentry-k8s` EKS cluster via Argo C
 
 ## Not implemented yet
 
-- The domain model itself: projects, files, folders, versions, trash. No schema
-  migration tool is wired in yet.
+- Repositories and domain APIs on top of the schema.
 - Image upload endpoints and the table that records uploaded images. The S3
   storage layer is ready; the API and persistence come with the domain work.
 - Kafka change-event publishing.
