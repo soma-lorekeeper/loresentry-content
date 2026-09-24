@@ -133,10 +133,21 @@ class MediaStorageServiceTest {
     }
 
     @Test
-    void verifyUploadedLetsOtherStorageFailuresThrough() {
-        // 권한 문제나 장애를 "업로드되지 않았다"로 바꾸면 클라이언트가 영원히 재시도한다.
+    void verifyUploadedTreatsForbiddenAsMissingToo() {
+        // s3:ListBucket 이 없으면 S3 는 없는 객체를 404 대신 403 으로 감춘다. 운영에서 실제로
+        // 이 코드가 왔고, 앞선 판은 이것을 권한 오류로 단정해 500 을 냈다.
         given(s3Client.headObject(any(HeadObjectRequest.class)))
                 .willThrow(S3Exception.builder().statusCode(403).message("Forbidden").build());
+
+        assertThatExceptionOfType(ObjectNotUploadedException.class)
+                .isThrownBy(() -> service.verifyUploaded("projects/x/images/y.png", 1234L));
+    }
+
+    @Test
+    void verifyUploadedLetsRealStorageFailuresThrough() {
+        // 장애를 "업로드되지 않았다"로 바꾸면 클라이언트가 영원히 재시도한다.
+        given(s3Client.headObject(any(HeadObjectRequest.class)))
+                .willThrow(S3Exception.builder().statusCode(500).message("Internal Error").build());
 
         assertThatExceptionOfType(S3Exception.class)
                 .isThrownBy(() -> service.verifyUploaded("projects/x/images/y.png", 1234L));
