@@ -91,9 +91,9 @@ class ProjectApiTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("유리 정원의 기록"))
                 .andExpect(jsonPath("$.description").value("유리 온실"))
-                .andExpect(jsonPath("$.trashedAt").value(nullValue()))
-                .andExpect(jsonPath("$.lastWorkedAt").exists())
-                .andExpect(jsonPath("$.lastFile").value(nullValue()))
+                .andExpect(jsonPath("$.trashed_at").value(nullValue()))
+                .andExpect(jsonPath("$.last_worked_at").exists())
+                .andExpect(jsonPath("$.last_file").value(nullValue()))
                 .andReturn();
 
         String id = read(result).get("id").stringValue();
@@ -114,17 +114,17 @@ class ProjectApiTest {
     void rejectsABlankOrOverlongName() throws Exception {
         mockMvc.perform(as(body(post("/projects"), "{\"name\":\"   \"}"), owner))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("validation"))
-                .andExpect(jsonPath("$.field").value("name"));
+                .andExpect(jsonPath("$.code").value("INVALID_PROJECT_NAME"))
+                .andExpect(jsonPath("$.next_action").value("NONE"));
 
         mockMvc.perform(as(body(post("/projects"), "{\"description\":\"이름이 없다\"}"), owner))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("validation"));
+                .andExpect(jsonPath("$.code").value("INVALID_PROJECT_NAME"));
 
         mockMvc.perform(as(body(post("/projects"),
                         "{\"name\":\"" + "가".repeat(ProjectService.NAME_MAX + 1) + "\"}"), owner))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.field").value("name"));
+                .andExpect(jsonPath("$.code").value("INVALID_PROJECT_NAME"));
     }
 
     @Test
@@ -140,7 +140,7 @@ class ProjectApiTest {
                         "{\"name\":\"설명이 길다\",\"description\":\""
                                 + "가".repeat(ProjectService.DESCRIPTION_MAX + 1) + "\"}"), owner))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.field").value("description"));
+                .andExpect(jsonPath("$.code").value("INVALID_PROJECT_DESCRIPTION"));
     }
 
     @Test
@@ -149,7 +149,7 @@ class ProjectApiTest {
 
         mockMvc.perform(as(body(post("/projects"), "{\"name\":\"glass garden\"}"), owner))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value("duplicate"));
+                .andExpect(jsonPath("$.code").value("PROJECT_NAME_TAKEN"));
 
         // 다른 사용자에게는 같은 이름이 열려 있다.
         mockMvc.perform(as(body(post("/projects"), "{\"name\":\"Glass Garden\"}"), stranger))
@@ -166,7 +166,7 @@ class ProjectApiTest {
 
         mockMvc.perform(as(post("/projects/" + trashed + "/restore"), owner))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value("duplicate"));
+                .andExpect(jsonPath("$.code").value("PROJECT_NAME_TAKEN"));
     }
 
     @Test
@@ -193,12 +193,12 @@ class ProjectApiTest {
                 .andExpect(jsonPath("$.projects.length()").value(0));
         mockMvc.perform(as(get("/projects/trash"), owner))
                 .andExpect(jsonPath("$.projects.length()").value(1))
-                .andExpect(jsonPath("$.projects[0].trashedAt").exists());
+                .andExpect(jsonPath("$.projects[0].trashed_at").exists());
 
         // 휴지통 프로젝트는 열 수도 고칠 수도 없다.
         mockMvc.perform(as(get("/projects/" + project), owner))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("not_found"));
+                .andExpect(jsonPath("$.code").value("PROJECT_NOT_FOUND"));
         mockMvc.perform(as(body(patch("/projects/" + project), "{\"name\":\"새 이름\"}"), owner))
                 .andExpect(status().isNotFound());
     }
@@ -210,21 +210,21 @@ class ProjectApiTest {
         mockMvc.perform(as(post("/projects/" + project + "/trash"), owner))
                 .andExpect(status().isNoContent());
         MvcResult afterFirst = mockMvc.perform(as(get("/projects/trash"), owner)).andReturn();
-        String trashedAt = read(afterFirst).get("projects").get(0).get("trashedAt").stringValue();
+        String trashedAt = read(afterFirst).get("projects").get(0).get("trashed_at").stringValue();
 
         mockMvc.perform(as(post("/projects/" + project + "/trash"), owner))
                 .andExpect(status().isNoContent());
         MvcResult afterSecond = mockMvc.perform(as(get("/projects/trash"), owner)).andReturn();
         org.assertj.core.api.Assertions
-                .assertThat(read(afterSecond).get("projects").get(0).get("trashedAt").stringValue())
+                .assertThat(read(afterSecond).get("projects").get(0).get("trashed_at").stringValue())
                 .isEqualTo(trashedAt);
 
         mockMvc.perform(as(post("/projects/" + project + "/restore"), owner))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.trashedAt").value(nullValue()));
+                .andExpect(jsonPath("$.trashed_at").value(nullValue()));
         mockMvc.perform(as(post("/projects/" + project + "/restore"), owner))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.trashedAt").value(nullValue()));
+                .andExpect(jsonPath("$.trashed_at").value(nullValue()));
     }
 
     @Test
@@ -246,7 +246,7 @@ class ProjectApiTest {
 
         mockMvc.perform(as(body(patch("/projects/" + project), "{}"), owner))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("validation"));
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
     }
 
     @Test
@@ -255,7 +255,7 @@ class ProjectApiTest {
 
         mockMvc.perform(as(delete("/projects/" + project), owner))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value("invalid_state"));
+                .andExpect(jsonPath("$.code").value("PROJECT_NOT_TRASHED"));
 
         mockMvc.perform(as(post("/projects/" + project + "/trash"), owner))
                 .andExpect(status().isNoContent());
@@ -306,19 +306,57 @@ class ProjectApiTest {
     }
 
     @Test
-    void refusesRequestsWithoutAUsableIdentityHeader() throws Exception {
+    void demandsTheIdentityHeaderTheGatewaySends() throws Exception {
+        // 헤더 이름과 아래 거절 규칙은 authentication 서비스와 같다.
+        org.assertj.core.api.Assertions.assertThat(CurrentUserArgumentResolver.HEADER)
+                .isEqualTo("X-User-Id");
+
         mockMvc.perform(get("/projects"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("unauthenticated"));
+                .andExpect(jsonPath("$.code").value("USER_CONTEXT_REQUIRED"))
+                .andExpect(jsonPath("$.next_action").value("RELOGIN"));
+    }
 
+    @Test
+    void refusesAnIdentityHeaderItCannotTrust() throws Exception {
+        // 신원을 아예 못 읽는 것과 읽었는데 값이 틀린 것은 다르다. 후자는 잘못된 요청이다.
         mockMvc.perform(get("/projects").header(CurrentUserArgumentResolver.HEADER, "not-a-uuid"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        // UUID.fromString이 받아들이는 비정규 표기도 거절한다.
+        mockMvc.perform(get("/projects").header(CurrentUserArgumentResolver.HEADER, "1-2-3-4-5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        // 값이 둘이면 어느 것이 gateway의 것인지 알 수 없다. 고르지 않는다.
+        mockMvc.perform(get("/projects")
+                        .header(CurrentUserArgumentResolver.HEADER, owner.toString())
+                        .header(CurrentUserArgumentResolver.HEADER, stranger.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void rejectsRequestBodiesItDoesNotRecognise() throws Exception {
+        // 알 수 없는 필드를 조용히 버리면 클라이언트의 오타가 "저장됐는데 안 바뀐다"로 나타난다.
+        mockMvc.perform(as(body(post("/projects"), "{\"name\":\"오타\",\"titel\":\"x\"}"), owner))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mockMvc.perform(as(body(post("/projects"), "{\"name\":42}"), owner))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mockMvc.perform(as(body(post("/projects"), "not json"), owner))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
     }
 
     @Test
     void treatsAnUnparsableIdentifierAsNotFound() throws Exception {
         mockMvc.perform(as(get("/projects/not-a-uuid"), owner))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("not_found"));
+                .andExpect(jsonPath("$.code").value("PROJECT_NOT_FOUND"));
     }
 }
