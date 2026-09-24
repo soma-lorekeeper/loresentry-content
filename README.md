@@ -41,14 +41,67 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/health` | `{"status":"ok"}`. Used by the Kubernetes probes. |
 | `GET` | `/` | `{"service":"content-api"}` |
 | `GET` | `/health/db` | Reports whether the PostgreSQL connection works. `503` with the driver error otherwise. |
+| `GET` | `/projects` | Active projects, most recently worked first. |
+| `GET` | `/projects/trash` | Trashed projects, most recently trashed first. |
+| `POST` | `/projects` | Creates a project. `201` with a `Location` header. |
+| `GET` | `/projects/{id}` | One active project. A trashed project is `404` — the requirement says it cannot be opened. |
+| `PATCH` | `/projects/{id}` | Partial update of `name` and `description`. No optimistic locking: last write wins. |
+| `POST` | `/projects/{id}/trash` | Moves to the trash. `204`, and repeating it does not push `trashed_at` forward. |
+| `POST` | `/projects/{id}/restore` | Restores. `409 duplicate` when the name now clashes with an active project. |
+| `DELETE` | `/projects/{id}` | Permanent delete, **only from the trash** — `409 invalid_state` otherwise. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
-and returns the payload nested under `upstream`.
+and returns the payload nested under `upstream`. **The project endpoints are not
+relayed yet**: `api.loresentry.com` has no authentication, so relaying them would
+put an unauthenticated CRUD surface on the public internet. The relay ships with
+the gateway's JWT verification.
+
+## Identity
+
+Every `/projects` request carries the caller's user id.
+
+```
+X-Lore-User-Id: <authentication users.id (UUID)>
+```
+
+This service **trusts the header without verifying it**; verification belongs to
+the gateway alone, or the same logic is copied into four services. When the
+gateway gains authentication it must strip any client-supplied header of this
+name before setting its own — without that line anyone can impersonate any user.
+A missing or malformed header is `401 unauthenticated`.
+
+Everything is scoped to `owner_user_id`. Another owner's project answers `404`,
+not `403`: a `403` confirms the id exists, and the frontend has no error code
+that distinguishes the two.
+
+## Errors
+
+```json
+{ "error": "duplicate", "message": "an active project with this name already exists" }
+```
+
+`error` is the contract; `message` is diagnostic English and is never shown to a
+user. The frontend picks its wording from the code. Validation failures add
+`"field"`.
+
+| Status | `error` |
+| --- | --- |
+| 400 | `validation` |
+| 401 | `unauthenticated` |
+| 404 | `not_found` |
+| 409 | `duplicate`, `invalid_state` |
+| 500 | `internal` |
+
+The full specification, including what was deliberately left out and why, is in
+the `docs` repository (`CONTENT_PROJECT_API.md`).
 
 ## Schema
 
 Flyway runs on startup and applies `src/main/resources/db/migration` to the
-`content` database. `V2` seeds the seven global base folders.
+`content` database. `V2` seeds the seven global base folders. `V3` widens
+`projects.name` to 255 characters, adds the unique index behind the
+duplicate-name rule, and puts `ON DELETE CASCADE` on the three foreign keys
+into `projects` — without it a permanent delete fails on a foreign key.
 
 | Table | Purpose |
 | --- | --- |
@@ -70,6 +123,9 @@ Rules the database enforces:
 - `OPEN`, `APPLIED` and `STALE` drafts must carry both snapshots and the left
   revision.
 - `rank` columns use the `C` collation so fractional-index strings sort bytewise.
+- A project name is unique per owner, case-insensitively, **among active
+  projects only** — a trashed project frees its name, and restoring it is what
+  fails if the name was taken meanwhile.
 
 Users are referenced by id only; there are no cross-database foreign keys.
 
@@ -135,9 +191,17 @@ Covers context startup, that virtual threads are actually enabled, the health
 endpoints through `MockMvc`, and `MediaStorageService`: the presigner runs for
 real against static test credentials so the URL shape and signed headers are
 checked, while `HeadObject` and `DeleteObject` are mocked. No AWS access
-required. `MigrationTest` applies the Flyway migrations to a `postgres:18`
-container through Testcontainers and checks the seed and key constraints, so
-Docker must be running.
+required.
+
+`MigrationTest` and `ProjectApiTest` run against a `postgres:18` container
+through Testcontainers, so **Docker must be running**. `MigrationTest` checks
+the migrations themselves — the seed, the cross-table rules, the unique index
+and the delete cascade. `ProjectApiTest` drives the real HTTP layer down to
+that database and covers the behaviour that is easy to get wrong: trimming and
+the length limits, case-insensitive duplicate names, a trashed name becoming
+free and the restore that then fails, repeated trash and restore leaving the
+same result, permanent delete refused outside the trash, and another owner
+seeing `404` everywhere.
 
 ## Deploy
 
@@ -156,7 +220,9 @@ Deployed to the `prod` namespace of the `lore-sentry-k8s` EKS cluster via Argo C
 
 ## Not implemented yet
 
-- Repositories and domain APIs on top of the schema.
+- Files, folders, documents and everything else on top of the schema. Projects
+  are done; `document`, `episode_folders` and the rest have no code yet.
+- `lastFile` on a project is always `null` until documents exist.
 - Image upload endpoints and the table that records uploaded images. The S3
   storage layer is ready; the API and persistence come with the domain work.
 - Kafka change-event publishing.
