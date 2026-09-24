@@ -11,70 +11,26 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
+import com.loresentry.content.support.ApiTestSupport;
 import com.loresentry.content.web.CurrentUserArgumentResolver;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@Testcontainers
-@SpringBootTest
-@AutoConfigureMockMvc
-class ProjectApiTest {
+class ProjectApiTest extends ApiTestSupport {
 
-    @Container
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18");
 
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.flyway.enabled", () -> true);
-    }
 
-    @Autowired
-    private MockMvc mockMvc;
 
-    @Autowired
-    private JdbcClient jdbcClient;
 
-    private final JsonMapper json = JsonMapper.builder().build();
 
-    private final UUID owner = UUID.randomUUID();
 
-    private final UUID stranger = UUID.randomUUID();
 
-    @BeforeEach
-    void clearProjects() {
-        jdbcClient.sql("delete from projects").update();
-    }
 
-    private static MockHttpServletRequestBuilder as(MockHttpServletRequestBuilder request, UUID user) {
-        return request.header(CurrentUserArgumentResolver.HEADER, user.toString());
-    }
 
-    private MockHttpServletRequestBuilder body(MockHttpServletRequestBuilder request, String payload) {
-        return request.contentType(MediaType.APPLICATION_JSON).content(payload);
-    }
 
-    private JsonNode read(MvcResult result) throws Exception {
-        return json.readTree(result.getResponse().getContentAsString());
-    }
+
 
     private UUID createProject(String name) throws Exception {
         MvcResult result = mockMvc.perform(as(body(post("/projects"),
