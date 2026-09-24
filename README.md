@@ -48,7 +48,22 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PATCH` | `/projects/{id}` | Partial update of `name` and `description`. No optimistic locking: last write wins. |
 | `POST` | `/projects/{id}/trash` | Moves to the trash. `204`, and repeating it does not push `trashed_at` forward. |
 | `POST` | `/projects/{id}/restore` | Restores. `409 duplicate` when the name now clashes with an active project. |
-| `DELETE` | `/projects/{id}` | Permanent delete, **only from the trash** — `409 invalid_state` otherwise. |
+| `DELETE` | `/projects/{id}` | Permanent delete, **only from the trash** — `409 PROJECT_NOT_TRASHED` otherwise. |
+| `GET` | `/projects/{id}/files` | The file tree as three normalised lists: folders, episodes, documents. |
+| `GET` | `/projects/{id}/files/trash` | Trashed documents with the folder and episode they came from. |
+| `POST` | `/projects/{id}/files` | Creates a document, or an episode folder with `"kind":"episode"`. |
+| `PATCH` | `/files/{id}` | Renames a document. |
+| `PATCH` | `/files/{id}/position` | Moves and reorders. Names the sibling to insert before. |
+| `POST` | `/files/{id}/trash` · `/restore` | Trash and restore. |
+| `DELETE` | `/files/{id}` | Permanent delete, only from the trash. |
+| `PATCH DELETE` | `/episodes/{id}` | Renames an episode; deleting one keeps its chapters. |
+| `GET` | `/files/{id}/content` | Title, body, text properties and relation chips. |
+| `PUT` | `/files/{id}/content` | Conditional save. Needs `If-Match`; `X-Save-Id` makes a retry idempotent. |
+| `PUT` | `/files/{id}/lock` | Locks or unlocks editing. |
+| `GET POST` | `/files/{id}/versions` | Lists versions with their snapshots; `POST` names one. |
+| `POST` | `/files/{id}/versions/{vid}/restore` | Restores as a **new** revision. Needs `If-Match`. |
+| `DELETE` | `/files/{id}/versions/{vid}` | Deletes a version. |
+| `GET` | `/projects/{id}/search?q=` | Title and body search inside one project. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -99,14 +114,64 @@ never shown to a user.
 
 | Status | `code` |
 | --- | --- |
-| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION` |
+| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET` |
 | 401 | `USER_CONTEXT_REQUIRED` |
-| 404 | `PROJECT_NOT_FOUND` |
+| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `NOT_FOUND` (no such path) |
 | 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
 | 500 | `INTERNAL_ERROR` |
 
+`DOCUMENT_CONFLICT` is the one error that carries more than those three fields.
+A conditional save that loses the race answers `409` with `current` (the document
+as it now stands) and `base` (the snapshot of the revision the client held, or
+`null` when no version kept it), so the client can attempt a three-way merge
+without a second request that could race again.
+
 The full specification, including what was deliberately left out and why, is in
 the `docs` repository (`CONTENT_PROJECT_API.md`).
+
+## Files, documents and versions
+
+**The tree endpoint returns three normalised lists, not a tree.** Base folders
+are global seed rows and episodes are per-project, so a server-built tree would
+have to invent ids for category folders that exist in no table — and a client
+holding such an id could not use it for anything else. The client composes the
+tree, and owns the presentation metadata (labels, per-type icons) that has no
+column here.
+
+**Ranks are fractional index strings the server computes.** A move names the
+sibling to insert *before*; the server reads the neighbours and picks a value
+between them, so one row is updated and the others are never renumbered. Letting
+the client send the value would let two clients produce the same one. `rank`
+columns use the `C` collation so Java's string comparison and PostgreSQL's
+ordering agree.
+
+**Saves are conditional.** `If-Match` carries the revision the client believes it
+edited, and it is required — an unconditional save silently overwrites whoever
+saved last. `X-Save-Id` is remembered on the row, so a client that never saw the
+response can retry without producing a second identical revision.
+
+**Restoring a version is a new revision, not a rewind.** Rewinding would erase
+the restore from the history, leaving no way to explain what changed when. The
+state being replaced is kept as a `RESTORE` version first, so there is somewhere
+to go back to. Auto versions are kept at most every 5 minutes and expire after
+30 days; a named version has no expiry.
+
+**Relations are checked against the project.** The foreign key only proves the
+target document exists, so it would happily accept a document from another
+project. Self-references are refused too — they make a self-loop in the graph and
+mean nothing on the timeline.
+
+## Search
+
+Title and body, inside one project, active documents only. Ranking is in SQL:
+exact title, then partial title, then body, most recently updated first within
+each group. The server cuts the snippet the UI highlights; returning whole bodies
+would put every matched document into one list response.
+
+No full-text index. A project holds hundreds of documents, and the requirement is
+substring matching. `tsvector` needs a stemmer, and for Korean that choice
+changes the results enough that it belongs with the work on search quality
+itself.
 
 ## Schema
 
@@ -235,9 +300,16 @@ Deployed to the `prod` namespace of the `lore-sentry-k8s` EKS cluster via Argo C
 
 ## Not implemented yet
 
-- Files, folders, documents and everything else on top of the schema. Projects
-  are done; `document`, `episode_folders` and the rest have no code yet.
-- `lastFile` on a project is always `null` until documents exist.
+- `last_file` on a project is still always `null`. Documents exist now, so this
+  is a query away, but the frontend tolerates `null` and nothing else blocks on it.
+- Favorites, memos and workspace state. No tables — deliberately out of the
+  schema proposal's scope, and whether they even belong on the server is an open
+  decision.
+- User-created sections and general folders. The folder model question is still
+  open, so this is not built either.
+- Export to PDF, DOCX and HWP.
+- Everything that needs graph-rag or Kafka: the relation graph, the AI graph
+  refresh, and publishing `outbox_events`.
 - Image upload endpoints and the table that records uploaded images. The S3
   storage layer is ready; the API and persistence come with the domain work.
 - Kafka change-event publishing.

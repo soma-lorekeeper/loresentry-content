@@ -23,6 +23,8 @@ public class ContentFailure extends RuntimeException {
         FILE_NOT_TRASHED,
         INVALID_FILE_LOCATION,
         DOCUMENT_LOCKED,
+        INVALID_RELATION_TARGET,
+        VERSION_NOT_FOUND,
         INTERNAL_ERROR
     }
 

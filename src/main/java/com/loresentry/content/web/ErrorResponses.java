@@ -36,6 +36,8 @@ public final class ErrorResponses {
             case FILE_NOT_TRASHED -> new Contract(409, "File must be in the trash first.", "NONE");
             case INVALID_FILE_LOCATION -> new Contract(400, "That location cannot hold this file.", "NONE");
             case DOCUMENT_LOCKED -> new Contract(409, "Document is locked for editing.", "NONE");
+            case INVALID_RELATION_TARGET -> new Contract(400, "Relation target is not usable.", "NONE");
+            case VERSION_NOT_FOUND -> new Contract(404, "Version was not found.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }
