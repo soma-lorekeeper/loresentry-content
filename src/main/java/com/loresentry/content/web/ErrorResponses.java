@@ -38,6 +38,9 @@ public final class ErrorResponses {
             case DOCUMENT_LOCKED -> new Contract(409, "Document is locked for editing.", "NONE");
             case INVALID_RELATION_TARGET -> new Contract(400, "Relation target is not usable.", "NONE");
             case VERSION_NOT_FOUND -> new Contract(404, "Version was not found.", "NONE");
+            case INVALID_UPLOAD_REQUEST -> new Contract(400, "Upload request is not allowed.", "NONE");
+            case IMAGE_NOT_FOUND -> new Contract(404, "Image was not found.", "NONE");
+            case OBJECT_NOT_UPLOADED -> new Contract(409, "Object was not uploaded as declared.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }

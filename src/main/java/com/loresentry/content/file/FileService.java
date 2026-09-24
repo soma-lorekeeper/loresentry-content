@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
@@ -20,8 +21,11 @@ public class FileService {
 
     private final FileRepository repository;
 
-    public FileService(FileRepository repository) {
+    private final ProjectActivity activity;
+
+    public FileService(FileRepository repository, ProjectActivity activity) {
         this.repository = repository;
+        this.activity = activity;
     }
 
     @Transactional(readOnly = true)
@@ -43,11 +47,13 @@ public class FileService {
         String title = validateTitle(request.title());
         String kind = request.kind() == null ? "" : request.kind();
 
-        return switch (kind) {
+        Object created = switch (kind) {
             case "document" -> FileResponses.Document.from(createDocument(projectId, request, title));
             case "episode" -> createEpisode(ownerUserId, projectId, title);
             default -> throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         };
+        activity.touch(projectId);
+        return created;
     }
 
     private FileRows.Document createDocument(UUID projectId, FileRequests.Create request, String title) {
@@ -74,8 +80,10 @@ public class FileService {
         requireEditable(document);
         String title = validateTitle(request.title());
 
-        return FileResponses.Document.from(
+        FileResponses.Document renamed = FileResponses.Document.from(
                 duplicateAware(() -> repository.renameDocument(fileId, title)));
+        activity.touch(document.projectId());
+        return renamed;
     }
 
     @Transactional
@@ -83,8 +91,10 @@ public class FileService {
         requireEpisode(ownerUserId, episodeId);
         String name = validateTitle(request.title());
 
-        return FileResponses.Episode.from(
+        FileResponses.Episode renamed = FileResponses.Episode.from(
                 duplicateAwareEpisode(() -> repository.renameEpisode(episodeId, name)));
+        activity.touch(repository.projectOfEpisodeOrNull(episodeId));
+        return renamed;
     }
 
     /**
@@ -103,8 +113,10 @@ public class FileService {
         List<String> siblings = repository.siblingRanks(document.projectId(), folderId, episodeId, fileId);
         String rank = rankFor(document.projectId(), folderId, episodeId, request.beforeFileId(), siblings);
 
-        return FileResponses.Document.from(
+        FileResponses.Document moved = FileResponses.Document.from(
                 duplicateAware(() -> repository.moveDocument(fileId, folderId, episodeId, rank)));
+        activity.touch(document.projectId());
+        return moved;
     }
 
     private String rankFor(UUID projectId, short folderId, UUID episodeId, UUID beforeFileId,
@@ -131,6 +143,7 @@ public class FileService {
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         repository.trashDocument(fileId);
+        activity.touch(document.projectId());
     }
 
     @Transactional
@@ -149,8 +162,10 @@ public class FileService {
                 document.projectId(), document.folderId(), episodeId, fileId);
         String rank = Ranks.between(siblings.isEmpty() ? null : siblings.getLast(), null);
 
-        return FileResponses.Document.from(
+        FileResponses.Document restored = FileResponses.Document.from(
                 duplicateAware(() -> repository.restoreDocument(fileId, dropEpisode, rank)));
+        activity.touch(document.projectId());
+        return restored;
     }
 
     @Transactional
@@ -160,13 +175,16 @@ public class FileService {
             throw new ContentFailure(ContentFailure.Reason.FILE_NOT_TRASHED);
         }
         repository.deleteDocument(fileId);
+        activity.touch(document.projectId());
     }
 
     /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). */
     @Transactional
     public void deleteEpisode(UUID ownerUserId, UUID episodeId) {
         requireEpisode(ownerUserId, episodeId);
+        UUID projectId = repository.projectOfEpisodeOrNull(episodeId);
         repository.deleteEpisode(episodeId);
+        activity.touch(projectId);
     }
 
     private void requireProject(UUID ownerUserId, UUID projectId) {

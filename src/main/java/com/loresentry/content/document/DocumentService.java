@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
@@ -26,8 +27,11 @@ public class DocumentService {
 
     private final DocumentRepository repository;
 
-    public DocumentService(DocumentRepository repository) {
+    private final ProjectActivity activity;
+
+    public DocumentService(DocumentRepository repository, ProjectActivity activity) {
         this.repository = repository;
+        this.activity = activity;
     }
 
     /** 휴지통 문서는 목록에만 보이고 열리지 않는다. 그래서 여기도 {@link #requireHeader}를 지난다. */
@@ -74,13 +78,16 @@ public class DocumentService {
 
         DocumentResponses.Content saved = repository.find(ownerUserId, fileId).orElseThrow();
         recordAutoVersion(fileId, saved);
+        // 문서를 쓴 것이 곧 프로젝트를 작업한 것이다. 같은 트랜잭션에서 올린다.
+        activity.touch(header.projectId());
         return saved;
     }
 
     @Transactional
     public DocumentResponses.Content setLocked(UUID ownerUserId, UUID fileId, boolean locked) {
-        requireHeader(ownerUserId, fileId);
+        DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         repository.setLocked(fileId, locked);
+        activity.touch(header.projectId());
         return repository.find(ownerUserId, fileId).orElseThrow();
     }
 
@@ -133,6 +140,7 @@ public class DocumentService {
 
         repository.replaceProperties(fileId, snapshot.properties());
         repository.replaceRelations(fileId, snapshot.relations());
+        activity.touch(header.projectId());
         return repository.find(ownerUserId, fileId).orElseThrow();
     }
 

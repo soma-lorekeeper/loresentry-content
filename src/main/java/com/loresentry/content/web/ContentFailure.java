@@ -25,6 +25,9 @@ public class ContentFailure extends RuntimeException {
         DOCUMENT_LOCKED,
         INVALID_RELATION_TARGET,
         VERSION_NOT_FOUND,
+        INVALID_UPLOAD_REQUEST,
+        IMAGE_NOT_FOUND,
+        OBJECT_NOT_UPLOADED,
         INTERNAL_ERROR
     }
 
