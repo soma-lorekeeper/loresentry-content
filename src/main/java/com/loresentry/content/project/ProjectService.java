@@ -67,7 +67,7 @@ public class ProjectService {
                 ? current.description()
                 : validateDescription(request.description());
 
-        return duplicateAware(() -> repository.update(projectId, name, description));
+        return duplicateAware(() -> repository.update(ownerUserId, projectId, name, description));
     }
 
     /** 이미 휴지통에 있으면 아무것도 하지 않는다. 재시도가 {@code trashed_at}을 밀지 않아야 한다. */
@@ -86,7 +86,7 @@ public class ProjectService {
 
         // 휴지통에 있는 동안 같은 이름으로 새 프로젝트를 만들었을 수 있다. 자동 개명은 하지 않는다 —
         // 사용자가 모르는 사이에 이름이 바뀐다.
-        return duplicateAware(() -> repository.markRestored(projectId));
+        return duplicateAware(() -> repository.markRestored(ownerUserId, projectId));
     }
 
     /** 영구 삭제의 진입점은 휴지통뿐이다(와이어프레임 111–122). 서버도 같은 규칙을 강제한다. */

@@ -169,6 +169,33 @@ class MigrationTest {
     }
 
     @Test
+    void createsTheImageTableWithItsStatusRules() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'img') returning id")
+                    .getFirst();
+
+            statement.execute("insert into image (project_id, s3_key, content_type, size_bytes) "
+                    + "values ('" + project + "', 'k/1.png', 'image/png', 10)");
+
+            // 같은 S3 키로 두 행을 만들면 어느 행이 그 객체의 기록인지 알 수 없다.
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into image (project_id, s3_key, content_type, size_bytes) "
+                            + "values ('" + project + "', 'k/1.png', 'image/png', 10)"))
+                    .hasMessageContaining("uq_image_s3_key");
+
+            // COMMITTED 라고 주장하면서 확인 시각이 없을 수는 없다.
+            assertThatThrownBy(() -> statement.execute(
+                    "update image set status = 'COMMITTED' where s3_key = 'k/1.png'"))
+                    .hasMessageContaining("ck_image_committed_at");
+
+            statement.execute("delete from projects where id = '" + project + "'");
+            assertThat(column(statement, "select count(*)::text from image "
+                    + "where project_id = '" + project + "'")).containsExactly("0");
+        }
+    }
+
+    @Test
     void enforcesTheDocumentAndRefreshRules() throws Exception {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             String project = column(statement,

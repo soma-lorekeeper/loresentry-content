@@ -64,6 +64,9 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `POST` | `/files/{id}/versions/{vid}/restore` | Restores as a **new** revision. Needs `If-Match`. |
 | `DELETE` | `/files/{id}/versions/{vid}` | Deletes a version. |
 | `GET` | `/projects/{id}/search?q=` | Title and body search inside one project. |
+| `POST` | `/projects/{id}/images` | Issues a presigned upload ticket and records the image as `PENDING`. |
+| `POST` | `/projects/{id}/images/{iid}/complete` | Confirms the object against S3 and commits. Idempotent. |
+| `GET` | `/projects/{id}/images/{iid}` | One image. `public_url` only once committed. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -114,9 +117,9 @@ never shown to a user.
 
 | Status | `code` |
 | --- | --- |
-| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET` |
+| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET`, `INVALID_UPLOAD_REQUEST` |
 | 401 | `USER_CONTEXT_REQUIRED` |
-| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `NOT_FOUND` (no such path) |
+| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `NOT_FOUND` (no such path) |
 | 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
 | 500 | `INTERNAL_ERROR` |
 
@@ -176,7 +179,9 @@ itself.
 ## Schema
 
 Flyway runs on startup and applies `src/main/resources/db/migration` to the
-`content` database. `V2` seeds the seven global base folders. `V3` widens
+`content` database. `V2` seeds the seven global base folders. `V4` adds the
+per-location title index, `V5` the save-id column and `V6` the `image` table.
+`V3` widens
 `projects.name` to 255 characters, adds the unique index behind the
 duplicate-name rule, and puts `ON DELETE CASCADE` on the three foreign keys
 into `projects` — without it a permanent delete fails on a foreign key.
@@ -193,6 +198,7 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING` run per project |
 | `refresh_document_drafts` | Per-document refresh work: base version, left and right snapshots, draft revision |
 | `outbox_events` | Real document changes waiting to be published to Kafka |
+| `image` | Uploaded user images. `PENDING` until `HeadObject` confirms the upload |
 
 Rules the database enforces:
 
@@ -298,18 +304,28 @@ rollback is `git revert` of that commit.
 
 Deployed to the `prod` namespace of the `lore-sentry-k8s` EKS cluster via Argo CD.
 
-## Not implemented yet
+## Project activity
 
-- `last_file` on a project is still always `null`. Documents exist now, so this
-  is a query away, but the frontend tolerates `null` and nothing else blocks on it.
+A project's `last_worked_at` moves whenever **anything inside it** changes, not
+only when its own name or description does. Otherwise an hour spent writing a
+manuscript leaves the project below one whose title was renamed, and the list is
+supposed to be in most-recently-worked order.
+
+`last_file` is the most recently updated **active** document. There is no
+separate view-history table: what a user means by having worked on a file is
+having edited it. Trashed documents are excluded — they cannot be opened, so
+offering one as the last file would be a dead link.
+
+## Not implemented yet
 - Favorites, memos and workspace state. No tables — deliberately out of the
   schema proposal's scope, and whether they even belong on the server is an open
   decision.
+- A sweep for images left `PENDING` and their orphaned S3 objects. The rows are
+  indexed for it (`ix_image_pending`); nothing runs yet.
 - User-created sections and general folders. The folder model question is still
   open, so this is not built either.
 - Export to PDF, DOCX and HWP.
 - Everything that needs graph-rag or Kafka: the relation graph, the AI graph
   refresh, and publishing `outbox_events`.
-- Image upload endpoints and the table that records uploaded images. The S3
-  storage layer is ready; the API and persistence come with the domain work.
+
 - Kafka change-event publishing.
