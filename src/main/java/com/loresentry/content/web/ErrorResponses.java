@@ -23,12 +23,19 @@ public final class ErrorResponses {
     public static Contract contract(ContentFailure.Reason reason) {
         return switch (reason) {
             case INVALID_REQUEST -> new Contract(400, "Invalid request.", "NONE");
+            case NOT_FOUND -> new Contract(404, "No such endpoint.", "NONE");
             case INVALID_PROJECT_NAME -> new Contract(400, "Invalid project name.", "NONE");
             case INVALID_PROJECT_DESCRIPTION -> new Contract(400, "Invalid project description.", "NONE");
             case USER_CONTEXT_REQUIRED -> new Contract(401, "User context is required.", "RELOGIN");
             case PROJECT_NOT_FOUND -> new Contract(404, "Project was not found.", "NONE");
             case PROJECT_NAME_TAKEN -> new Contract(409, "Project name is already in use.", "NONE");
             case PROJECT_NOT_TRASHED -> new Contract(409, "Project must be in the trash first.", "NONE");
+            case FILE_NOT_FOUND -> new Contract(404, "File was not found.", "NONE");
+            case INVALID_FILE_TITLE -> new Contract(400, "Invalid file title.", "NONE");
+            case FILE_TITLE_TAKEN -> new Contract(409, "A file with this title is already here.", "NONE");
+            case FILE_NOT_TRASHED -> new Contract(409, "File must be in the trash first.", "NONE");
+            case INVALID_FILE_LOCATION -> new Contract(400, "That location cannot hold this file.", "NONE");
+            case DOCUMENT_LOCKED -> new Contract(409, "Document is locked for editing.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }

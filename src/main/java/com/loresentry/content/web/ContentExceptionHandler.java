@@ -13,6 +13,7 @@ import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class ContentExceptionHandler {
@@ -25,6 +26,15 @@ public class ContentExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleUnparsablePathVariable(
             MethodArgumentTypeMismatchException exception) {
         return ErrorResponses.response(new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND));
+    }
+
+    /**
+     * 핸들러가 없는 경로다. 아래 {@code Exception} 그물이 이것까지 삼키면 오타 난 경로가 500이 되고,
+     * 404마다 스택 트레이스가 남는다.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleUnknownPath(NoResourceFoundException exception) {
+        return ErrorResponses.response(new ContentFailure(ContentFailure.Reason.NOT_FOUND));
     }
 
     @ExceptionHandler(Exception.class)

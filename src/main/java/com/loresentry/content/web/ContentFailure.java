@@ -10,12 +10,19 @@ public class ContentFailure extends RuntimeException {
 
     public enum Reason {
         INVALID_REQUEST,
+        NOT_FOUND,
         INVALID_PROJECT_NAME,
         INVALID_PROJECT_DESCRIPTION,
         USER_CONTEXT_REQUIRED,
         PROJECT_NOT_FOUND,
         PROJECT_NAME_TAKEN,
         PROJECT_NOT_TRASHED,
+        FILE_NOT_FOUND,
+        INVALID_FILE_TITLE,
+        FILE_TITLE_TAKEN,
+        FILE_NOT_TRASHED,
+        INVALID_FILE_LOCATION,
+        DOCUMENT_LOCKED,
         INTERNAL_ERROR
     }
 
