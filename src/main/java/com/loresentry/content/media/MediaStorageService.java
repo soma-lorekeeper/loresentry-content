@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
@@ -73,6 +74,13 @@ public class MediaStorageService {
                     .build());
         } catch (NoSuchKeyException exception) {
             throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
+        } catch (S3Exception exception) {
+            // HeadObject 는 본문 없는 404 를 돌려주므로 SDK 가 NoSuchKeyException 으로 매핑하지
+            // 못하고 평범한 S3Exception 을 던진다. 그래서 위의 catch 만으로는 없는 객체를 잡지 못한다.
+            if (exception.statusCode() == 404) {
+                throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
+            }
+            throw exception;
         }
 
         if (head.contentLength() == null || head.contentLength() != expectedSizeBytes) {

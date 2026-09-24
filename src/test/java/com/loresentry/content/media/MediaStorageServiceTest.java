@@ -25,6 +25,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 class MediaStorageServiceTest {
@@ -118,6 +119,27 @@ class MediaStorageServiceTest {
         verify(s3Client).headObject(request.capture());
         assertThat(request.getValue().bucket()).isEqualTo("test-media-bucket");
         assertThat(request.getValue().key()).isEqualTo("projects/x/images/y.png");
+    }
+
+    @Test
+    void verifyUploadedFailsOnTheNotFoundHeadObjectActuallyReturns() {
+        // HeadObject 는 본문 없는 404 를 돌려주므로 SDK 가 NoSuchKeyException 으로 매핑하지 못한다.
+        // 운영에서 이 경로가 500 으로 새어 나갔다. 실제로 오는 예외로 고정해 둔다.
+        given(s3Client.headObject(any(HeadObjectRequest.class)))
+                .willThrow(S3Exception.builder().statusCode(404).message("Not Found").build());
+
+        assertThatExceptionOfType(ObjectNotUploadedException.class)
+                .isThrownBy(() -> service.verifyUploaded("projects/x/images/y.png", 1234L));
+    }
+
+    @Test
+    void verifyUploadedLetsOtherStorageFailuresThrough() {
+        // 권한 문제나 장애를 "업로드되지 않았다"로 바꾸면 클라이언트가 영원히 재시도한다.
+        given(s3Client.headObject(any(HeadObjectRequest.class)))
+                .willThrow(S3Exception.builder().statusCode(403).message("Forbidden").build());
+
+        assertThatExceptionOfType(S3Exception.class)
+                .isThrownBy(() -> service.verifyUploaded("projects/x/images/y.png", 1234L));
     }
 
     @Test
