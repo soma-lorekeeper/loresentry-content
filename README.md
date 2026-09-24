@@ -227,7 +227,7 @@ left for the feature work that owns projects and files.
 | Method | Does |
 | --- | --- |
 | `createImageUploadTicket(projectId, contentType, sizeBytes)` | Validates type and size, picks the key `projects/{projectId}/images/{uuid}.{ext}`, returns an `UploadTicket` — presigned PUT URL (5 min), the headers the browser must send, expiry, public URL. |
-| `verifyUploaded(key, expectedSizeBytes)` | `HeadObject`; throws `ObjectNotUploadedException` when the object is missing or its size differs. |
+| `verifyUploaded(key, expectedSizeBytes)` | `HeadObject`; throws `ObjectNotUploadedException` when the object is missing or its size differs. A missing object arrives as a bare `S3Exception`, and as `403` rather than `404` unless the caller holds `s3:ListBucket` — both are treated as missing. |
 | `delete(key)` | `DeleteObject`. |
 | `publicUrl(key)` | `media.public-base-url` + key, i.e. the CloudFront URL. |
 

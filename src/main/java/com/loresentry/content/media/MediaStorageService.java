@@ -76,8 +76,13 @@ public class MediaStorageService {
             throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
         } catch (S3Exception exception) {
             // HeadObject 는 본문 없는 404 를 돌려주므로 SDK 가 NoSuchKeyException 으로 매핑하지
-            // 못하고 평범한 S3Exception 을 던진다. 그래서 위의 catch 만으로는 없는 객체를 잡지 못한다.
-            if (exception.statusCode() == 404) {
+            // 못하고 평범한 S3Exception 을 던진다. 위의 catch 만으로는 없는 객체를 잡지 못한다.
+            //
+            // 403 도 같이 본다. 호출자에게 s3:ListBucket 이 없으면 S3 는 "없는 객체"를 404 대신
+            // 403 으로 감춘다 — 버킷에 무엇이 있는지 알려 주지 않기 위해서다. 정책에 ListBucket 을
+            // 넣어 404 를 받게 했지만(docs/aws/iam-content-media-policy.json), 정책이 아직 반영되지
+            // 않은 환경에서도 이 경로가 500 이 되지 않아야 한다.
+            if (exception.statusCode() == 404 || exception.statusCode() == 403) {
                 throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
             }
             throw exception;
