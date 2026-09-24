@@ -58,39 +58,52 @@ the gateway's JWT verification.
 
 ## Identity
 
-Every `/projects` request carries the caller's user id.
+Every `/projects` request carries the caller's user id in the same header
+`loresentry-authentication` reads, with the same rejection rules — the gateway
+has no reason to label identity differently per service.
 
 ```
-X-Lore-User-Id: <authentication users.id (UUID)>
+X-User-Id: <authentication user id (canonical UUID)>
 ```
 
 This service **trusts the header without verifying it**; verification belongs to
 the gateway alone, or the same logic is copied into four services. When the
 gateway gains authentication it must strip any client-supplied header of this
 name before setting its own — without that line anyone can impersonate any user.
-A missing or malformed header is `401 unauthenticated`.
 
-Everything is scoped to `owner_user_id`. Another owner's project answers `404`,
-not `403`: a `403` confirms the id exists, and the frontend has no error code
-that distinguishes the two.
+| Header | Result |
+| --- | --- |
+| Absent | `401 USER_CONTEXT_REQUIRED` — no identity to act on |
+| Not a canonical UUID | `400 INVALID_REQUEST` — identity was readable and wrong |
+| Present more than once | `400 INVALID_REQUEST` — which one is the gateway's is unknowable |
 
-## Errors
+Everything is scoped to `owner_user_id`. Another owner's project answers
+`PROJECT_NOT_FOUND`, not `403`: a `403` confirms the id exists, and the frontend
+has no error code that distinguishes the two.
+
+## JSON and errors
+
+Request and response fields use **snake case**, matching
+`loresentry-authentication`. Unknown fields and wrongly typed values are
+rejected rather than dropped, so a client typo fails loudly instead of looking
+like a save that changed nothing.
+
+Errors carry `code`, `message` and `next_action` — the same three fields the
+authentication service returns, because both answer the same frontend through
+the same gateway. `code` is the contract; `message` is diagnostic English and is
+never shown to a user.
 
 ```json
-{ "error": "duplicate", "message": "an active project with this name already exists" }
+{ "code": "PROJECT_NAME_TAKEN", "message": "Project name is already in use.", "next_action": "NONE" }
 ```
 
-`error` is the contract; `message` is diagnostic English and is never shown to a
-user. The frontend picks its wording from the code. Validation failures add
-`"field"`.
-
-| Status | `error` |
+| Status | `code` |
 | --- | --- |
-| 400 | `validation` |
-| 401 | `unauthenticated` |
-| 404 | `not_found` |
-| 409 | `duplicate`, `invalid_state` |
-| 500 | `internal` |
+| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION` |
+| 401 | `USER_CONTEXT_REQUIRED` |
+| 404 | `PROJECT_NOT_FOUND` |
+| 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
+| 500 | `INTERNAL_ERROR` |
 
 The full specification, including what was deliberately left out and why, is in
 the `docs` repository (`CONTENT_PROJECT_API.md`).
@@ -201,7 +214,9 @@ that database and covers the behaviour that is easy to get wrong: trimming and
 the length limits, case-insensitive duplicate names, a trashed name becoming
 free and the restore that then fails, repeated trash and restore leaving the
 same result, permanent delete refused outside the trash, and another owner
-seeing `404` everywhere.
+seeing `PROJECT_NOT_FOUND` everywhere. It also pins the identity header name and
+its three rejection cases, so a drift away from the authentication service fails
+the build.
 
 ## Deploy
 

@@ -3,7 +3,7 @@ package com.loresentry.content.project;
 import java.util.List;
 import java.util.UUID;
 
-import com.loresentry.content.web.ApiException;
+import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -54,7 +54,7 @@ public class ProjectService {
     @Transactional
     public Project update(UUID ownerUserId, UUID projectId, UpdateProjectRequest request) {
         if (request.name() == null && request.description() == null) {
-            throw ApiException.validation("name or description must be provided", null);
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
 
         Project current = require(ownerUserId, projectId);
@@ -94,7 +94,7 @@ public class ProjectService {
     public void deletePermanently(UUID ownerUserId, UUID projectId) {
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
-            throw ApiException.invalidState("project must be in the trash before it can be deleted");
+            throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_TRASHED);
         }
         repository.delete(projectId);
     }
@@ -104,11 +104,11 @@ public class ProjectService {
     }
 
     /**
-     * 남의 프로젝트도 404다. 403은 "그 id는 존재한다"를 알려주고, 프론트엔드에도 둘을 구분할
-     * 오류 코드가 없다.
+     * 남의 프로젝트도 {@code PROJECT_NOT_FOUND}다. 403은 "그 id는 존재한다"를 알려주고,
+     * 프론트엔드에도 둘을 구분할 오류 코드가 없다.
      */
-    private static ApiException notFound() {
-        return ApiException.notFound("project not found");
+    private static ContentFailure notFound() {
+        return new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
     }
 
     /**
@@ -119,20 +119,24 @@ public class ProjectService {
         try {
             return write.get();
         } catch (DuplicateKeyException exception) {
-            throw ApiException.duplicate("an active project with this name already exists");
+            throw new ContentFailure(ContentFailure.Reason.PROJECT_NAME_TAKEN);
         }
+    }
+
+    private static ContentFailure invalidName() {
+        return new ContentFailure(ContentFailure.Reason.INVALID_PROJECT_NAME);
     }
 
     private static String validateName(String raw) {
         if (raw == null) {
-            throw ApiException.validation("name is required", "name");
+            throw invalidName();
         }
         String name = raw.trim();
         if (name.isEmpty()) {
-            throw ApiException.validation("name must not be blank", "name");
+            throw invalidName();
         }
         if (name.length() > NAME_MAX) {
-            throw ApiException.validation("name must be at most " + NAME_MAX + " characters", "name");
+            throw invalidName();
         }
         return name;
     }
@@ -143,8 +147,7 @@ public class ProjectService {
         }
         String description = raw.trim();
         if (description.length() > DESCRIPTION_MAX) {
-            throw ApiException.validation(
-                    "description must be at most " + DESCRIPTION_MAX + " characters", "description");
+            throw new ContentFailure(ContentFailure.Reason.INVALID_PROJECT_DESCRIPTION);
         }
         return description;
     }
