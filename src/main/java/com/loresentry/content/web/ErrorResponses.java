@@ -41,6 +41,8 @@ public final class ErrorResponses {
             case INVALID_UPLOAD_REQUEST -> new Contract(400, "Upload request is not allowed.", "NONE");
             case IMAGE_NOT_FOUND -> new Contract(404, "Image was not found.", "NONE");
             case OBJECT_NOT_UPLOADED -> new Contract(409, "Object was not uploaded as declared.", "NONE");
+            case MEMO_NOT_FOUND -> new Contract(404, "Memo was not found.", "NONE");
+            case INVALID_MEMO -> new Contract(400, "Invalid memo.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }

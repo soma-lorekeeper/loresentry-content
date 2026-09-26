@@ -28,6 +28,8 @@ public class ContentFailure extends RuntimeException {
         INVALID_UPLOAD_REQUEST,
         IMAGE_NOT_FOUND,
         OBJECT_NOT_UPLOADED,
+        MEMO_NOT_FOUND,
+        INVALID_MEMO,
         INTERNAL_ERROR
     }
 
