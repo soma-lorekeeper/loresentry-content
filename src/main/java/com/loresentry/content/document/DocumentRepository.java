@@ -147,6 +147,34 @@ public class DocumentRepository {
         }
     }
 
+    /**
+     * 반대쪽 문서에 역방향 행을 하나 더한다. 이미 있으면 그대로 둔다.
+     *
+     * <p>대상 문서의 {@code revision_no}는 올리지 않는다. 관계는 본문이 아니고, 올리면 그 문서를
+     * 열어 둔 편집기가 저장할 때마다 충돌로 떨어진다.
+     */
+    void addRelation(UUID documentId, String relationKey, UUID targetId) {
+        jdbcClient
+                .sql("""
+                        insert into document_relations
+                            (document_id, relation_key, target_document_id, position)
+                        select :id, :key, :target,
+                               coalesce((select max(position) from document_relations
+                                         where document_id = :id), 0) + 10
+                        on conflict (document_id, relation_key, target_document_id) do nothing
+                        """)
+                .param("id", documentId).param("key", relationKey).param("target", targetId)
+                .update();
+    }
+
+    void removeRelation(UUID documentId, String relationKey, UUID targetId) {
+        jdbcClient
+                .sql("delete from document_relations where document_id = :id"
+                        + " and relation_key = :key and target_document_id = :target")
+                .param("id", documentId).param("key", relationKey).param("target", targetId)
+                .update();
+    }
+
     /** 관계 대상은 같은 프로젝트의 활성 문서여야 한다. 외래 키는 존재만 보장하고 프로젝트는 보지 않는다. */
     boolean isUsableRelationTarget(UUID projectId, UUID targetId) {
         return jdbcClient
