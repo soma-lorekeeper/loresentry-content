@@ -2,7 +2,9 @@ package com.loresentry.content.document;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.project.ProjectActivity;
@@ -74,7 +76,9 @@ public class DocumentService {
         }
 
         repository.replaceProperties(fileId, snapshot.properties());
+        List<DocumentSnapshot.Relation> hadRelations = repository.relations(fileId);
         repository.replaceRelations(fileId, snapshot.relations());
+        mirrorRelations(header, hadRelations, snapshot.relations());
 
         DocumentResponses.Content saved = repository.find(ownerUserId, fileId).orElseThrow();
         recordAutoVersion(fileId, saved);
@@ -139,7 +143,9 @@ public class DocumentService {
         }
 
         repository.replaceProperties(fileId, snapshot.properties());
+        List<DocumentSnapshot.Relation> hadRelations = repository.relations(fileId);
         repository.replaceRelations(fileId, snapshot.relations());
+        mirrorRelations(header, hadRelations, snapshot.relations());
         activity.touch(header.projectId());
         return repository.find(ownerUserId, fileId).orElseThrow();
     }
@@ -208,5 +214,45 @@ public class DocumentService {
         }
 
         return new DocumentSnapshot(title, body, properties, relations);
+    }
+
+    /**
+     * 관계는 양방향이다. A가 B를 가리키면 B에서도 A가 보여야 한다 — 사용자는 한쪽에서만 이어 놓고
+     * 반대쪽 문서를 열어 그 관계를 찾는다.
+     *
+     * <p>그래서 저장할 때 반대쪽에 역방향 행을 함께 넣고, 지운 관계는 반대쪽에서도 지운다. 역방향
+     * 행의 키는 <b>이 문서의 분류</b>가 정한다({@link RelationKeys}) — B에서 A를 볼 때 A는 A의
+     * 종류로 보이기 때문이다.
+     *
+     * <p>역방향 행은 그 문서의 관계 목록에 그냥 섞인다. 관계가 대칭이므로 "내가 만든 것"과
+     * "상대가 만든 것"을 구분할 필요가 없고, 구분하면 한쪽에서 지울 수 없는 관계가 생긴다.
+     */
+    private void mirrorRelations(DocumentRepository.Header header,
+            List<DocumentSnapshot.Relation> before, List<DocumentSnapshot.Relation> after) {
+        String keyForThis = RelationKeys.pointingAt(header.folderCode());
+        if (keyForThis == null) {
+            return;
+        }
+        Set<UUID> was = targetsOf(before);
+        Set<UUID> now = targetsOf(after);
+
+        for (UUID target : now) {
+            if (!was.contains(target)) {
+                repository.addRelation(target, keyForThis, header.id());
+            }
+        }
+        for (UUID target : was) {
+            if (!now.contains(target)) {
+                repository.removeRelation(target, keyForThis, header.id());
+            }
+        }
+    }
+
+    private static Set<UUID> targetsOf(List<DocumentSnapshot.Relation> relations) {
+        Set<UUID> targets = new LinkedHashSet<>();
+        for (DocumentSnapshot.Relation relation : relations) {
+            targets.add(relation.targetDocumentId());
+        }
+        return targets;
     }
 }

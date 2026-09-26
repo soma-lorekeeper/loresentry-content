@@ -80,6 +80,64 @@ class DocumentApiTest extends ApiTestSupport {
     }
 
     @Test
+    void makesARelationVisibleFromTheOtherSide() throws Exception {
+        // 사용자는 한쪽에서만 이어 놓고 반대쪽 문서를 열어 그 관계를 찾는다.
+        UUID place = createDocument("LOCATION", "충무로역");
+
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body_md":"","properties":[],
+                 "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
+                """.formatted(place)))
+                .andExpect(status().isOk());
+
+        // 장소 쪽에서는 캐릭터를 가리키는 키로 보인다. 키는 가리키는 쪽의 분류가 정한다.
+        mockMvc.perform(as(get("/files/" + place + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(1))
+                .andExpect(jsonPath("$.relations[0].relation_key").value("related_character"))
+                .andExpect(jsonPath("$.relations[0].target_document_id").value(character.toString()))
+                // 관계는 본문이 아니다. 저 문서를 열어 둔 편집기가 충돌로 떨어지면 안 된다.
+                .andExpect(jsonPath("$.revision_no").value(0));
+    }
+
+    @Test
+    void removesTheOtherSideWhenTheRelationGoesAway() throws Exception {
+        UUID place = createDocument("LOCATION", "충무로역");
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body_md":"","properties":[],
+                 "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
+                """.formatted(place)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(saveOf(character, 1, """
+                {"title":"유중혁","body_md":"","properties":[],"relations":[]}
+                """))
+                .andExpect(status().isOk());
+
+        // 한쪽에서 지운 관계가 반대쪽에 남으면 다시 살아난 것처럼 보인다.
+        mockMvc.perform(as(get("/files/" + place + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(0));
+    }
+
+    @Test
+    void letsTheOtherSideDropTheRelationToo() throws Exception {
+        UUID place = createDocument("LOCATION", "충무로역");
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body_md":"","properties":[],
+                 "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
+                """.formatted(place)))
+                .andExpect(status().isOk());
+
+        // 역방향 행은 그 문서의 관계 목록에 그냥 섞인다. 그래서 반대쪽에서도 끊을 수 있다.
+        mockMvc.perform(saveOf(place, 0, """
+                {"title":"충무로역","body_md":"","properties":[],"relations":[]}
+                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(0));
+    }
+
+    @Test
     void demandsAnIfMatchRevision() throws Exception {
         // 조건 없는 저장은 남의 변경을 조용히 덮어쓴다.
         mockMvc.perform(as(body(put("/files/" + character + "/content"),
