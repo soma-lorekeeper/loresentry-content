@@ -196,6 +196,42 @@ class MigrationTest {
     }
 
     @Test
+    void enforcesTheMemoScopeRules() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'memo') returning id")
+                    .getFirst();
+            String document = column(statement,
+                    "insert into document (project_id, folder_id, title, rank) "
+                            + "values ('" + project + "', 2, 'c', 'a0') returning id").getFirst();
+
+            statement.execute("insert into memo (project_id, scope) values ('" + project + "', 'PROJECT')");
+            statement.execute("insert into memo (project_id, scope, document_id) "
+                    + "values ('" + project + "', 'FILE', '" + document + "')");
+
+            // FILE 인데 문서가 없거나 PROJECT 인데 문서가 있으면 목록이 새거나 빠진다.
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into memo (project_id, scope) values ('" + project + "', 'FILE')"))
+                    .hasMessageContaining("ck_memo_document_matches_scope");
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into memo (project_id, scope, document_id) "
+                            + "values ('" + project + "', 'PROJECT', '" + document + "')"))
+                    .hasMessageContaining("ck_memo_document_matches_scope");
+
+            statement.execute("insert into favorite (project_id, document_id) "
+                    + "values ('" + project + "', '" + document + "')");
+            statement.execute("insert into workspace_state (project_id, owner_user_id, layout) "
+                    + "values ('" + project + "', uuidv7(), '{}'::jsonb)");
+
+            statement.execute("delete from projects where id = '" + project + "'");
+            for (String table : new String[] { "memo", "favorite", "workspace_state" }) {
+                assertThat(column(statement, "select count(*)::text from " + table
+                        + " where project_id = '" + project + "'")).containsExactly("0");
+            }
+        }
+    }
+
+    @Test
     void enforcesTheDocumentAndRefreshRules() throws Exception {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             String project = column(statement,
