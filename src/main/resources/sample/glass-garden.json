@@ -1,0 +1,266 @@
+{
+  "name": "유리 정원의 기록",
+  "description": "왕도 북쪽 유리 정원에 번지는 균열을 기록하는 사람들의 이야기. 처음 둘러보기 위한 예시 프로젝트입니다.",
+  "episodes": [
+    {
+      "title": "Episode 1. 유리의 계절",
+      "manuscripts": [
+        {
+          "key": "ch-1",
+          "title": "1화 · 첫 번째 온실",
+          "description": "서윤이 정원 기록단에 들어오는 날",
+          "body": [
+            "서윤이 유리 정원의 문을 처음 넘은 날, 온실마다 맺힌 김이 아침 햇빛을 느리게 흩뜨리고 있었다. 기록단의 막내 자리는 오래 비어 있었다고 했다.",
+            "하린은 인사 대신 두꺼운 기록장 한 권을 건넸다. 첫 장에는 한 줄만 적혀 있었다. ‘빛이 지나간 자리를 적을 것.’"
+          ]
+        },
+        {
+          "key": "ch-2",
+          "title": "2화 · 빛의 순찰",
+          "description": "처음으로 밤 순찰을 도는 서윤",
+          "body": [
+            "밤이 되자 정원은 낮과 전혀 다른 곳이 되었다. 서윤은 등불을 낮게 들고 온실 사이의 좁은 길을 따라 걸었다.",
+            "유리벽마다 희미한 빛의 결이 남아 있었다. 하린은 그것을 ‘낮의 잔향’이라고 불렀고, 서윤은 그 방향을 하나하나 기록장에 옮겨 적었다."
+          ]
+        },
+        {
+          "key": "ch-3",
+          "title": "3화 · 금 간 렌즈",
+          "description": "렌즈에 남은 기억의 흔적을 발견한다",
+          "body": [
+            "순찰 사흘째 밤, 서윤은 북쪽 온실로 이어지는 길목에서 금이 간 렌즈 하나를 주웠다.",
+            "렌즈를 눈에 대자 빛이 제 길을 벗어나 한쪽으로 휘었다. 휘어진 빛은 모두 잠긴 북쪽 문을 가리키고 있었다."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Episode 2. 북쪽 문",
+      "manuscripts": [
+        {
+          "key": "ch-4",
+          "title": "4화 · 잠긴 문",
+          "description": "북쪽 온실의 문이 오래 잠겨 있던 이유",
+          "body": [
+            "하린은 북쪽 문 이야기가 나오자 한동안 말이 없었다. 그 문은 테오가 정원을 떠난 날부터 잠겨 있었다.",
+            "열쇠는 하린의 서랍 깊은 곳에 있었다. 녹이 슬었지만 버리지 못한 열쇠였다."
+          ]
+        },
+        {
+          "key": "ch-5",
+          "title": "5화 · 등대의 침묵",
+          "description": "라벤더 항구의 등대가 꺼진다",
+          "body": [
+            "같은 밤, 라벤더 항구의 유리 등대가 소리 없이 꺼졌다. 북쪽 항로를 밝히던 빛이 사라지자 항구 전체가 숨을 죽였다.",
+            "은빛 항해단의 레나 아르벨은 부두 끝에 서서 꺼진 등대를 올려다보았다. 그는 빛이 꺼진 방향이 아니라, 빛이 향하던 방향을 읽고 있었다."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Episode 3. 균열의 밤",
+      "manuscripts": [
+        {
+          "key": "ch-6",
+          "title": "6화 · 유리 정원",
+          "description": "정원에 모인 사람들의 첫 합의",
+          "body": [
+            "유리 정원에 아침이 들면 밤새 맺힌 이슬이 작은 렌즈처럼 빛을 모았다. 서윤은 가장 먼저 깨어난 빛을 따라 중앙 온실로 걸었다.",
+            "하린은 이미 그곳에 와 있었다. 둘은 말없이 금이 간 창을 올려다보았다. 균열은 어젯밤보다 한 뼘 더 자라 있었다.",
+            "항구에서 올라온 레나가 문간에 섰다. 세 사람은 그날 처음으로 같은 곳을 바라보기로 했다."
+          ]
+        },
+        {
+          "key": "ch-7",
+          "title": "7화 · 균열의 밤",
+          "description": "온실에서 균열이 처음 드러나는 밤",
+          "body": [
+            "정원은 밤이 오면 유리보다 먼저 숨을 죽였다. 달빛이 온실의 지붕을 훑고 지나갈 때마다, 금이 간 창마다 은빛 선이 번졌다. 서윤은 그 선들이 모두 한곳을 가리키고 있다는 사실을 세 번째 순찰에서야 알아차렸다.",
+            "오래 잠겨 있던 북쪽 문 앞에는 발자국이 하나뿐이었다. 안으로 들어간 흔적은 있었지만 돌아 나온 흔적은 없었다. 손잡이에 손을 얹자 차가운 진동이 손목을 타고 올라왔다. 어젯밤 메모에 적어 둔 문장이 떠올랐다. ‘균열은 문이 아니라 기억의 방향이다.’",
+            "서윤은 등불을 바닥에 내려놓고 천천히 문을 밀었다. 어둠 너머에서 익숙한 목소리가 이름을 불렀다. 아주 오래전, 이 정원을 떠난 사람이 마지막으로 불렀던 방식 그대로였다."
+          ]
+        }
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "c-seoyun",
+      "folder_code": "CHARACTER",
+      "title": "서윤",
+      "description": "정원 기록단의 막내 기록관",
+      "body": [
+        "서윤은 정원 기록단에 가장 늦게 들어온 기록관이다. 밤 순찰을 맡으면서 유리에 남은 빛의 방향을 읽기 시작했다.",
+        "말수가 적지만 한 번 적은 문장은 끝까지 지킨다."
+      ]
+    },
+    {
+      "key": "c-lena",
+      "folder_code": "CHARACTER",
+      "title": "레나 아르벨",
+      "description": "타인의 기억이 남긴 방향을 감각으로 읽는 항해사",
+      "body": [
+        "레나는 타인의 기억이 남긴 방향을 감각으로 읽는다. 짙은 안개 속에서도 그는 한 번도 길을 잃지 않았다.",
+        "은빛 항해단은 그를 마지막 항해사라 불렀다. 스스로는 그 호칭을 쓰지 않는다. 기억을 읽는 일은 언제나 대가를 요구하고, 읽은 기억의 일부는 그의 것이 되어 남는다."
+      ]
+    },
+    {
+      "key": "c-harin",
+      "folder_code": "CHARACTER",
+      "title": "하린",
+      "description": "북쪽 온실을 관리하는 정원사",
+      "body": [
+        "하린은 정원에서 가장 오래 일한 정원사다. 북쪽 온실이 잠긴 뒤에도 그 앞의 화단만은 매일 돌본다.",
+        "서윤에게 기록장을 건넨 사람이며, 테오가 떠난 날의 일을 아직 누구에게도 말하지 않았다."
+      ]
+    },
+    {
+      "key": "c-teo",
+      "folder_code": "CHARACTER",
+      "title": "테오",
+      "description": "정원을 떠났다가 돌아온 사람",
+      "body": [
+        "한때 정원 기록단의 기록관이었다. 북쪽 문이 잠기던 날 정원을 떠났고, 그 뒤로 소식이 끊겼다."
+      ]
+    },
+    {
+      "key": "p-garden",
+      "folder_code": "LOCATION",
+      "title": "유리 정원",
+      "description": "왕도 북쪽의 유리 정원",
+      "body": [
+        "수십 채의 유리 온실이 모인 정원. 낮에는 빛을 모으고, 밤에는 모은 빛의 결을 유리벽에 남긴다."
+      ]
+    },
+    {
+      "key": "p-north",
+      "folder_code": "LOCATION",
+      "title": "북쪽 온실",
+      "description": "오래 잠겨 있던 정원의 북쪽 끝",
+      "body": [
+        "정원의 가장 북쪽에 있는 온실. 문이 잠긴 뒤로 안을 본 사람이 없다. 균열은 언제나 이곳을 향해 자란다."
+      ]
+    },
+    {
+      "key": "p-lavender",
+      "folder_code": "LOCATION",
+      "title": "라벤더 항구",
+      "description": "유리 등대가 밤마다 북쪽 항로를 밝히는 항구",
+      "body": [
+        "정원에서 사흘 거리의 항구 도시. 유리 등대의 빛은 정원의 온실과 같은 유리로 만들어졌다고 전해진다."
+      ]
+    },
+    {
+      "key": "o-archive",
+      "folder_code": "ORGANIZATION",
+      "title": "정원 기록단",
+      "description": "정원의 빛과 균열을 기록하는 사람들",
+      "body": [
+        "정원에 남은 빛의 방향을 매일 밤 기록하는 모임. 기록장은 정원이 생긴 날부터 한 권도 빠짐없이 이어져 있다."
+      ]
+    },
+    {
+      "key": "o-fleet",
+      "folder_code": "ORGANIZATION",
+      "title": "은빛 항해단",
+      "description": "안전한 기억 항로를 확보하려는 항해 조직",
+      "body": [
+        "기억이 남긴 방향을 따라 항로를 여는 항해 조직. 라벤더 항구를 거점으로 삼는다."
+      ]
+    },
+    {
+      "key": "i-key",
+      "folder_code": "ITEM",
+      "title": "낡은 열쇠",
+      "description": "북쪽 문을 여는 열쇠",
+      "body": [
+        "녹이 슨 놋쇠 열쇠. 하린이 서랍 깊은 곳에 보관해 왔다."
+      ]
+    },
+    {
+      "key": "i-lens",
+      "folder_code": "ITEM",
+      "title": "금 간 렌즈",
+      "description": "빛의 방향을 비틀어 보여 주는 렌즈",
+      "body": [
+        "들여다보면 빛이 한쪽으로 휘어 보인다. 휘어진 빛은 언제나 같은 곳을 가리킨다."
+      ]
+    },
+    {
+      "key": "e-patrol",
+      "folder_code": "EVENT",
+      "title": "첫 순찰",
+      "description": "서윤의 첫 밤 순찰",
+      "body": [
+        "서윤이 처음으로 혼자 밤 순찰을 돈 날. 이날의 기록에서 처음으로 빛의 방향이 한곳에 모인다."
+      ]
+    },
+    {
+      "key": "e-crack",
+      "folder_code": "EVENT",
+      "title": "균열의 밤",
+      "description": "온실에 처음 균열이 드러난 밤",
+      "body": [
+        "북쪽 온실을 향한 균열이 눈에 보이게 드러난 밤. 잠겨 있던 북쪽 문이 다시 열린다."
+      ]
+    },
+    {
+      "key": "w-law",
+      "folder_code": "WORLDVIEW",
+      "title": "균열의 법칙",
+      "description": "균열은 문이 아니라 기억의 방향이다",
+      "body": [
+        "유리에 생긴 균열은 부서진 자리가 아니라, 누군가의 기억이 향하는 방향을 따라 자란다.",
+        "그래서 균열을 따라가면 그 기억의 주인에게 닿는다."
+      ]
+    }
+  ],
+  "relations": [
+    { "from": "ch-1", "to": "c-seoyun", "description": "기록단에 들어온다" },
+    { "from": "ch-1", "to": "c-harin", "description": "" },
+    { "from": "ch-1", "to": "p-garden", "description": "" },
+    { "from": "ch-1", "to": "o-archive", "description": "" },
+    { "from": "ch-2", "to": "c-seoyun", "description": "" },
+    { "from": "ch-2", "to": "c-harin", "description": "" },
+    { "from": "ch-2", "to": "p-garden", "description": "" },
+    { "from": "ch-2", "to": "e-patrol", "description": "" },
+    { "from": "ch-3", "to": "c-seoyun", "description": "" },
+    { "from": "ch-3", "to": "p-north", "description": "" },
+    { "from": "ch-3", "to": "i-lens", "description": "렌즈를 줍는다" },
+    { "from": "ch-3", "to": "w-law", "description": "" },
+    { "from": "ch-4", "to": "c-harin", "description": "" },
+    { "from": "ch-4", "to": "c-teo", "description": "떠난 날이 처음 언급된다" },
+    { "from": "ch-4", "to": "p-north", "description": "" },
+    { "from": "ch-4", "to": "i-key", "description": "" },
+    { "from": "ch-5", "to": "c-lena", "description": "처음 등장한다" },
+    { "from": "ch-5", "to": "p-lavender", "description": "" },
+    { "from": "ch-5", "to": "o-fleet", "description": "" },
+    { "from": "ch-6", "to": "c-seoyun", "description": "" },
+    { "from": "ch-6", "to": "c-harin", "description": "" },
+    { "from": "ch-6", "to": "c-lena", "description": "정원에 합류한다" },
+    { "from": "ch-6", "to": "p-garden", "description": "" },
+    { "from": "ch-6", "to": "o-archive", "description": "" },
+    { "from": "ch-7", "to": "c-seoyun", "description": "북쪽 문을 연다" },
+    { "from": "ch-7", "to": "c-teo", "description": "문 너머의 목소리" },
+    { "from": "ch-7", "to": "p-north", "description": "" },
+    { "from": "ch-7", "to": "e-crack", "description": "" },
+    { "from": "ch-7", "to": "i-key", "description": "" },
+    { "from": "ch-7", "to": "w-law", "description": "" },
+    { "from": "c-seoyun", "to": "o-archive", "description": "막내 기록관" },
+    { "from": "c-seoyun", "to": "c-harin", "description": "함께 순찰을 도는 선배" },
+    { "from": "c-seoyun", "to": "e-patrol", "description": "" },
+    { "from": "c-lena", "to": "o-fleet", "description": "마지막 항해사" },
+    { "from": "c-lena", "to": "p-lavender", "description": "" },
+    { "from": "c-harin", "to": "p-north", "description": "북쪽 온실을 돌본다" },
+    { "from": "c-harin", "to": "i-key", "description": "열쇠를 맡아 두었다" },
+    { "from": "c-harin", "to": "c-teo", "description": "떠나는 날을 지켜보았다" },
+    { "from": "c-teo", "to": "o-archive", "description": "예전 기록관" },
+    { "from": "i-key", "to": "p-north", "description": "북쪽 문을 연다" },
+    { "from": "i-lens", "to": "w-law", "description": "" },
+    { "from": "e-patrol", "to": "p-garden", "description": "" },
+    { "from": "e-crack", "to": "p-north", "description": "" },
+    { "from": "e-crack", "to": "w-law", "description": "" },
+    { "from": "o-archive", "to": "p-garden", "description": "" },
+    { "from": "o-fleet", "to": "p-lavender", "description": "거점" }
+  ]
+}

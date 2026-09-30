@@ -12,7 +12,7 @@ import java.util.Map;
  *
  * <p>{@code LOCATION}만 코드와 키의 이름이 다르다. 대문자 변환으로 유추하지 않고 표로 둔 이유다.
  */
-final class RelationKeys {
+public final class RelationKeys {
 
     private static final Map<String, String> BY_FOLDER_CODE = Map.of(
             "MANUSCRIPT", "related_manuscript",
@@ -30,7 +30,7 @@ final class RelationKeys {
      * 이 분류의 문서를 가리킬 때 쓰는 키. 모르는 분류면 {@code null}이다 — 키를 짐작해서 만들면
      * 화면이 읽지 못하는 관계가 쌓인다.
      */
-    static String pointingAt(String folderCode) {
+    public static String pointingAt(String folderCode) {
         return folderCode == null ? null : BY_FOLDER_CODE.get(folderCode);
     }
 }
