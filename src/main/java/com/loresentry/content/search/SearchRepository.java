@@ -20,7 +20,7 @@ public class SearchRepository {
      */
     private static final String SEARCH = """
             select d.id, d.title, f.code as folder_code, e.name as episode_name,
-                   d.body_md, d.updated_at,
+                   d.body_text, d.updated_at,
                    case
                      when lower(d.title) = lower(:query) then 0
                      when position(lower(:query) in lower(d.title)) > 0 then 1
@@ -34,7 +34,7 @@ public class SearchRepository {
               and p.owner_user_id = :owner
               and d.trashed_at is null
               and (position(lower(:query) in lower(d.title)) > 0
-                   or position(lower(:query) in lower(d.body_md)) > 0)
+                   or position(lower(:query) in lower(d.body_text)) > 0)
             order by bucket, d.updated_at desc
             limit :limit
             """;
@@ -45,7 +45,7 @@ public class SearchRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    record Row(UUID id, String title, String folderCode, String episodeName, String bodyMd,
+    record Row(UUID id, String title, String folderCode, String episodeName, String bodyText,
             OffsetDateTime updatedAt) {
     }
 
@@ -60,7 +60,7 @@ public class SearchRepository {
                         rows.getString("title"),
                         rows.getString("folder_code"),
                         rows.getString("episode_name"),
-                        rows.getString("body_md"),
+                        rows.getString("body_text"),
                         rows.getObject("updated_at", OffsetDateTime.class)))
                 .list();
     }

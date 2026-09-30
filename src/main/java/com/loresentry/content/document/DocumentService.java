@@ -1,10 +1,12 @@
 package com.loresentry.content.document;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.project.ProjectActivity;
@@ -13,6 +15,8 @@ import com.loresentry.content.web.ContentFailure;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 @Service
 public class DocumentService {
@@ -24,6 +28,11 @@ public class DocumentService {
     static final Duration AUTO_VERSION_RETENTION = Duration.ofDays(30);
 
     static final int BODY_MAX = 1_000_000;
+
+    /** 에디터 스키마의 판. 노드·마크 구성이 바뀌면 올린다. */
+    static final int BODY_SCHEMA_VERSION = 1;
+
+    private final JsonMapper json = JsonMapper.builder().build();
 
     static final int TITLE_MAX = 255;
 
@@ -63,7 +72,8 @@ public class DocumentService {
 
         boolean applied;
         try {
-            applied = repository.updateIfRevisionMatches(fileId, expectedRevision, snapshot, saveId);
+            applied = repository.updateIfRevisionMatches(fileId, expectedRevision, snapshot,
+                    BodyText.extract(snapshot.body().get("doc")), saveId);
         } catch (DuplicateKeyException exception) {
             throw new ContentFailure(ContentFailure.Reason.FILE_TITLE_TAKEN);
         }
@@ -133,7 +143,8 @@ public class DocumentService {
         DocumentSnapshot snapshot = validate(header.projectId(), fileId, version.snapshot());
         boolean applied;
         try {
-            applied = repository.updateIfRevisionMatches(fileId, expectedRevision, snapshot, null);
+            applied = repository.updateIfRevisionMatches(fileId, expectedRevision, snapshot,
+                    BodyText.extract(snapshot.body().get("doc")), null);
         } catch (DuplicateKeyException exception) {
             throw new ContentFailure(ContentFailure.Reason.FILE_TITLE_TAKEN);
         }
@@ -187,10 +198,7 @@ public class DocumentService {
             throw new ContentFailure(ContentFailure.Reason.INVALID_FILE_TITLE);
         }
 
-        String body = incoming.bodyMd() == null ? "" : incoming.bodyMd();
-        if (body.length() > BODY_MAX) {
-            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
-        }
+        JsonNode body = validateBody(incoming.body());
 
         List<DocumentSnapshot.TextProperty> properties =
                 incoming.properties() == null ? List.of() : incoming.properties();
@@ -214,7 +222,67 @@ public class DocumentService {
             }
         }
 
-        return new DocumentSnapshot(title, body, properties, relations);
+        // legacy_body_md 는 요청에서 무시한다. Markdown 을 해석하는 곳은 프론트다.
+        return new DocumentSnapshot(title, body, null, properties, relations);
+    }
+
+    /** 에디터가 만드는 노드·마크만 받는다. 확장을 더하면 이 목록과 {@code schema_version} 을 같이 올린다. */
+    private static final Set<String> NODES = Set.of(
+            "doc", "paragraph", "text", "heading", "bulletList", "orderedList", "listItem",
+            "blockquote", "codeBlock", "horizontalRule", "hardBreak");
+
+    private static final Set<String> MARKS =
+            Set.of("bold", "italic", "underline", "strike", "code", "link");
+
+    /** 직렬화한 본문 JSON 의 한도. 여기서 막지 않으면 한 문서가 저장소와 응답을 다 차지할 수 있다. */
+    private static final int BODY_JSON_BYTES_MAX = 4 * 1024 * 1024;
+
+    /**
+     * 본문 모양을 확인한다.
+     *
+     * <p>모르는 노드·마크를 그대로 저장하면 다른 클라이언트가 열 수 없는 문서가 생긴다. 허용 목록
+     * 밖이면 받지 않는다 — 조용히 지우면 사용자는 글이 사라진 것으로 본다.
+     */
+    private JsonNode validateBody(JsonNode body) {
+        if (body == null || !body.isObject()) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        JsonNode doc = body.get("doc");
+        if (doc == null || !"doc".equals(doc.path("type").asString(""))) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        if (body.path("schema_version").asInt(0) != BODY_SCHEMA_VERSION) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        checkNode(doc);
+        if (json.writeValueAsString(body).getBytes(StandardCharsets.UTF_8).length
+                > BODY_JSON_BYTES_MAX) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        if (BodyText.extract(doc).length() > BODY_MAX) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        return body;
+    }
+
+    private void checkNode(JsonNode node) {
+        if (!NODES.contains(node.path("type").asString(""))) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        JsonNode marks = node.get("marks");
+        if (marks != null && marks.isArray()) {
+            for (JsonNode mark : marks) {
+                if (!MARKS.contains(mark.path("type").asString(""))) {
+                    throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+                }
+            }
+        }
+        JsonNode children = node.get("content");
+        if (children != null && children.isArray()) {
+            for (JsonNode child : children) {
+                checkNode(child);
+            }
+        }
     }
 
     /**

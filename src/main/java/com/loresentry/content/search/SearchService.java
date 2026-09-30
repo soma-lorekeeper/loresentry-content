@@ -40,7 +40,7 @@ public class SearchService {
         return new SearchResponses.Results(
                 repository.search(ownerUserId, projectId, query, LIMIT).stream()
                         .map(row -> new SearchResponses.Hit(row.id(), row.title(), row.folderCode(),
-                                row.episodeName(), snippetOf(row.bodyMd(), query), row.updatedAt()))
+                                row.episodeName(), snippetOf(row.bodyText(), query), row.updatedAt()))
                         .toList());
     }
 

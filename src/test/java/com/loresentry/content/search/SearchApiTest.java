@@ -43,7 +43,13 @@ class SearchApiTest extends ApiTestSupport {
 
         if (bodyMd != null) {
             mockMvc.perform(as(body(put("/files/" + id + "/content"),
-                            json.writeValueAsString(java.util.Map.of("title", title, "body_md", bodyMd))))
+                            json.writeValueAsString(java.util.Map.of("title", title, "body",
+                                    java.util.Map.of("schema_version", 1, "doc",
+                                            java.util.Map.of("type", "doc", "content",
+                                                    java.util.List.of(java.util.Map.of("type", "paragraph",
+                                                            "content", java.util.List.of(
+                                                                    java.util.Map.of("type", "text",
+                                                                            "text", bodyMd))))))))))
                             .header(HttpHeaders.IF_MATCH, "\"0\""))
                     .andExpect(status().isOk());
         }

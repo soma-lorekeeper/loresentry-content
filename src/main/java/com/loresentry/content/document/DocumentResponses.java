@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import tools.jackson.databind.JsonNode;
 
 public final class DocumentResponses {
 
@@ -19,7 +20,8 @@ public final class DocumentResponses {
             String title,
             @JsonProperty("folder_code") String folderCode,
             @JsonProperty("episode_id") UUID episodeId,
-            @JsonProperty("body_md") String bodyMd,
+            JsonNode body,
+            @JsonProperty("legacy_body_md") String legacyBodyMd,
             List<DocumentSnapshot.TextProperty> properties,
             List<DocumentSnapshot.Relation> relations,
             boolean locked,
@@ -28,7 +30,7 @@ public final class DocumentResponses {
             @JsonProperty("updated_at") OffsetDateTime updatedAt) {
 
         public DocumentSnapshot snapshot() {
-            return new DocumentSnapshot(title, bodyMd, properties, relations);
+            return new DocumentSnapshot(title, body, legacyBodyMd, properties, relations);
         }
     }
 

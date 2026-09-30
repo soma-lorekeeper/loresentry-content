@@ -76,7 +76,7 @@ class LastWorkedTest extends ApiTestSupport {
         document(projectId, "김독자");
 
         mockMvc.perform(as(body(put("/files/" + first + "/content"),
-                        "{\"title\":\"유중혁\",\"body_md\":\"고쳤다\"}"))
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"고쳤다\"}]}]}}}"))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
@@ -92,7 +92,7 @@ class LastWorkedTest extends ApiTestSupport {
         UUID renamed = document(projectId, "김독자");
 
         mockMvc.perform(as(body(put("/files/" + written + "/content"),
-                        "{\"title\":\"유중혁\",\"body_md\":\"한 시간 썼다\"}"))
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"한 시간 썼다\"}]}]}}}"))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
@@ -111,7 +111,7 @@ class LastWorkedTest extends ApiTestSupport {
         UUID other = document(projectId, "김독자");
 
         mockMvc.perform(as(body(put("/files/" + written + "/content"),
-                        "{\"title\":\"유중혁\",\"body_md\":\"본문\"}"))
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"본문\"}]}]}}}"))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
@@ -161,7 +161,7 @@ class LastWorkedTest extends ApiTestSupport {
         // 문서를 쓴 것이 곧 프로젝트를 작업한 것이다. 이것이 없으면 원고를 한 시간 써도
         // 이름만 바꾼 다른 프로젝트가 목록 위에 남는다.
         mockMvc.perform(as(body(put("/files/" + document + "/content"),
-                        "{\"title\":\"유중혁\",\"body_md\":\"한 시간 썼다\"}"))
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"한 시간 썼다\"}]}]}}}"))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
