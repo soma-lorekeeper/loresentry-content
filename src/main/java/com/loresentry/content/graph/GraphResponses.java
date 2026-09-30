@@ -27,12 +27,21 @@ public record GraphResponses() {
             String description) {
     }
 
+    /**
+     * 연결 하나. 저장은 양방향 두 행이지만 여기서는 **한 쌍에 하나**만 준다 — 같은 연결을 두 번 주면
+     * 관계도에 링크가 두 개 그려지고 힘이 두 배로 걸린다.
+     *
+     * <p>{@code origin} 은 이 관계를 누가 만들었는지다. 지금은 모두 {@code USER} 다. graph-rag 가
+     * 본문에서 찾아낸 관계를 더할 때 {@code AI} 가 생기며, <b>그때 응답 모양은 바뀌지 않는다</b> —
+     * 화면이 출처를 구분해 표시할 수 있도록 지금부터 자리를 둔다.
+     */
     public record Edge(
             UUID id,
             UUID source,
             UUID target,
             @JsonProperty("relation_key") String relationKey,
-            String description) {
+            String description,
+            String origin) {
     }
 
     /** 회차 목록은 원고 순서다. 타임라인의 행 순서가 여기서 나온다. */
