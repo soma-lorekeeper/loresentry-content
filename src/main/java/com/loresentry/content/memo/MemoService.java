@@ -30,12 +30,10 @@ public class MemoService {
 
         return new MemoDtos.MemoList(switch (normalizeScope(scope)) {
             case "PROJECT" -> repository.listProjectMemos(projectId);
-            case "FILE" -> {
-                if (documentId == null) {
-                    throw new ContentFailure(ContentFailure.Reason.INVALID_MEMO);
-                }
-                yield repository.listFileMemos(projectId, documentId);
-            }
+            // document_id 가 없으면 프로젝트의 파일 메모 전부다. 메모 전용 화면이 그렇게 본다.
+            case "FILE" -> documentId == null
+                    ? repository.listAllFileMemos(projectId)
+                    : repository.listFileMemos(projectId, documentId);
             default -> throw new ContentFailure(ContentFailure.Reason.INVALID_MEMO);
         });
     }

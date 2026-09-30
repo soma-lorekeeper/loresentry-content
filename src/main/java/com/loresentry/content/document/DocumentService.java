@@ -2,9 +2,9 @@ package com.loresentry.content.document;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 
 import com.loresentry.content.project.ProjectActivity;
@@ -83,7 +83,7 @@ public class DocumentService {
         DocumentResponses.Content saved = repository.find(ownerUserId, fileId).orElseThrow();
         recordAutoVersion(fileId, saved);
         // 문서를 쓴 것이 곧 프로젝트를 작업한 것이다. 같은 트랜잭션에서 올린다.
-        activity.touch(header.projectId());
+        activity.recordWorkedFile(header.projectId(), fileId);
         return saved;
     }
 
@@ -146,7 +146,8 @@ public class DocumentService {
         List<DocumentSnapshot.Relation> hadRelations = repository.relations(fileId);
         repository.replaceRelations(fileId, snapshot.relations());
         mirrorRelations(header, hadRelations, snapshot.relations());
-        activity.touch(header.projectId());
+        // 버전 복원도 본문을 바꾼다.
+        activity.recordWorkedFile(header.projectId(), fileId);
         return repository.find(ownerUserId, fileId).orElseThrow();
     }
 
@@ -233,25 +234,32 @@ public class DocumentService {
         if (keyForThis == null) {
             return;
         }
-        Set<UUID> was = targetsOf(before);
-        Set<UUID> now = targetsOf(after);
+        Map<UUID, String> was = describedTargetsOf(before);
+        Map<UUID, String> now = describedTargetsOf(after);
 
-        for (UUID target : now) {
-            if (!was.contains(target)) {
-                repository.addRelation(target, keyForThis, header.id());
-            }
+        // 설명이 바뀌었을 수도 있으므로 남아 있는 관계도 매번 맞춘다.
+        for (Map.Entry<UUID, String> target : now.entrySet()) {
+            repository.mirrorRelation(target.getKey(), keyForThis, header.id(), target.getValue());
         }
-        for (UUID target : was) {
-            if (!now.contains(target)) {
+        for (UUID target : was.keySet()) {
+            if (!now.containsKey(target)) {
                 repository.removeRelation(target, keyForThis, header.id());
             }
         }
     }
 
-    private static Set<UUID> targetsOf(List<DocumentSnapshot.Relation> relations) {
-        Set<UUID> targets = new LinkedHashSet<>();
+    /**
+     * 대상 문서별 설명. 한 문서를 여러 키로 가리키면 설명이 있는 쪽을 남긴다 — 역방향은 키가
+     * 하나뿐이라 그 문서당 한 줄만 만들 수 있다.
+     */
+    private static Map<UUID, String> describedTargetsOf(List<DocumentSnapshot.Relation> relations) {
+        Map<UUID, String> targets = new LinkedHashMap<>();
         for (DocumentSnapshot.Relation relation : relations) {
-            targets.add(relation.targetDocumentId());
+            String description = relation.descriptionOrEmpty();
+            String existing = targets.get(relation.targetDocumentId());
+            if (existing == null || existing.isEmpty()) {
+                targets.put(relation.targetDocumentId(), description);
+            }
         }
         return targets;
     }

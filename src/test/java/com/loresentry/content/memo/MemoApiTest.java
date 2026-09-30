@@ -138,9 +138,19 @@ class MemoApiTest extends ApiTestSupport {
         mockMvc.perform(as(get("/projects/" + project + "/memos?scope=nonsense")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_MEMO"));
+    }
+
+    @Test
+    void listsEveryFileMemoWhenNoDocumentIsNamed() throws Exception {
+        // 메모 전용 화면은 어느 문서의 메모인지와 무관하게 한 목록으로 본다. 문서를 하나씩 물으면
+        // 문서 수만큼 요청이 나가고, 사용자는 그 화면에서 아무것도 보지 못했다.
+        memo("{\"scope\":\"file\",\"document_id\":\"" + document + "\",\"body\":\"문서 메모\"}");
+        memo("{\"scope\":\"project\",\"body\":\"프로젝트 메모\"}");
+
         mockMvc.perform(as(get("/projects/" + project + "/memos?scope=file")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_MEMO"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memos.length()").value(1))
+                .andExpect(jsonPath("$.memos[0].body").value("문서 메모"));
     }
 
     @Test
