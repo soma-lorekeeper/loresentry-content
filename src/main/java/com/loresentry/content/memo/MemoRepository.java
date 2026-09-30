@@ -59,6 +59,19 @@ public class MemoRepository {
                 .list();
     }
 
+    /**
+     * 프로젝트의 파일 메모 전부. 메모 전용 화면은 어느 문서의 메모인지와 무관하게 한 목록으로 본다 —
+     * 문서를 하나씩 골라 물으면 문서 수만큼 요청이 나가고, 어느 문서에도 없는 메모는 찾을 수 없다.
+     */
+    List<MemoDtos.Memo> listAllFileMemos(UUID projectId) {
+        return jdbcClient
+                .sql("select " + COLUMNS + " from memo where project_id = :project"
+                        + " and scope = 'FILE' order by updated_at desc, id desc")
+                .param("project", projectId)
+                .query(MemoRepository::mapRow)
+                .list();
+    }
+
     MemoDtos.Memo insert(UUID projectId, String scope, UUID documentId, String title, String body) {
         return jdbcClient
                 .sql("insert into memo (project_id, scope, document_id, title, body) "

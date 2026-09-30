@@ -78,11 +78,13 @@ public class DocumentRepository {
 
     List<DocumentSnapshot.Relation> relations(UUID fileId) {
         return jdbcClient
-                .sql("select relation_key, target_document_id from document_relations "
+                .sql("select relation_key, target_document_id, description from document_relations "
                         + "where document_id = :id order by position, relation_key")
                 .param("id", fileId)
                 .query((rows, index) -> new DocumentSnapshot.Relation(
-                        rows.getString("relation_key"), rows.getObject("target_document_id", UUID.class)))
+                        rows.getString("relation_key"),
+                        rows.getObject("target_document_id", UUID.class),
+                        rows.getString("description")))
                 .list();
     }
 
@@ -137,11 +139,13 @@ public class DocumentRepository {
             jdbcClient
                     .sql("""
                             insert into document_relations
-                                (document_id, relation_key, target_document_id, position)
-                            values (:id, :key, :target, :position)
+                                (document_id, relation_key, target_document_id, description, position)
+                            values (:id, :key, :target, :description, :position)
                             """)
                     .param("id", fileId).param("key", relation.relationKey())
-                    .param("target", relation.targetDocumentId()).param("position", position)
+                    .param("target", relation.targetDocumentId())
+                    .param("description", relation.descriptionOrEmpty())
+                    .param("position", position)
                     .update();
             position += 10;
         }
@@ -153,17 +157,25 @@ public class DocumentRepository {
      * <p>대상 문서의 {@code revision_no}는 올리지 않는다. 관계는 본문이 아니고, 올리면 그 문서를
      * 열어 둔 편집기가 저장할 때마다 충돌로 떨어진다.
      */
-    void addRelation(UUID documentId, String relationKey, UUID targetId) {
+    /**
+     * 반대쪽 문서에 역방향 행을 맞춘다. 없으면 넣고, 있으면 설명만 따라가게 한다.
+     *
+     * <p>설명은 대상 문서의 것이 아니라 <b>연결</b>의 것이므로 양쪽에서 같아야 한다. 한쪽에서 고친
+     * 설명이 반대쪽에 남아 있으면 같은 관계가 두 가지로 보인다.
+     */
+    void mirrorRelation(UUID documentId, String relationKey, UUID targetId, String description) {
         jdbcClient
                 .sql("""
                         insert into document_relations
-                            (document_id, relation_key, target_document_id, position)
-                        select :id, :key, :target,
+                            (document_id, relation_key, target_document_id, description, position)
+                        select :id, :key, :target, :description,
                                coalesce((select max(position) from document_relations
                                          where document_id = :id), 0) + 10
-                        on conflict (document_id, relation_key, target_document_id) do nothing
+                        on conflict (document_id, relation_key, target_document_id)
+                        do update set description = excluded.description
                         """)
                 .param("id", documentId).param("key", relationKey).param("target", targetId)
+                .param("description", description)
                 .update();
     }
 

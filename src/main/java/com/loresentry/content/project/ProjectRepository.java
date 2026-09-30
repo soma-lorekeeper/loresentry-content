@@ -24,11 +24,14 @@ public class ProjectRepository {
                    p.created_at, p.updated_at,
                    last_file.id as last_file_id, last_file.title as last_file_title
             from projects p
+            -- 저장이 적어 둔 문서를 먼저 본다. 그것이 없거나 휴지통에 들어갔으면 가장 최근에
+            -- 바뀐 활성 문서로 물러선다 — 아직 한 번도 저장하지 않은 프로젝트와, 마지막으로
+            -- 작업한 문서를 버린 경우에도 열 수 있는 파일을 보여 주기 위해서다.
             left join lateral (
                 select d.id, d.title
                 from document d
                 where d.project_id = p.id and d.trashed_at is null
-                order by d.updated_at desc, d.id desc
+                order by (d.id = p.last_file_id) desc, d.updated_at desc, d.id desc
                 limit 1
             ) last_file on true
             """;

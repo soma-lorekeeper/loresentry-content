@@ -84,6 +84,49 @@ class LastWorkedTest extends ApiTestSupport {
     }
 
     @Test
+    void keepsTheSavedDocumentWhenAnotherIsOnlyRenamed() throws Exception {
+        // 사용자가 본 증상이다. 한 문서에 글을 쓴 뒤 다른 문서의 이름만 바꿨는데, 목록의
+        // "마지막으로 작업한 파일"이 그 이름만 바꾼 문서로 바뀌었다.
+        UUID projectId = project("유리 정원의 기록");
+        UUID written = document(projectId, "유중혁");
+        UUID renamed = document(projectId, "김독자");
+
+        mockMvc.perform(as(body(put("/files/" + written + "/content"),
+                        "{\"title\":\"유중혁\",\"body_md\":\"한 시간 썼다\"}"))
+                        .header(HttpHeaders.IF_MATCH, "\"0\""))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(body(patch("/files/" + renamed), "{\"title\":\"김독자 2\"}")))
+                .andExpect(status().isOk());
+
+        // 이름 변경은 프로젝트를 위로 올리지만(작업은 맞다) 마지막으로 작업한 파일은 아니다.
+        assertThat(projectNode(projectId).get("last_file").get("title").stringValue())
+                .isEqualTo("유중혁");
+    }
+
+    @Test
+    void doesNotLetLockingOrMovingClaimTheLastFile() throws Exception {
+        UUID projectId = project("유리 정원의 기록");
+        UUID written = document(projectId, "유중혁");
+        UUID other = document(projectId, "김독자");
+
+        mockMvc.perform(as(body(put("/files/" + written + "/content"),
+                        "{\"title\":\"유중혁\",\"body_md\":\"본문\"}"))
+                        .header(HttpHeaders.IF_MATCH, "\"0\""))
+                .andExpect(status().isOk());
+
+        // 잠긴 문서는 옮길 수 없으므로 옮기기를 먼저 한다.
+        mockMvc.perform(as(body(patch("/files/" + other + "/position"),
+                        "{\"folder_code\":\"CHARACTER\"}")))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(body(put("/files/" + other + "/lock"), "{\"locked\":true}")))
+                .andExpect(status().isOk());
+
+        assertThat(projectNode(projectId).get("last_file").get("title").stringValue())
+                .isEqualTo("유중혁");
+    }
+
+    @Test
     void leavesTrashedDocumentsOutOfTheLastFile() throws Exception {
         UUID projectId = project("유리 정원의 기록");
         document(projectId, "유중혁");

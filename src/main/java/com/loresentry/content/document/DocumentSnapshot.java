@@ -23,8 +23,24 @@ public record DocumentSnapshot(
     public record TextProperty(String key, String value) {
     }
 
+    /**
+     * 관계 한 줄. {@code description}은 이 관계가 무엇인지 적는 칸이다(요구사항 §10) — 대상 문서의
+     * 설명이 아니라 <b>이 연결</b>의 설명이라, 같은 인물이라도 회차마다 다르게 적힐 수 있다.
+     *
+     * <p>{@code null}로 와도 빈 문자열로 저장한다. 설명이 없는 관계와 빈 설명을 구분할 이유가 없고,
+     * 구분하면 화면이 두 경우를 따로 다뤄야 한다.
+     */
     public record Relation(
             @JsonProperty("relation_key") String relationKey,
-            @JsonProperty("target_document_id") UUID targetDocumentId) {
+            @JsonProperty("target_document_id") UUID targetDocumentId,
+            String description) {
+
+        public Relation(String relationKey, UUID targetDocumentId) {
+            this(relationKey, targetDocumentId, "");
+        }
+
+        public String descriptionOrEmpty() {
+            return description == null ? "" : description;
+        }
     }
 }

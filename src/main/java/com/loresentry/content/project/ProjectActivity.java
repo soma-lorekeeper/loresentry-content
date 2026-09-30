@@ -39,4 +39,20 @@ public class ProjectActivity {
                 .param("document", documentId)
                 .update();
     }
+
+    /**
+     * 본문을 저장한 문서를 "마지막으로 작업한 파일"로 적는다.
+     *
+     * <p>이름 변경·이동·잠금·복원·생성은 여기로 오지 않는다. 그런 것까지 세면 한 시간 쓴 원고 대신
+     * 방금 이름만 바꾼 문서가 목록에 올라온다 — 실제로 그렇게 보였다. 사용자가 말하는 작업은
+     * 본문을 쓴 것이다.
+     */
+    public void recordWorkedFile(UUID projectId, UUID documentId) {
+        jdbcClient
+                .sql("update projects set updated_at = now(), last_file_id = :document "
+                        + "where id = :project")
+                .param("document", documentId)
+                .param("project", projectId)
+                .update();
+    }
 }
