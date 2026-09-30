@@ -13,6 +13,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class FileRepository {
 
+    /** 빈 본문. 문단 하나를 가진 문서다(에디터가 빈 문서를 그렇게 만든다). */
+    private static final String EMPTY_BODY =
+            "{\"schema_version\":1,\"doc\":{\"type\":\"doc\","
+                    + "\"content\":[{\"type\":\"paragraph\"}]}}";
+
     /**
      * 문서 조회는 언제나 {@code projects}와 조인해 소유자를 확인한다. 서비스 계층에서 두 번
      * 질의해 비교하면 그 사이에 소유자가 바뀔 수 있고, 무엇보다 한 곳만 빠뜨려도 남의 문서가 보인다.
@@ -163,8 +168,9 @@ public class FileRepository {
     FileRows.Document insertDocument(UUID projectId, short folderId, UUID episodeId, String title, String rank) {
         UUID id = jdbcClient
                 .sql("""
-                        insert into document (project_id, folder_id, episode_id, title, rank)
-                        values (:project, :folder, :episode, :title, :rank)
+                        insert into document
+                            (project_id, folder_id, episode_id, title, rank, body_json)
+                        values (:project, :folder, :episode, :title, :rank, :body::jsonb)
                         returning id
                         """)
                 .param("project", projectId)
@@ -172,6 +178,8 @@ public class FileRepository {
                 .param("episode", episodeId)
                 .param("title", title)
                 .param("rank", rank)
+                // 새 문서는 처음부터 JSON 본문을 갖는다. 비워 두면 변환 전 레거시 행처럼 보인다.
+                .param("body", EMPTY_BODY)
                 .query(UUID.class)
                 .single();
         return requireDocument(id);

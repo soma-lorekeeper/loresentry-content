@@ -57,7 +57,7 @@ class DocumentApiTest extends ApiTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("유중혁"))
                 .andExpect(jsonPath("$.folder_code").value("CHARACTER"))
-                .andExpect(jsonPath("$.body_md").value(""))
+                .andExpect(jsonPath("$.body.doc.content[0].type").value("paragraph"))
                 .andExpect(jsonPath("$.revision_no").value(0))
                 .andExpect(jsonPath("$.properties.length()").value(0))
                 .andExpect(jsonPath("$.relations.length()").value(0));
@@ -68,7 +68,7 @@ class DocumentApiTest extends ApiTestSupport {
         UUID other = createDocument("CHARACTER", "김독자");
 
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"회귀를 반복하는 인물이다.",
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"회귀를 반복하는 인물이다."}]}]}},
                  "properties":[{"key":"description","value":"세 번째 등장인물"}],
                  "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
                 """.formatted(other)))
@@ -85,7 +85,7 @@ class DocumentApiTest extends ApiTestSupport {
         UUID place = createDocument("LOCATION", "충무로역");
 
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"","properties":[],
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
                  "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
                 """.formatted(place)))
                 .andExpect(status().isOk());
@@ -103,13 +103,13 @@ class DocumentApiTest extends ApiTestSupport {
     void removesTheOtherSideWhenTheRelationGoesAway() throws Exception {
         UUID place = createDocument("LOCATION", "충무로역");
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"","properties":[],
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
                  "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
                 """.formatted(place)))
                 .andExpect(status().isOk());
 
         mockMvc.perform(saveOf(character, 1, """
-                {"title":"유중혁","body_md":"","properties":[],"relations":[]}
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],"relations":[]}
                 """))
                 .andExpect(status().isOk());
 
@@ -122,14 +122,14 @@ class DocumentApiTest extends ApiTestSupport {
     void letsTheOtherSideDropTheRelationToo() throws Exception {
         UUID place = createDocument("LOCATION", "충무로역");
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"","properties":[],
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
                  "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
                 """.formatted(place)))
                 .andExpect(status().isOk());
 
         // 역방향 행은 그 문서의 관계 목록에 그냥 섞인다. 그래서 반대쪽에서도 끊을 수 있다.
         mockMvc.perform(saveOf(place, 0, """
-                {"title":"충무로역","body_md":"","properties":[],"relations":[]}
+                {"title":"충무로역","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],"relations":[]}
                 """))
                 .andExpect(status().isOk());
 
@@ -138,15 +138,97 @@ class DocumentApiTest extends ApiTestSupport {
     }
 
     @Test
+    void keepsTextThatLooksLikeMarkdownAsPlainText() throws Exception {
+        // Markdown 으로 저장하던 동안 이런 문단은 다시 열 때 제목·목록·밑줄로 바뀌었다.
+        for (String text : new String[] {"# 해시로 시작하는 문장", "1. 번호처럼 보이는 문장",
+                "++더하기로 감싼 문장++", "*별표로 감싼 문장*"}) {
+            String title = "원고 " + text.hashCode();
+            UUID file = createDocument("MANUSCRIPT", title);
+            mockMvc.perform(saveOf(file, 0, """
+                    {"title":"%s","body":{"schema_version":1,"doc":{"type":"doc","content":[
+                        {"type":"paragraph","content":[{"type":"text","text":"%s"}]}]}},
+                     "properties":[],"relations":[]}
+                    """.formatted(title, text)))
+                    .andExpect(status().isOk());
+
+            mockMvc.perform(as(get("/files/" + file + "/content")))
+                    .andExpect(jsonPath("$.body.doc.content[0].type").value("paragraph"))
+                    .andExpect(jsonPath("$.body.doc.content[0].content[0].text").value(text));
+        }
+    }
+
+    @Test
+    void refusesNodesAndMarksTheEditorDoesNotMake() throws Exception {
+        // 모르는 노드를 저장하면 다른 클라이언트가 열 수 없는 문서가 된다. 조용히 지우지도 않는다.
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[
+                    {"type":"table","content":[]}]}},"properties":[],"relations":[]}
+                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[
+                    {"type":"paragraph","content":[
+                        {"type":"text","marks":[{"type":"highlight"}],"text":"칠"}]}]}},
+                 "properties":[],"relations":[]}
+                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void refusesABodyWithoutADocOrSchemaVersion() throws Exception {
+        mockMvc.perform(saveOf(character, 0,
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1}}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"doc":{"type":"doc","content":[]}}}
+                """))
+                .andExpect(status().isBadRequest());
+        // 옛 모양은 더 이상 받지 않는다. 저장은 body 를 요구한다.
+        mockMvc.perform(saveOf(character, 0,
+                        "{\"title\":\"유중혁\",\"body_md\":\"옛 본문\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void countsCharactersFromTheExtractedTextNotTheMarkup() throws Exception {
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[
+                    {"type":"paragraph","content":[
+                        {"type":"text","marks":[{"type":"bold"}],"text":"가나"},
+                        {"type":"text","text":"다"}]},
+                    {"type":"paragraph","content":[{"type":"text","text":"라"}]}]}},
+                 "properties":[],"relations":[]}
+                """))
+                .andExpect(status().isOk())
+                // 굵게 표시는 글자가 아니고, 문단 사이 줄바꿈은 세지 않는다.
+                .andExpect(jsonPath("$.char_count").value(4));
+    }
+
+    @Test
+    void readsALegacyMarkdownRowAsLegacyBody() throws Exception {
+        // 변환 전 행이 남아 있다. 서버는 Markdown 을 해석하지 않고 그대로 넘기고, 프론트가 바꾼다.
+        jdbcClient.sql("update document set body_json = null, body_md = :md where id = :id")
+                .param("md", "# 옛 본문").param("id", character).update();
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.legacy_body_md").value("# 옛 본문"));
+    }
+
+    @Test
     void demandsAnIfMatchRevision() throws Exception {
         // 조건 없는 저장은 남의 변경을 조용히 덮어쓴다.
         mockMvc.perform(as(body(put("/files/" + character + "/content"),
-                        "{\"title\":\"x\",\"body_md\":\"\"}")))
+                        "{\"title\":\"x\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}}}")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
         mockMvc.perform(as(body(put("/files/" + character + "/content"),
-                        "{\"title\":\"x\",\"body_md\":\"\"}"))
+                        "{\"title\":\"x\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}}}"))
                         .header(HttpHeaders.IF_MATCH, "not-a-number"))
                 .andExpect(status().isBadRequest());
     }
@@ -154,14 +236,14 @@ class DocumentApiTest extends ApiTestSupport {
     @Test
     void answersAConflictWithTheCurrentDocumentAndCommonAncestor() throws Exception {
         mockMvc.perform(saveOf(character, 0,
-                        "{\"title\":\"유중혁\",\"body_md\":\"첫 저장\"}")).andExpect(status().isOk());
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"첫 저장\"}]}]}}}")).andExpect(status().isOk());
 
         // revision 0 을 들고 있던 오래된 탭이 다시 저장한다.
         MvcResult conflict = mockMvc.perform(saveOf(character, 0,
-                        "{\"title\":\"유중혁\",\"body_md\":\"낡은 탭의 저장\"}"))
+                        "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"낡은 탭의 저장\"}]}]}}}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("DOCUMENT_CONFLICT"))
-                .andExpect(jsonPath("$.current.body_md").value("첫 저장"))
+                .andExpect(jsonPath("$.current.body.doc.content[0].content[0].text").value("첫 저장"))
                 .andReturn();
 
         // 첫 저장이 AUTO 버전을 남겼으므로 revision 1 의 스냅샷은 있다. 0 의 것은 없다.
@@ -170,35 +252,35 @@ class DocumentApiTest extends ApiTestSupport {
 
     @Test
     void carriesTheCommonAncestorWhenThatRevisionWasVersioned() throws Exception {
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"1\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1\"}]}]}}}"))
                 .andExpect(status().isOk());
 
         // revision 1 은 AUTO 버전으로 남았다. 그 revision 을 들고 충돌하면 base 가 온다.
-        MvcResult conflict = mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body_md\":\"2\"}"))
+        MvcResult conflict = mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"2\"}]}]}}}"))
                 .andExpect(status().isOk())
                 .andReturn();
         assertThat(read(conflict).get("revision_no").asLong()).isEqualTo(2);
 
-        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body_md\":\"낡은 탭\"}"))
+        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"낡은 탭\"}]}]}}}"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.base.body_md").value("1"));
+                .andExpect(jsonPath("$.base.body.doc.content[0].content[0].text").value("1"));
     }
 
     @Test
     void treatsTheSameSaveIdAsARetry() throws Exception {
         String saveId = UUID.randomUUID().toString();
 
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"한 번\"}")
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"한 번\"}]}]}}}")
                         .header(DocumentController.SAVE_ID_HEADER, saveId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.revision_no").value(1));
 
         // 응답을 받지 못한 클라이언트가 같은 저장을 다시 보낸다. revision 이 또 올라가면 안 된다.
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"한 번\"}")
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"한 번\"}]}]}}}")
                         .header(DocumentController.SAVE_ID_HEADER, saveId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.revision_no").value(1))
-                .andExpect(jsonPath("$.body_md").value("한 번"));
+                .andExpect(jsonPath("$.body.doc.content[0].content[0].text").value("한 번"));
     }
 
     @Test
@@ -213,14 +295,14 @@ class DocumentApiTest extends ApiTestSupport {
 
         // 외래 키는 문서가 존재하는지만 본다. 프로젝트 경계는 여기서 지켜야 한다.
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"",
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},
                  "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
                 """.formatted(foreignId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_RELATION_TARGET"));
 
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"",
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},
                  "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
                 """.formatted(character)))
                 .andExpect(status().isBadRequest())
@@ -233,7 +315,7 @@ class DocumentApiTest extends ApiTestSupport {
         mockMvc.perform(as(post("/files/" + other + "/trash"))).andExpect(status().isNoContent());
 
         mockMvc.perform(saveOf(character, 0, """
-                {"title":"유중혁","body_md":"",
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},
                  "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
                 """.formatted(other)))
                 .andExpect(status().isBadRequest())
@@ -248,26 +330,26 @@ class DocumentApiTest extends ApiTestSupport {
 
         mockMvc.perform(as(get("/files/" + character + "/content"))).andExpect(status().isOk());
 
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"막힌다\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"막힌다\"}]}]}}}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("DOCUMENT_LOCKED"));
 
         mockMvc.perform(as(body(put("/files/" + character + "/lock"), "{\"locked\":false}")))
                 .andExpect(status().isOk());
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"이제 된다\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"이제 된다\"}]}]}}}"))
                 .andExpect(status().isOk());
     }
 
     @Test
     void savesAndListsNamedVersions() throws Exception {
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"1회차\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1회차\"}]}]}}}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(as(body(post("/files/" + character + "/versions"), "{\"label\":\"초고\"}")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kind").value("NAMED"))
                 .andExpect(jsonPath("$.label").value("초고"))
-                .andExpect(jsonPath("$.snapshot.body_md").value("1회차"));
+                .andExpect(jsonPath("$.snapshot.body.doc.content[0].content[0].text").value("1회차"));
 
         mockMvc.perform(as(get("/files/" + character + "/versions")))
                 .andExpect(status().isOk())
@@ -277,36 +359,36 @@ class DocumentApiTest extends ApiTestSupport {
 
     @Test
     void restoresAsANewRevisionAndKeepsWhatItReplaced() throws Exception {
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"첫 원고\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"첫 원고\"}]}]}}}"))
                 .andExpect(status().isOk());
         MvcResult named = mockMvc.perform(as(body(post("/files/" + character + "/versions"),
                         "{\"label\":\"초고\"}"))).andReturn();
         UUID versionId = UUID.fromString(read(named).get("id").stringValue());
 
-        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body_md\":\"고친 원고\"}"))
+        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"고친 원고\"}]}]}}}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(as(post("/files/" + character + "/versions/" + versionId + "/restore"))
                         .header(HttpHeaders.IF_MATCH, "\"2\""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body_md").value("첫 원고"))
+                .andExpect(jsonPath("$.body.doc.content[0].content[0].text").value("첫 원고"))
                 // 되감지 않고 새 변경으로 저장한다.
                 .andExpect(jsonPath("$.revision_no").value(3));
 
         // 복원 직전 상태가 버전으로 남아 있어 돌아올 자리가 있다.
         mockMvc.perform(as(get("/files/" + character + "/versions")))
-                .andExpect(jsonPath("$.versions[?(@.kind == 'RESTORE')].snapshot.body_md")
+                .andExpect(jsonPath("$.versions[?(@.kind == 'RESTORE')].snapshot.body.doc.content[0].content[0].text")
                         .value(org.hamcrest.Matchers.hasItem("고친 원고")));
     }
 
     @Test
     void refusesToRestoreOverSomeoneElsesSave() throws Exception {
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"1\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1\"}]}]}}}"))
                 .andExpect(status().isOk());
         MvcResult named = mockMvc.perform(as(body(post("/files/" + character + "/versions"), "{}")))
                 .andReturn();
         UUID versionId = UUID.fromString(read(named).get("id").stringValue());
-        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body_md\":\"2\"}"))
+        mockMvc.perform(saveOf(character, 1, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"2\"}]}]}}}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(as(post("/files/" + character + "/versions/" + versionId + "/restore"))
@@ -317,7 +399,7 @@ class DocumentApiTest extends ApiTestSupport {
 
     @Test
     void deletesAVersion() throws Exception {
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"1\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1\"}]}]}}}"))
                 .andExpect(status().isOk());
         MvcResult named = mockMvc.perform(as(body(post("/files/" + character + "/versions"), "{}")))
                 .andReturn();
@@ -337,7 +419,7 @@ class DocumentApiTest extends ApiTestSupport {
         mockMvc.perform(as(get("/files/" + character + "/content")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("FILE_NOT_FOUND"));
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body_md\":\"x\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}}}"))
                 .andExpect(status().isNotFound());
     }
 
@@ -352,7 +434,7 @@ class DocumentApiTest extends ApiTestSupport {
 
     @Test
     void rejectsABlankTitleOnSave() throws Exception {
-        mockMvc.perform(saveOf(character, revisionOf(character), "{\"title\":\"   \",\"body_md\":\"\"}"))
+        mockMvc.perform(saveOf(character, revisionOf(character), "{\"title\":\"   \",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_FILE_TITLE"));
     }
@@ -361,7 +443,7 @@ class DocumentApiTest extends ApiTestSupport {
     void refusesASaveThatWouldCollideWithASiblingTitle() throws Exception {
         createDocument("CHARACTER", "김독자");
 
-        mockMvc.perform(saveOf(character, 0, "{\"title\":\"김독자\",\"body_md\":\"\"}"))
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"김독자\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}}}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("FILE_TITLE_TAKEN"));
     }

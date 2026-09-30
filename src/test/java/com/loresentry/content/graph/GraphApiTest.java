@@ -41,7 +41,7 @@ class GraphApiTest extends ApiTestSupport {
         UUID character = document("CHARACTER", "유중혁");
 
         mockMvc.perform(as(body(put("/files/" + chapter + "/content"), """
-                {"title":"1화 회귀","body_md":"본문","properties":[],
+                {"title":"1화 회귀","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"본문"}]}]}},"properties":[],
                  "relations":[{"relation_key":"related_character","target_document_id":"%s",
                                "description":"이 회차에서 처음 등장한다"}]}
                 """.formatted(character)))
@@ -61,7 +61,7 @@ class GraphApiTest extends ApiTestSupport {
         UUID character = document("CHARACTER", "유중혁");
 
         mockMvc.perform(as(body(put("/files/" + chapter + "/content"), """
-                {"title":"1화 회귀","body_md":"","properties":[],
+                {"title":"1화 회귀","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
                  "relations":[{"relation_key":"related_character","target_document_id":"%s",
                                "description":"동료가 되기 전"}]}
                 """.formatted(character)))

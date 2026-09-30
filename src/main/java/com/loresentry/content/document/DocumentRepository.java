@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @Repository
@@ -26,13 +27,20 @@ public class DocumentRepository {
 
     DocumentResponses.Content contentOf(Header row) {
         return new DocumentResponses.Content(
-                row.id(), row.projectId(), row.title(), row.folderCode(), row.episodeId(), row.bodyMd(),
+                row.id(), row.projectId(), row.title(), row.folderCode(), row.episodeId(),
+                row.body(), row.legacyBodyMd(),
                 properties(row.id()), relations(row.id()), row.locked(), row.charCount(), row.revisionNo(),
                 row.updatedAt());
     }
 
-    /** 휴지통 여부와 마지막 저장 id 는 응답에 없지만 서비스가 판단에 쓴다. */
-    record Header(UUID id, UUID projectId, String title, String folderCode, UUID episodeId, String bodyMd,
+    /**
+     * 휴지통 여부와 마지막 저장 id 는 응답에 없지만 서비스가 판단에 쓴다.
+     *
+     * <p>{@code body} 와 {@code legacyBodyMd} 는 둘 중 하나만 채워진다. 아직 변환되지 않은 행은
+     * {@code body_json} 이 비어 있고 Markdown 만 있다.
+     */
+    record Header(UUID id, UUID projectId, String title, String folderCode, UUID episodeId,
+            JsonNode body, String legacyBodyMd,
             boolean locked, int charCount, long revisionNo, OffsetDateTime updatedAt,
             OffsetDateTime trashedAt, UUID lastSaveId) {
     }
@@ -41,7 +49,7 @@ public class DocumentRepository {
         return jdbcClient
                 .sql("""
                         select d.id, d.project_id, d.title, f.code as folder_code, d.episode_id,
-                               d.body_md, d.locked, d.char_count, d.revision_no, d.updated_at,
+                               d.body_json, d.body_md, d.locked, d.char_count, d.revision_no, d.updated_at,
                                d.trashed_at, d.last_save_id
                         from document d
                         join base_folders f on f.id = d.folder_id
@@ -56,7 +64,8 @@ public class DocumentRepository {
                         rows.getString("title"),
                         rows.getString("folder_code"),
                         rows.getObject("episode_id", UUID.class),
-                        rows.getString("body_md"),
+                        readBody(rows.getString("body_json")),
+                        rows.getString("body_json") == null ? rows.getString("body_md") : null,
                         rows.getBoolean("locked"),
                         rows.getInt("char_count"),
                         rows.getLong("revision_no"),
@@ -64,6 +73,10 @@ public class DocumentRepository {
                         rows.getObject("trashed_at", OffsetDateTime.class),
                         rows.getObject("last_save_id", UUID.class)))
                 .optional();
+    }
+
+    private JsonNode readBody(String bodyJson) {
+        return bodyJson == null ? null : json.readTree(bodyJson);
     }
 
     List<DocumentSnapshot.TextProperty> properties(UUID fileId) {
@@ -93,12 +106,13 @@ public class DocumentRepository {
      * 덮어쓰지 않고 호출자에게 알린다(TABLE_AND_LOGIC §7.2).
      */
     boolean updateIfRevisionMatches(UUID fileId, long expectedRevision, DocumentSnapshot snapshot,
-            UUID saveId) {
+            String bodyText, UUID saveId) {
         int updated = jdbcClient
                 .sql("""
                         update document
                         set title = :title,
-                            body_md = :body,
+                            body_json = :body::jsonb,
+                            body_text = :text,
                             body_sha = encode(sha256(convert_to(:body, 'UTF8')), 'hex'),
                             char_count = :chars,
                             revision_no = revision_no + 1,
@@ -109,8 +123,10 @@ public class DocumentRepository {
                 .param("id", fileId)
                 .param("expected", expectedRevision)
                 .param("title", snapshot.title())
-                .param("body", snapshot.bodyMd())
-                .param("chars", snapshot.bodyMd().length())
+                // body_md 에는 쓰지 않는다. 레거시 행을 읽는 용도로만 남겨 둔 칸이다.
+                .param("body", json.writeValueAsString(snapshot.body()))
+                .param("text", bodyText)
+                .param("chars", BodyText.charCount(bodyText))
                 .param("saveId", saveId)
                 .update();
         return updated == 1;

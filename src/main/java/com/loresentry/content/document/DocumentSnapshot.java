@@ -3,8 +3,11 @@ package com.loresentry.content.document;
 import java.util.List;
 import java.util.UUID;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import tools.jackson.databind.JsonNode;
 
 /**
  * 문서의 전체 상태. 저장 요청, 응답, 버전 스냅샷이 같은 모양을 쓴다 — 셋이 어긋나면
@@ -16,7 +19,15 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record DocumentSnapshot(
         String title,
-        @JsonProperty("body_md") String bodyMd,
+        /**
+         * 본문. {@code {"schema_version":1,"doc":{...}}} 모양이다. 새 데이터는 이것만 채운다.
+         */
+        JsonNode body,
+        /**
+         * 변환 전 Markdown 본문. 옛 문서 행과 옛 버전 스냅샷에만 있다. 저장 요청에 오면 무시한다 —
+         * Markdown 을 해석하는 곳은 서버가 아니라 프론트다.
+         */
+        @JsonProperty("legacy_body_md") @JsonAlias("body_md") String legacyBodyMd,
         List<TextProperty> properties,
         List<Relation> relations) {
 
