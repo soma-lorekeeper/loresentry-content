@@ -203,5 +203,32 @@ class ImageApiTest extends ApiTestSupport {
 
         assertThat(jdbcClient.sql("select count(*) from image where project_id = :project")
                 .param("project", project).query(Long.class).single()).isZero();
+        verify(storage).delete(KEY);
+    }
+
+    @Test
+    void keepsThePermanentDeleteWhenTheObjectCannotBeRemoved() throws Exception {
+        ticket();
+        willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("unreachable"))
+                .given(storage).delete(KEY);
+        mockMvc.perform(as(post("/projects/" + project + "/trash"))).andExpect(status().isNoContent());
+
+        mockMvc.perform(as(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/projects/" + project)))
+                .andExpect(status().isNoContent());
+
+        assertThat(jdbcClient.sql("select count(*) from projects where id = :project")
+                .param("project", project).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void leavesTheObjectWhenThePermanentDeleteIsRefused() throws Exception {
+        ticket();
+
+        mockMvc.perform(as(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/projects/" + project)))
+                .andExpect(status().isConflict());
+
+        verify(storage, never()).delete(anyString());
     }
 }

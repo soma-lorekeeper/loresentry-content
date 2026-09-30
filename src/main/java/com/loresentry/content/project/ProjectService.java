@@ -3,6 +3,7 @@ package com.loresentry.content.project;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
@@ -19,8 +20,11 @@ public class ProjectService {
 
     private final ProjectRepository repository;
 
-    public ProjectService(ProjectRepository repository) {
+    private final MediaCleanup mediaCleanup;
+
+    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup) {
         this.repository = repository;
+        this.mediaCleanup = mediaCleanup;
     }
 
     @Transactional(readOnly = true)
@@ -89,14 +93,20 @@ public class ProjectService {
         return duplicateAware(() -> repository.markRestored(ownerUserId, projectId));
     }
 
-    /** 영구 삭제의 진입점은 휴지통뿐이다(와이어프레임 111–122). 서버도 같은 규칙을 강제한다. */
+    /**
+     * 영구 삭제의 진입점은 휴지통뿐이다(와이어프레임 111–122). 서버도 같은 규칙을 강제한다.
+     *
+     * <p>이미지 행은 CASCADE 로 사라지지만 S3 객체는 남는다. 커밋 뒤에 따로 지운다(이용약관 제7조).
+     */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID projectId) {
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_TRASHED);
         }
+        List<String> imageKeys = repository.imageKeys(projectId);
         repository.delete(projectId);
+        mediaCleanup.deleteAfterCommit(imageKeys);
     }
 
     private Project require(UUID ownerUserId, UUID projectId) {
