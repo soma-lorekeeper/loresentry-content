@@ -51,7 +51,11 @@ class GraphApiTest extends ApiTestSupport {
         mockMvc.perform(as(get("/projects/" + project + "/graph")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nodes.length()").value(2))
-                .andExpect(jsonPath("$.edges.length()").value(2))
+                // 저장은 양방향 두 행이지만 한 쌍에 하나만 온다. 두 개면 관계도에 링크가 겹친다.
+                .andExpect(jsonPath("$.edges.length()").value(1))
+                .andExpect(jsonPath("$.edges[0].description").value("이 회차에서 처음 등장한다"))
+                // 출처 자리는 지금부터 둔다. graph-rag 가 붙어도 응답 모양이 바뀌지 않게.
+                .andExpect(jsonPath("$.edges[0].origin").value("USER"))
                 .andExpect(jsonPath("$.episodes.length()").value(0));
     }
 
@@ -91,6 +95,28 @@ class GraphApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.episodes.length()").value(1))
                 .andExpect(jsonPath("$.episodes[0].name").value("1부"))
                 .andExpect(jsonPath("$.episodes[0].document_ids.length()").value(1));
+    }
+
+    @Test
+    void orientsAnEdgeTheSameWayEveryTime() throws Exception {
+        // 방향을 임의로 고르면 요청마다 바뀌어 화면이 흔들린다. 두 id 중 작은 쪽이 source 다.
+        UUID chapter = document("MANUSCRIPT", "1화");
+        UUID character = document("CHARACTER", "유중혁");
+        mockMvc.perform(as(body(put("/files/" + chapter + "/content"), """
+                {"title":"1화","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
+                """.formatted(character)))
+                        .header(HttpHeaders.IF_MATCH, "\"0\""))
+                .andExpect(status().isOk());
+
+        String expected = chapter.toString().compareTo(character.toString()) < 0
+                ? chapter.toString()
+                : character.toString();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(as(get("/projects/" + project + "/graph")))
+                    .andExpect(jsonPath("$.edges.length()").value(1))
+                    .andExpect(jsonPath("$.edges[0].source").value(expected));
+        }
     }
 
     @Test
