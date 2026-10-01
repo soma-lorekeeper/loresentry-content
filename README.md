@@ -203,7 +203,7 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `episode_folders` | Per-project episode folders under the manuscript — the only user-created folder |
 | `document` | The single source of truth for a document: whole Markdown body, `rank`, `revision_no` for conditional saves |
 | `document_properties` | Text properties such as description and alias |
-| `document_relations` | Relation chips; the source data for the graph and timeline |
+| `document_relations` | Relation chips, one row per pair - relations have no direction; the source data for the graph and timeline |
 | `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE` |
 | `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING` run per project |
 | `refresh_document_drafts` | Per-document refresh work: base version, left and right snapshots, draft revision |

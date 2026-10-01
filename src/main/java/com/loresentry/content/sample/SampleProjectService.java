@@ -12,7 +12,6 @@ import java.util.stream.Collectors;
 
 import com.loresentry.content.document.DocumentService;
 import com.loresentry.content.document.DocumentSnapshot;
-import com.loresentry.content.document.RelationKeys;
 import com.loresentry.content.file.FileRequests;
 import com.loresentry.content.file.FileResponses;
 import com.loresentry.content.file.FileService;
@@ -87,8 +86,8 @@ public class SampleProjectService {
             List<DocumentSnapshot.Relation> relations = new ArrayList<>();
             links.getOrDefault(pending.key(), Map.of()).forEach((target, description) -> {
                 Created other = created.get(target);
-                relations.add(new DocumentSnapshot.Relation(
-                        RelationKeys.pointingAt(other.folderCode()), other.id(), description));
+                // 관계 키는 서버가 대상 문서의 분류에서 꺼낸다. 보내도 쓰이지 않는다.
+                relations.add(new DocumentSnapshot.Relation(null, other.id(), description));
             });
             documents.save(ownerUserId, created.get(pending.key()).id(), 0, null, new DocumentSnapshot(
                     pending.title(), body(pending.body()), null,

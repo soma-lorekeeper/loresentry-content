@@ -137,17 +137,18 @@ class SampleProjectApiTest extends ApiTestSupport {
                 "정원 기록단", "하린", "첫 순찰");
         assertThat(content.get("relations").toString()).contains("막내 기록관");
 
+        // 관계에는 방향이 없고 한 쌍은 한 행이다(V10). 양쪽에서 보이는 것은 행이 둘이어서가 아니다.
         long total = jdbcClient.sql("""
                         select count(*) from document_relations r
-                        join document d on d.id = r.document_id where d.project_id = :project
+                        join document d on d.id = r.low_document_id where d.project_id = :project
                         """)
                 .param("project", UUID.fromString(project)).query(Long.class).single();
-        assertThat(total).isEqualTo(RELATIONS * 2L);
+        assertThat(total).isEqualTo(RELATIONS);
         long foreign = jdbcClient.sql("""
                         select count(*) from document_relations r
-                        join document d on d.id = r.document_id
-                        join document t on t.id = r.target_document_id
-                        where d.project_id = :project and t.project_id <> d.project_id
+                        join document low on low.id = r.low_document_id
+                        join document high on high.id = r.high_document_id
+                        where low.project_id = :project and high.project_id <> low.project_id
                         """)
                 .param("project", UUID.fromString(project)).query(Long.class).single();
         assertThat(foreign).isZero();

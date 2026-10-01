@@ -1,7 +1,9 @@
 package com.loresentry.content.document;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -89,10 +91,28 @@ public class DocumentRepository {
                 .list();
     }
 
+    /**
+     * 한 쌍에 한 행이므로, 이 문서는 행의 어느 쪽에나 있을 수 있다. 반대쪽 끝이 곧 대상이고,
+     * 관계 키는 <b>그 반대쪽 문서의 분류</b>가 정한다 — 원고에서 캐릭터를 보면
+     * {@code related_character}, 같은 행을 캐릭터에서 보면 {@code related_manuscript}다.
+     *
+     * <p>휴지통에 있는 문서로 가는 행은 내놓지 않는다. 화면이 열 수 없는 칩을 그리게 되고,
+     * 저장할 때 그 대상을 돌려보내면 {@link #isUsableRelationTarget}이 막아 저장 자체가 실패한다.
+     * 행은 그대로 두므로 그 문서를 되살리면 관계도 함께 돌아온다.
+     */
     List<DocumentSnapshot.Relation> relations(UUID fileId) {
         return jdbcClient
-                .sql("select relation_key, target_document_id, description from document_relations "
-                        + "where document_id = :id order by position, relation_key")
+                .sql("""
+                        select f.relation_key, other.id as target_document_id, r.description
+                        from document_relations r
+                        join document other
+                          on other.id = case when r.low_document_id = :id
+                                             then r.high_document_id else r.low_document_id end
+                        join base_folders f on f.id = other.folder_id
+                        where (r.low_document_id = :id or r.high_document_id = :id)
+                          and other.trashed_at is null
+                        order by f.relation_key, r.id
+                        """)
                 .param("id", fileId)
                 .query((rows, index) -> new DocumentSnapshot.Relation(
                         rows.getString("relation_key"),
@@ -147,60 +167,60 @@ public class DocumentRepository {
         }
     }
 
+    /**
+     * 이 문서의 관계를 들어온 목록과 똑같이 맞춘다.
+     *
+     * <p>행을 전부 지우고 다시 넣지 않는다. 한 행이 두 문서의 것이므로, 지웠다가 넣는 사이에 설명이
+     * 사라지고 행 id 가 바뀐다. 사라진 것만 지우고 남은 것은 설명만 맞춘다.
+     *
+     * <p><b>휴지통 문서와의 관계는 건드리지 않는다.</b> 그 행은 읽을 때 빠지므로 들어온 목록에도
+     * 없고, 그래서 "지워진 것"으로 보인다. 지우면 그 문서를 되살려도 관계가 돌아오지 않는다.
+     *
+     * <p>들어온 {@code relation_key}는 쓰지 않는다. 키는 대상 문서의 분류에서 나오므로 저장할 것이
+     * 없고, 저장하면 분류를 바꿨을 때 어긋난다.
+     */
     void replaceRelations(UUID fileId, List<DocumentSnapshot.Relation> relations) {
-        jdbcClient.sql("delete from document_relations where document_id = :id")
-                .param("id", fileId).update();
-        int position = 10;
+        // 같은 대상을 여러 키로 가리켜도 쌍은 하나다. 설명이 적힌 쪽을 남긴다.
+        Map<UUID, String> wanted = new LinkedHashMap<>();
         for (DocumentSnapshot.Relation relation : relations) {
+            UUID target = relation.targetDocumentId();
+            if (target == null || target.equals(fileId)) {
+                continue;
+            }
+            String existing = wanted.get(target);
+            if (existing == null || existing.isEmpty()) {
+                wanted.put(target, relation.descriptionOrEmpty());
+            }
+        }
+
+        jdbcClient
+                .sql("""
+                        delete from document_relations r
+                        using document other
+                        where (r.low_document_id = :id or r.high_document_id = :id)
+                          and other.id = case when r.low_document_id = :id
+                                              then r.high_document_id else r.low_document_id end
+                          and other.trashed_at is null
+                          and other.id <> all (:keep)
+                        """)
+                .param("id", fileId)
+                .param("keep", wanted.keySet().toArray(UUID[]::new))
+                .update();
+
+        for (Map.Entry<UUID, String> entry : wanted.entrySet()) {
             jdbcClient
                     .sql("""
                             insert into document_relations
-                                (document_id, relation_key, target_document_id, description, position)
-                            values (:id, :key, :target, :description, :position)
+                                (low_document_id, high_document_id, description)
+                            values (least(:id, :target), greatest(:id, :target), :description)
+                            on conflict (low_document_id, high_document_id)
+                            do update set description = excluded.description
                             """)
-                    .param("id", fileId).param("key", relation.relationKey())
-                    .param("target", relation.targetDocumentId())
-                    .param("description", relation.descriptionOrEmpty())
-                    .param("position", position)
+                    .param("id", fileId)
+                    .param("target", entry.getKey())
+                    .param("description", entry.getValue())
                     .update();
-            position += 10;
         }
-    }
-
-    /**
-     * 반대쪽 문서에 역방향 행을 하나 더한다. 이미 있으면 그대로 둔다.
-     *
-     * <p>대상 문서의 {@code revision_no}는 올리지 않는다. 관계는 본문이 아니고, 올리면 그 문서를
-     * 열어 둔 편집기가 저장할 때마다 충돌로 떨어진다.
-     */
-    /**
-     * 반대쪽 문서에 역방향 행을 맞춘다. 없으면 넣고, 있으면 설명만 따라가게 한다.
-     *
-     * <p>설명은 대상 문서의 것이 아니라 <b>연결</b>의 것이므로 양쪽에서 같아야 한다. 한쪽에서 고친
-     * 설명이 반대쪽에 남아 있으면 같은 관계가 두 가지로 보인다.
-     */
-    void mirrorRelation(UUID documentId, String relationKey, UUID targetId, String description) {
-        jdbcClient
-                .sql("""
-                        insert into document_relations
-                            (document_id, relation_key, target_document_id, description, position)
-                        select :id, :key, :target, :description,
-                               coalesce((select max(position) from document_relations
-                                         where document_id = :id), 0) + 10
-                        on conflict (document_id, relation_key, target_document_id)
-                        do update set description = excluded.description
-                        """)
-                .param("id", documentId).param("key", relationKey).param("target", targetId)
-                .param("description", description)
-                .update();
-    }
-
-    void removeRelation(UUID documentId, String relationKey, UUID targetId) {
-        jdbcClient
-                .sql("delete from document_relations where document_id = :id"
-                        + " and relation_key = :key and target_document_id = :target")
-                .param("id", documentId).param("key", relationKey).param("target", targetId)
-                .update();
     }
 
     /** 관계 대상은 같은 프로젝트의 활성 문서여야 한다. 외래 키는 존재만 보장하고 프로젝트는 보지 않는다. */

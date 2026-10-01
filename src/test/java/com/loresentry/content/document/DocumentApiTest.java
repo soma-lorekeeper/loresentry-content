@@ -3,6 +3,7 @@ package com.loresentry.content.document;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -97,6 +98,137 @@ class DocumentApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.relations[0].target_document_id").value(character.toString()))
                 // 관계는 본문이 아니다. 저 문서를 열어 둔 편집기가 충돌로 떨어지면 안 된다.
                 .andExpect(jsonPath("$.revision_no").value(0));
+    }
+
+    /**
+     * 사용자가 말한 그대로의 경로다: 원고에서 캐릭터를 걸면 캐릭터의 "관련 원고"에 그 원고가 있어야
+     * 한다. 캐릭터↔장소만 검증해 두면 원고 쪽 분류가 빠져도 드러나지 않는다.
+     */
+    @Test
+    void showsTheManuscriptUnderTheCharacterItNames() throws Exception {
+        UUID manuscript = createDocument("MANUSCRIPT", "제1화 회귀");
+
+        mockMvc.perform(saveOf(manuscript, 0, """
+                {"title":"제1화 회귀","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
+                """.formatted(character)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(1))
+                .andExpect(jsonPath("$.relations[0].relation_key").value("related_manuscript"))
+                .andExpect(jsonPath("$.relations[0].target_document_id").value(manuscript.toString()));
+    }
+
+    /**
+     * 반대쪽 문서를 열어 <b>본문만</b> 고치고 저장하면, 브라우저는 읽은 관계를 그대로 돌려보낸다.
+     * 그 저장이 자기 역방향 행을 다시 만들면서 원래 행을 지우면 관계가 한쪽만 남는다.
+     */
+    @Test
+    void keepsBothSidesWhenEachDocumentSavesInTurn() throws Exception {
+        UUID manuscript = createDocument("MANUSCRIPT", "제1화 회귀");
+
+        mockMvc.perform(saveOf(manuscript, 0, """
+                {"title":"제1화 회귀","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_character","target_document_id":"%s","description":"첫 등장"}]}
+                """.formatted(character)))
+                .andExpect(status().isOk());
+
+        // 캐릭터 쪽이 읽은 것을 그대로 돌려보낸다 — 화면이 저장할 때 하는 일이다.
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_manuscript","target_document_id":"%s","description":"첫 등장"}]}
+                """.formatted(manuscript)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(get("/files/" + manuscript + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(1))
+                .andExpect(jsonPath("$.relations[0].relation_key").value("related_character"))
+                .andExpect(jsonPath("$.relations[0].target_document_id").value(character.toString()))
+                .andExpect(jsonPath("$.relations[0].description").value("첫 등장"));
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(1))
+                .andExpect(jsonPath("$.relations[0].relation_key").value("related_manuscript"))
+                .andExpect(jsonPath("$.relations[0].target_document_id").value(manuscript.toString()));
+    }
+
+    /** 관계에는 방향이 없다. 두 문서 사이의 연결은 표에 <b>한 행</b>이다. */
+    @Test
+    void storesOneRecordForThePairNotOnePerDirection() throws Exception {
+        UUID manuscript = createDocument("MANUSCRIPT", "제1화 회귀");
+        mockMvc.perform(saveOf(manuscript, 0, """
+                {"title":"제1화 회귀","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_character","target_document_id":"%s"}]}
+                """.formatted(character)))
+                .andExpect(status().isOk());
+
+        assertThat(jdbcClient
+                .sql("select count(*) from document_relations where :a in (low_document_id, high_document_id)"
+                        + " and :b in (low_document_id, high_document_id)")
+                .param("a", manuscript).param("b", character)
+                .query(Integer.class).single())
+                .isEqualTo(1);
+
+        // 반대쪽에서 저장해도 행이 늘지 않는다 — 맞춰 줄 두 번째 행이 없다.
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_manuscript","target_document_id":"%s"}]}
+                """.formatted(manuscript)))
+                .andExpect(status().isOk());
+
+        assertThat(jdbcClient.sql("select count(*) from document_relations").query(Integer.class).single())
+                .isEqualTo(1);
+    }
+
+    /**
+     * 키를 행에 적지 않고 대상 문서의 분류에서 꺼내므로, 문서를 다른 분류로 옮기면 반대쪽에서 보는
+     * 키도 따라 바뀐다. 적어 두었다면 옮긴 뒤로 어긋난 채 남는다.
+     */
+    @Test
+    void followsTheDocumentWhenItsFolderChanges() throws Exception {
+        UUID place = createDocument("LOCATION", "충무로역");
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
+                """.formatted(place)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(body(patch("/files/" + place + "/position"),
+                "{\"folder_code\":\"ORGANIZATION\"}")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations[0].relation_key").value("related_organization"));
+    }
+
+    /**
+     * 휴지통에 있는 문서와의 관계는 화면에 내놓지 않지만 <b>지우지도 않는다.</b> 그 사이에 상대
+     * 문서를 저장했다고 관계가 사라지면, 되살렸을 때 돌아올 자리가 없다.
+     */
+    @Test
+    void keepsARelationToATrashedDocumentUntilItComesBack() throws Exception {
+        UUID place = createDocument("LOCATION", "충무로역");
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],
+                 "relations":[{"relation_key":"related_place","target_document_id":"%s"}]}
+                """.formatted(place)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(post("/files/" + place + "/trash"))).andExpect(status().isNoContent());
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(0));
+
+        // 화면이 본 그대로(관계 없음) 저장한다. 그래도 행은 남아야 한다.
+        mockMvc.perform(saveOf(character, 1, """
+                {"title":"유중혁","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],"relations":[]}
+                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(post("/files/" + place + "/restore"))).andExpect(status().isOk());
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.relations.length()").value(1))
+                .andExpect(jsonPath("$.relations[0].target_document_id").value(place.toString()));
     }
 
     @Test
