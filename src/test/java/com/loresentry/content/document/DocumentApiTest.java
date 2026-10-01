@@ -122,7 +122,7 @@ class DocumentApiTest extends ApiTestSupport {
 
     /**
      * 반대쪽 문서를 열어 <b>본문만</b> 고치고 저장하면, 브라우저는 읽은 관계를 그대로 돌려보낸다.
-     * 그 저장이 자기 역방향 행을 다시 만들면서 원래 행을 지우면 관계가 한쪽만 남는다.
+     * 한 행이 두 문서의 것이라, 그 저장이 쌍을 다시 쓰면서 원래 행을 지우면 관계가 사라진다.
      */
     @Test
     void keepsBothSidesWhenEachDocumentSavesInTurn() throws Exception {
@@ -259,7 +259,7 @@ class DocumentApiTest extends ApiTestSupport {
                 """.formatted(place)))
                 .andExpect(status().isOk());
 
-        // 역방향 행은 그 문서의 관계 목록에 그냥 섞인다. 그래서 반대쪽에서도 끊을 수 있다.
+        // 한 행이 두 문서의 것이므로 어느 쪽에서든 끊을 수 있다.
         mockMvc.perform(saveOf(place, 0, """
                 {"title":"충무로역","body":{"schema_version":1,"doc":{"type":"doc","content":[{"type":"paragraph"}]}},"properties":[],"relations":[]}
                 """))

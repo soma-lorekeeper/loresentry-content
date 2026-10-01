@@ -51,7 +51,7 @@ class GraphApiTest extends ApiTestSupport {
         mockMvc.perform(as(get("/projects/" + project + "/graph")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nodes.length()").value(2))
-                // 저장은 양방향 두 행이지만 한 쌍에 하나만 온다. 두 개면 관계도에 링크가 겹친다.
+                // 한 쌍은 한 행이고 한 선이다. 두 개면 관계도에 링크가 겹친다.
                 .andExpect(jsonPath("$.edges.length()").value(1))
                 .andExpect(jsonPath("$.edges[0].description").value("이 회차에서 처음 등장한다"))
                 // 출처 자리는 지금부터 둔다. graph-rag 가 붙어도 응답 모양이 바뀌지 않게.

@@ -114,8 +114,9 @@ public class SampleProjectService {
     }
 
     /**
-     * 저장은 문서의 관계 목록 전체를 바꾸고 반대쪽을 그에 맞춘다. 한쪽에만 적힌 관계로 저장하면 뒤에
-     * 저장한 문서가 앞 문서가 만든 역방향 행을 지운다. 그래서 문서마다 양쪽 관계를 다 들고 저장한다.
+     * 저장은 그 문서가 걸린 관계 전체를 들어온 목록과 똑같이 맞춘다. 한 행이 두 문서의 것이므로,
+     * 뒤에 저장한 문서가 그 쌍을 빠뜨리면 앞에서 만든 행이 지워진다. 그래서 문서마다 자기가 걸린
+     * 관계를 다 들고 저장한다.
      */
     private Map<String, Map<String, String>> symmetricLinks() {
         Map<String, Map<String, String>> links = new HashMap<>();
