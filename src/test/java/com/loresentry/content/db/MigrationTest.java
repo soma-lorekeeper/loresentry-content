@@ -137,9 +137,9 @@ class MigrationTest {
 
             statement.execute("insert into document_properties (document_id, property_key, text_value, position) "
                     + "values ('" + character + "', 'description', 'x', 10)");
-            statement.execute("insert into document_relations "
-                    + "(document_id, relation_key, target_document_id, position) "
-                    + "values ('" + character + "', 'related_manuscript', '" + chapter + "', 10)");
+            statement.execute("insert into document_relations (low_document_id, high_document_id) "
+                    + "values (least('" + character + "'::uuid, '" + chapter + "'::uuid), "
+                    + "greatest('" + character + "'::uuid, '" + chapter + "'::uuid))");
             String version = column(statement,
                     "insert into document_versions (document_id, source_revision_no, kind, snapshot) "
                             + "values ('" + character + "', 0, 'REFRESH_BASE', '{}'::jsonb) returning id")
@@ -161,6 +161,9 @@ class MigrationTest {
                     + "where project_id = '" + project + "'")).containsExactly("0");
             assertThat(column(statement, "select count(*)::text from document_properties "
                     + "where document_id = '" + character + "'")).containsExactly("0");
+            assertThat(column(statement, "select count(*)::text from document_relations "
+                    + "where low_document_id = '" + character + "' "
+                    + "or high_document_id = '" + character + "'")).containsExactly("0");
             assertThat(column(statement, "select count(*)::text from document_versions "
                     + "where document_id = '" + character + "'")).containsExactly("0");
             assertThat(column(statement, "select count(*)::text from refresh_document_drafts "

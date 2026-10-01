@@ -3,9 +3,7 @@ package com.loresentry.content.document;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -86,9 +84,7 @@ public class DocumentService {
         }
 
         repository.replaceProperties(fileId, snapshot.properties());
-        List<DocumentSnapshot.Relation> hadRelations = repository.relations(fileId);
         repository.replaceRelations(fileId, snapshot.relations());
-        mirrorRelations(header, hadRelations, snapshot.relations());
 
         DocumentResponses.Content saved = repository.find(ownerUserId, fileId).orElseThrow();
         recordAutoVersion(fileId, saved);
@@ -154,9 +150,7 @@ public class DocumentService {
         }
 
         repository.replaceProperties(fileId, snapshot.properties());
-        List<DocumentSnapshot.Relation> hadRelations = repository.relations(fileId);
         repository.replaceRelations(fileId, snapshot.relations());
-        mirrorRelations(header, hadRelations, snapshot.relations());
         // 버전 복원도 본문을 바꾼다.
         activity.recordWorkedFile(header.projectId(), fileId);
         return repository.find(ownerUserId, fileId).orElseThrow();
@@ -285,50 +279,4 @@ public class DocumentService {
         }
     }
 
-    /**
-     * 관계는 양방향이다. A가 B를 가리키면 B에서도 A가 보여야 한다 — 사용자는 한쪽에서만 이어 놓고
-     * 반대쪽 문서를 열어 그 관계를 찾는다.
-     *
-     * <p>그래서 저장할 때 반대쪽에 역방향 행을 함께 넣고, 지운 관계는 반대쪽에서도 지운다. 역방향
-     * 행의 키는 <b>이 문서의 분류</b>가 정한다({@link RelationKeys}) — B에서 A를 볼 때 A는 A의
-     * 종류로 보이기 때문이다.
-     *
-     * <p>역방향 행은 그 문서의 관계 목록에 그냥 섞인다. 관계가 대칭이므로 "내가 만든 것"과
-     * "상대가 만든 것"을 구분할 필요가 없고, 구분하면 한쪽에서 지울 수 없는 관계가 생긴다.
-     */
-    private void mirrorRelations(DocumentRepository.Header header,
-            List<DocumentSnapshot.Relation> before, List<DocumentSnapshot.Relation> after) {
-        String keyForThis = RelationKeys.pointingAt(header.folderCode());
-        if (keyForThis == null) {
-            return;
-        }
-        Map<UUID, String> was = describedTargetsOf(before);
-        Map<UUID, String> now = describedTargetsOf(after);
-
-        // 설명이 바뀌었을 수도 있으므로 남아 있는 관계도 매번 맞춘다.
-        for (Map.Entry<UUID, String> target : now.entrySet()) {
-            repository.mirrorRelation(target.getKey(), keyForThis, header.id(), target.getValue());
-        }
-        for (UUID target : was.keySet()) {
-            if (!now.containsKey(target)) {
-                repository.removeRelation(target, keyForThis, header.id());
-            }
-        }
-    }
-
-    /**
-     * 대상 문서별 설명. 한 문서를 여러 키로 가리키면 설명이 있는 쪽을 남긴다 — 역방향은 키가
-     * 하나뿐이라 그 문서당 한 줄만 만들 수 있다.
-     */
-    private static Map<UUID, String> describedTargetsOf(List<DocumentSnapshot.Relation> relations) {
-        Map<UUID, String> targets = new LinkedHashMap<>();
-        for (DocumentSnapshot.Relation relation : relations) {
-            String description = relation.descriptionOrEmpty();
-            String existing = targets.get(relation.targetDocumentId());
-            if (existing == null || existing.isEmpty()) {
-                targets.put(relation.targetDocumentId(), description);
-            }
-        }
-        return targets;
-    }
 }

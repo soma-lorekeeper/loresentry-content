@@ -49,34 +49,30 @@ class GraphRepository {
     }
 
     /**
-     * 관계. 저장은 양방향 두 행이지만 <b>한 쌍에 하나</b>만 준다.
+     * 관계. 한 쌍에 한 행이므로 그대로 내보내면 된다 — 중복을 걸러낼 것이 없다.
      *
-     * <p>관계는 대칭이라 방향에 뜻이 없다. 두 행을 그대로 주면 관계도가 같은 연결에 링크를 두 개
-     * 그리고, 노드 패널도 같은 문서를 두 번 나열한다.
+     * <p>{@code source}/{@code target}은 두 id 중 작은 쪽을 앞에 둔 저장 순서 그대로다. 관계에는
+     * 방향이 없으므로 이 둘은 "어느 쪽에서 이었는가"가 아니라 그저 두 끝이다. 화면이 요청마다 같은
+     * 모양을 받으려면 순서가 고정이기만 하면 된다.
      *
-     * <p>어느 행을 남길지는 두 id 중 작은 쪽을 {@code source} 로 두어 정한다 — 임의로 고르면 요청마다
-     * 방향이 달라져 화면이 흔들린다. 한쪽 행만 있는 옛 관계도 그대로 포함된다.
+     * <p>관계 키는 {@code target} 쪽 문서의 분류가 정한다. 반대쪽에서 본 키는 {@code source} 의
+     * 분류가 정하지만, 관계도는 선 하나에 이름 하나만 쓴다.
      *
-     * <p>휴지통 문서로 향하는 행은 제외한다.
+     * <p>휴지통 문서가 걸린 행은 제외한다.
      */
     List<GraphResponses.Edge> edges(UUID projectId) {
         return jdbcClient
                 .sql("""
-                        select distinct on (pair_low, pair_high)
-                               id, document_id, target_document_id, relation_key, description
-                        from (
-                            select r.id, r.document_id, r.target_document_id,
-                                   r.relation_key, r.description, r.position,
-                                   least(r.document_id::text, r.target_document_id::text) as pair_low,
-                                   greatest(r.document_id::text, r.target_document_id::text) as pair_high
-                            from document_relations r
-                            join document source on source.id = r.document_id
-                            join document target on target.id = r.target_document_id
-                            where source.project_id = :project
-                              and source.trashed_at is null and target.trashed_at is null
-                        ) rows
-                        order by pair_low, pair_high,
-                                 (document_id::text = pair_low) desc, position, id
+                        select r.id, r.low_document_id as document_id,
+                               r.high_document_id as target_document_id,
+                               f.relation_key, r.description
+                        from document_relations r
+                        join document source on source.id = r.low_document_id
+                        join document target on target.id = r.high_document_id
+                        join base_folders f on f.id = target.folder_id
+                        where source.project_id = :project
+                          and source.trashed_at is null and target.trashed_at is null
+                        order by r.id
                         """)
                 .param("project", projectId)
                 .query((rows, index) -> new GraphResponses.Edge(
