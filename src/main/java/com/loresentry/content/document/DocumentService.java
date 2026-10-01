@@ -205,8 +205,9 @@ public class DocumentService {
         List<DocumentSnapshot.Relation> relations =
                 incoming.relations() == null ? List.of() : incoming.relations();
         for (DocumentSnapshot.Relation relation : relations) {
-            if (relation.relationKey() == null || relation.relationKey().isBlank()
-                    || relation.targetDocumentId() == null) {
+            // relation_key 는 받되 쓰지 않는다 — 키는 대상 문서의 분류에서 나온다(V10). 보내온 키가
+            // 틀렸다고 막는 것은 시늉이다. 어차피 버릴 값이고, 막으면 옛 클라이언트만 못 쓰게 된다.
+            if (relation.targetDocumentId() == null) {
                 throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
             }
             // 자기 참조는 그래프에 자기 루프를 만들고 타임라인에서 의미가 없다.

@@ -109,6 +109,14 @@ public class ProjectRepository {
         return findById(ownerUserId, projectId).orElseThrow();
     }
 
+    /** 상태와 무관하게 전부. PENDING 이어도 브라우저가 이미 올렸을 수 있다. */
+    List<String> imageKeys(UUID projectId) {
+        return jdbcClient.sql("select s3_key from image where project_id = :id")
+                .param("id", projectId)
+                .query(String.class)
+                .list();
+    }
+
     /** 문서·에피소드·버전·최신화 작업본은 외래 키 CASCADE가 함께 지운다 (V3). */
     void delete(UUID projectId) {
         jdbcClient.sql("delete from projects where id = :id")

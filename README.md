@@ -44,11 +44,12 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/projects` | Active projects, most recently worked first. |
 | `GET` | `/projects/trash` | Trashed projects, most recently trashed first. |
 | `POST` | `/projects` | Creates a project. `201` with a `Location` header. |
+| `POST` | `/projects/sample` | Creates the example project "유리 정원의 기록" from `sample/glass-garden.json`, numbered `(2)`, `(3)` … when the owner already has an active one. No body; answers exactly like `POST /projects`. |
 | `GET` | `/projects/{id}` | One active project. A trashed project is `404` — the requirement says it cannot be opened. |
 | `PATCH` | `/projects/{id}` | Partial update of `name` and `description`. No optimistic locking: last write wins. |
 | `POST` | `/projects/{id}/trash` | Moves to the trash. `204`, and repeating it does not push `trashed_at` forward. |
 | `POST` | `/projects/{id}/restore` | Restores. `409 duplicate` when the name now clashes with an active project. |
-| `DELETE` | `/projects/{id}` | Permanent delete, **only from the trash** — `409 PROJECT_NOT_TRASHED` otherwise. |
+| `DELETE` | `/projects/{id}` | Permanent delete, **only from the trash** — `409 PROJECT_NOT_TRASHED` otherwise. The project's S3 images are deleted after the commit, best-effort. |
 | `GET` | `/projects/{id}/files` | The file tree as three normalised lists: folders, episodes, documents. |
 | `GET` | `/projects/{id}/files/trash` | Trashed documents with the folder and episode they came from. |
 | `POST` | `/projects/{id}/files` | Creates a document, or an episode folder with `"kind":"episode"`. |
@@ -74,6 +75,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/projects/{id}/favorites` | `{file_ids: [...]}`, trashed files excluded. |
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
+| `DELETE` | `/users/me/data` | Account withdrawal: deletes every project of the caller, active and trashed, with everything under it, then their S3 images. `204`, also when nothing is left. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -239,7 +241,7 @@ left for the feature work that owns projects and files.
 | --- | --- |
 | `createImageUploadTicket(projectId, contentType, sizeBytes)` | Validates type and size, picks the key `projects/{projectId}/images/{uuid}.{ext}`, returns an `UploadTicket` — presigned PUT URL (5 min), the headers the browser must send, expiry, public URL. |
 | `verifyUploaded(key, expectedSizeBytes)` | `HeadObject`; throws `ObjectNotUploadedException` when the object is missing or its size differs. A missing object arrives as a bare `S3Exception`, and as `403` rather than `404` unless the caller holds `s3:ListBucket` — both are treated as missing. |
-| `delete(key)` | `DeleteObject`. |
+| `delete(key)` | `DeleteObject`. Called through `MediaCleanup` after a permanent project delete or a user purge commits. |
 | `publicUrl(key)` | `media.public-base-url` + key, i.e. the CloudFront URL. |
 
 `Content-Type` and `Content-Length` are part of the signature, so a browser
@@ -349,7 +351,38 @@ separate view-history table: what a user means by having worked on a file is
 having edited it. Trashed documents are excluded — they cannot be opened, so
 offering one as the last file would be a dead link.
 
+## Deleting data
+
+`DELETE /users/me/data` is the content step of account withdrawal. The gateway
+calls it before the authentication service deletes the account, so it must be
+safe to repeat: a second call finds nothing and still answers `204`. One
+transaction collects every `image.s3_key` of the caller's projects, deletes the
+caller's `workspace_state` rows and then the projects; the foreign-key cascades
+remove documents, properties, relations, versions, episodes, images, memos,
+favorites and refresh runs.
+
+S3 objects are deleted only **after the commit**, for both the purge and a
+single permanent project delete. Deleting first would leave broken images if the
+transaction rolled back. A failed `DeleteObject` does not turn the committed
+delete into an error — the rows are already gone, so a retry could not find the
+keys again. The failure is logged as a count, without keys or user ids.
+
+## Sample project
+
+`POST /projects/sample` builds the example project from
+`src/main/resources/sample/glass-garden.json` — three episodes, seven
+manuscripts, fourteen setting documents across all six setting folders, and 46
+relations. It goes through the same services a user does (`ProjectService`,
+`FileService`, `DocumentService`), so ranks, name uniqueness, revision numbers,
+auto versions and same-project relation checks all apply, and the whole thing is
+one transaction. Every document is saved once at revision `1` with a
+`description` property; manuscripts are saved last, so `last_file` is the final
+chapter. The seed is checked when the service starts (unknown keys, duplicate
+keys or pairs, self relations fail startup).
+
 ## Not implemented yet
+- A retry for S3 objects whose post-commit delete failed. They are logged and
+  left orphaned.
 - A sweep for images left `PENDING` and their orphaned S3 objects. The rows are
   indexed for it (`ix_image_pending`); nothing runs yet.
 - User-created sections and general folders. **Decided against**: episode folders
