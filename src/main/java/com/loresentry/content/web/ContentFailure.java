@@ -30,6 +30,8 @@ public class ContentFailure extends RuntimeException {
         OBJECT_NOT_UPLOADED,
         MEMO_NOT_FOUND,
         INVALID_MEMO,
+        INVALID_FEEDBACK,
+        FEEDBACK_RATE_LIMITED,
         INTERNAL_ERROR
     }
 

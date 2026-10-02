@@ -83,6 +83,11 @@ class UserDataApiTest extends ApiTestSupport {
                 .param("id", project).query(Long.class).single();
     }
 
+    private long feedbackOf(UUID user) {
+        return jdbcClient.sql("select count(*) from feedback where user_id = :u")
+                .param("u", user).query(Long.class).single();
+    }
+
     private long rowsOf(Seeded seeded) {
         long total = 0;
         for (String table : List.of("projects:id", "document:project_id", "episode_folders:project_id",
@@ -100,6 +105,12 @@ class UserDataApiTest extends ApiTestSupport {
         Seeded active = seed(owner, "진행 중", false);
         Seeded trashed = seed(owner, "휴지통", true);
         Seeded others = seed(stranger, "남의 원고", false);
+        mockMvc.perform(as(body(post("/feedback"), "{\"category\":\"BUG\",\"message\":\"내 의견\"}")))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(body(post("/feedback"), "{\"category\":\"IDEA\",\"message\":\"남의 의견\"}"),
+                        stranger))
+                .andExpect(status().isCreated());
+        assertThat(feedbackOf(owner)).isEqualTo(1);
         assertThat(rowsOf(active)).isGreaterThanOrEqualTo(9);
         long othersBefore = rowsOf(others);
 
@@ -111,6 +122,8 @@ class UserDataApiTest extends ApiTestSupport {
         assertThat(rowsOf(others)).isEqualTo(othersBefore);
         assertThat(jdbcClient.sql("select count(*) from workspace_state where owner_user_id = :u")
                 .param("u", owner).query(Long.class).single()).isZero();
+        assertThat(feedbackOf(owner)).isZero();
+        assertThat(feedbackOf(stranger)).isEqualTo(1);
 
         mockMvc.perform(as(get("/projects/" + others.project()), stranger))
                 .andExpect(status().isOk());

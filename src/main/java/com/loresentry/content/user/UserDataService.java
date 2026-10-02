@@ -30,6 +30,7 @@ public class UserDataService {
     public void purge(UUID ownerUserId) {
         List<String> imageKeys = repository.imageKeysOf(ownerUserId);
         repository.deleteWorkspaceStates(ownerUserId);
+        repository.deleteFeedback(ownerUserId);
         repository.deleteProjects(ownerUserId);
         mediaCleanup.deleteAfterCommit(imageKeys);
     }
