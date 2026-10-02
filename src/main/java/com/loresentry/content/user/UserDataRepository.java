@@ -42,4 +42,10 @@ class UserDataRepository {
                 .param("owner", ownerUserId)
                 .update();
     }
+
+    int deleteFeedback(UUID userId) {
+        return jdbcClient.sql("delete from feedback where user_id = :user")
+                .param("user", userId)
+                .update();
+    }
 }

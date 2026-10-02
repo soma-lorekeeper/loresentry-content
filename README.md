@@ -75,7 +75,8 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/projects/{id}/favorites` | `{file_ids: [...]}`, trashed files excluded. |
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
-| `DELETE` | `/users/me/data` | Account withdrawal: deletes every project of the caller, active and trashed, with everything under it, then their S3 images. `204`, also when nothing is left. |
+| `POST` | `/feedback` | Stores in-app feedback. `201` with `{id, created_at}`. At most 20 per user per hour. |
+| `DELETE` | `/users/me/data` | Account withdrawal: deletes every project of the caller, active and trashed, with everything under it, their feedback, then their S3 images. `204`, also when nothing is left. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -126,10 +127,11 @@ never shown to a user.
 
 | Status | `code` |
 | --- | --- |
-| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET`, `INVALID_UPLOAD_REQUEST`, `INVALID_MEMO` |
+| 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET`, `INVALID_UPLOAD_REQUEST`, `INVALID_MEMO`, `INVALID_FEEDBACK` |
 | 401 | `USER_CONTEXT_REQUIRED` |
 | 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `MEMO_NOT_FOUND`, `NOT_FOUND` (no such path) |
 | 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
+| 429 | `FEEDBACK_RATE_LIMITED` (`next_action: RETRY_LATER`) |
 | 500 | `INTERNAL_ERROR` |
 
 `DOCUMENT_CONFLICT` is the one error that carries more than those three fields.
@@ -185,12 +187,30 @@ substring matching. `tsvector` needs a stemmer, and for Korean that choice
 changes the results enough that it belongs with the work on search quality
 itself.
 
+## Feedback
+
+Users send feedback from a modal in the app; it replaces the old mail and
+external-form links. The body is `{"category":"BUG|IDEA|OTHER","message":"...",
+"page":"/projects/"|null,"client":"<user agent>"|null}`. The message is trimmed
+and must be 1 to 2000 characters, otherwise `400 INVALID_FEEDBACK`. `page` and
+`client` are optional and cut to 200 and 300 characters. A 21st message within
+an hour answers `429 FEEDBACK_RATE_LIMITED`. Withdrawal deletes the user's rows.
+
+There is no read endpoint. Operators read it from the `content` database:
+
+```sql
+SELECT created_at, category, message, page, client, user_id
+FROM feedback
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
 ## Schema
 
 Flyway runs on startup and applies `src/main/resources/db/migration` to the
 `content` database. `V2` seeds the seven global base folders. `V4` adds the
-per-location title index, `V5` the save-id column, `V6` the `image` table and `V7`
-memos, favorites and workspace state.
+per-location title index, `V5` the save-id column, `V6` the `image` table, `V7`
+memos, favorites and workspace state, and `V11` the `feedback` table.
 `V3` widens
 `projects.name` to 255 characters, adds the unique index behind the
 duplicate-name rule, and puts `ON DELETE CASCADE` on the three foreign keys
@@ -212,6 +232,7 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `memo` | Project and file memos in one table, kept apart by `scope` |
 | `favorite` | Shortcuts to documents. No title or order — it points at the original |
 | `workspace_state` | The layout to restore, one row per user per project |
+| `feedback` | In-app feedback, keyed by user id. Read by operators with SQL |
 
 Rules the database enforces:
 

@@ -43,6 +43,8 @@ public final class ErrorResponses {
             case OBJECT_NOT_UPLOADED -> new Contract(409, "Object was not uploaded as declared.", "NONE");
             case MEMO_NOT_FOUND -> new Contract(404, "Memo was not found.", "NONE");
             case INVALID_MEMO -> new Contract(400, "Invalid memo.", "NONE");
+            case INVALID_FEEDBACK -> new Contract(400, "Invalid feedback.", "NONE");
+            case FEEDBACK_RATE_LIMITED -> new Contract(429, "Too much feedback in the last hour.", "RETRY_LATER");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }
