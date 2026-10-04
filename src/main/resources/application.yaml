@@ -14,6 +14,26 @@ spring:
       connection-timeout: 3000
       validation-timeout: 2000
       initialization-fail-timeout: -1
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: ${KAFKA_CLIENT_ID:content}
+    admin:
+      auto-create: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      compression-type: zstd
+      properties:
+        enable.idempotence: true
+        max.request.size: 4194304
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        group.protocol: consumer
 
 server:
   port: 8000
@@ -30,3 +50,9 @@ media:
     - image/jpeg
     - image/webp
     - image/gif
+
+kafka:
+  consumer:
+    groups:
+      graph-refresh-completed: content.graph-refresh-completed
+      user-deleted: content.user-deleted
