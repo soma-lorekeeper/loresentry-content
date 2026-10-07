@@ -9,6 +9,8 @@ import java.sql.Statement;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 
 import javax.sql.DataSource;
@@ -16,15 +18,27 @@ import javax.sql.DataSource;
 import com.loresentry.content.support.KafkaTestSupport;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * relay 의 한 회차를 실제 PostgreSQL 과 Kafka 로 돌려 본다. outbox 에 쓰는 쪽은 아직 없으므로, 그쪽이 넣을 행을
  * SQL 로 직접 넣는다. 스케줄러에 맡기지 않고 테스트가 한 회차를 직접 부른다 — 언제 돌았는지를 기다리며 맞출
  * 필요가 없다.
+ *
+ * <p>{@link OutputCaptureExtension} 은 테스트가 도는 동안 stdout 에 찍힌 로그를 모아 준다. 격리와 반복 실패를
+ * 알리는 로그의 문구는 운영에서 조회와 알림의 기준이 되므로, 문구가 바뀌면 테스트가 알아채게 한다.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class OutboxPublisherTest extends KafkaTestSupport {
 
     /**
@@ -44,6 +58,10 @@ class OutboxPublisherTest extends KafkaTestSupport {
     /** 앱이 쓰는 것과 별개의 DB 연결을 얻는 데 쓴다. 다른 인스턴스를 흉내 낼 때 필요하다. */
     @Autowired
     DataSource dataSource;
+
+    /** 코드로 트랜잭션을 여는 도구. 테스트가 직접 만든 publisher 에는 @Transactional 이 적용되지 않아서 쓴다. */
+    @Autowired
+    TransactionTemplate transaction;
 
     /**
      * outbox 에 미발행 행 하나를 넣는다. outbox 에 쓰는 쪽이 할 일을 대신한다. 적지 않은 컬럼(id, seq,
@@ -88,6 +106,18 @@ class OutboxPublisherTest extends KafkaTestSupport {
                 .query((rows, index) -> rows.getObject("published_at", OffsetDateTime.class))
                 .optional()
                 .orElse(null);
+    }
+
+    /**
+     * 행의 발행·실패 기록을 컬럼 이름으로 꺼낼 수 있게 돌려준다. 키는 attempts, last_error, quarantined_at,
+     * published_at 이고, 값이 없는 컬럼은 null 이다.
+     */
+    private Map<String, Object> row(UUID id) {
+        return jdbcClient
+                .sql("select attempts, last_error, quarantined_at, published_at from outbox_events where id = :id")
+                .param("id", id)
+                .query()
+                .singleRow();
     }
 
     /** 아직 보내지 않은 행의 수. 매 테스트 전에 outbox 를 비우므로 그 테스트가 넣은 행만 세게 된다. */
@@ -243,5 +273,124 @@ class OutboxPublisherTest extends KafkaTestSupport {
                 .isInstanceOf(IllegalTransactionStateException.class);
         assertThatThrownBy(() -> repository.markPublished(List.of()))
                 .isInstanceOf(IllegalTransactionStateException.class);
+        assertThatThrownBy(() -> repository.markFailed(UUID.randomUUID(), "reason"))
+                .isInstanceOf(IllegalTransactionStateException.class);
+        assertThatThrownBy(() -> repository.quarantine(UUID.randomUUID(), "reason"))
+                .isInstanceOf(IllegalTransactionStateException.class);
+    }
+
+    /**
+     * 한도(4MiB)를 넘는 행은 몇 번을 보내도 거절된다. 그대로 두면 매 회차가 이 행에서 멈춰 뒤의 행이 영영 나가지
+     * 못하므로, 격리해서 줄에서 빼고 뒤의 행은 같은 회차에 그대로 보낸다.
+     */
+    @Test
+    void quarantinesARowTooLargeToSendAndGoesOn(CapturedOutput output) {
+        String projectId = UUID.randomUUID().toString();
+        // 압축하면 아주 작아지지만 한도는 압축 전 크기로 잰다. send() 가 그 자리에서 거절한다.
+        String body = "a".repeat(4 * 1024 * 1024 + 1);
+        UUID tooLarge = insert("FileChanged", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
+        UUID next = insertFileChanged(projectId);
+
+        // 격리는 다시 보낼 실패가 아니므로 곧바로 이어서 돌아도 된다.
+        assertThat(publisher.publishBatch()).isTrue();
+
+        Map<String, Object> row = row(tooLarge);
+        assertThat(row.get("quarantined_at")).isNotNull();
+        assertThat(row.get("published_at")).isNull();
+        assertThat(row.get("attempts")).isEqualTo(1);
+        assertThat((String) row.get("last_error")).contains("RecordTooLargeException");
+        // 뒤의 행은 막히지 않고 나갔다.
+        assertThat(publishedAt(next)).isNotNull();
+        // 운영에서 이 문구로 격리를 찾는다.
+        assertThat(output.getOut()).contains("outbox event quarantined: id=" + tooLarge + ", type=FileChanged");
+        // 격리된 행은 다음 회차가 다시 고르지 않는다.
+        assertThat(publisher.publishBatch()).isFalse();
+    }
+
+    /** 계약에 없는 종류의 행은 어느 topic 으로 보낼지 정할 수 없다. 다시 읽어도 같으므로 격리한다. */
+    @Test
+    void quarantinesARowWithAnEventTypeTheContractDoesNotName() {
+        String projectId = UUID.randomUUID().toString();
+        UUID unknown = insert("Mystery", projectId, UUID.randomUUID(), "{}");
+        UUID next = insertFileChanged(projectId);
+
+        assertThat(publisher.publishBatch()).isTrue();
+
+        Map<String, Object> row = row(unknown);
+        assertThat(row.get("quarantined_at")).isNotNull();
+        assertThat(row.get("attempts")).isEqualTo(1);
+        assertThat((String) row.get("last_error")).contains("unknown event type: Mystery");
+        assertThat(publishedAt(next)).isNotNull();
+    }
+
+    /**
+     * producer 의 한도(4MiB)는 넘지 않지만 topic 의 한도는 넘는 행이다. graph-refresh topic 은 한도를 따로 정하지
+     * 않아 기본값(약 1MB)이다. 이때는 send() 가 아니라 broker 의 응답으로 실패를 알게 되는데, 마찬가지로 격리한다.
+     *
+     * <p>잘 줄지 않는 글이어야 한다. topic 의 한도는 압축한 뒤의 크기로 재므로, 같은 글자의 반복은 통과해 버린다.
+     */
+    @Test
+    void quarantinesARowTheBrokerRefuses() {
+        String projectId = UUID.randomUUID().toString();
+        // seed 가 같아 실행마다 같은 내용이다. 무작위 영문 3MB 는 압축해도 1MB 를 넘는다.
+        String body = new Random(17).ints(3_000_000, 'a', 'z' + 1)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
+        UUID refused = insert("GraphRefreshRequested", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
+        UUID next = insertFileChanged(projectId);
+
+        assertThat(publisher.publishBatch()).isTrue();
+
+        Map<String, Object> row = row(refused);
+        assertThat(row.get("quarantined_at")).isNotNull();
+        assertThat(row.get("attempts")).isEqualTo(1);
+        assertThat((String) row.get("last_error")).contains("RecordTooLargeException");
+        assertThat(publishedAt(next)).isNotNull();
+    }
+
+    /**
+     * broker 에 닿지 못하는 것은 행의 문제가 아니다. 격리하지 않고 횟수와 이유만 남긴 채 그 행에서 멈춘다. 같은
+     * 실패가 {@link OutboxPublisher#WARN_AFTER_ATTEMPTS} 번 이어지면 그때부터 로그로 알린다.
+     */
+    @Test
+    void recordsTheAttemptAndWarnsWhenTheBrokerStaysUnreachable(CapturedOutput output) {
+        String projectId = UUID.randomUUID().toString();
+        UUID first = insertFileChanged(projectId);
+        UUID second = insertFileChanged(projectId);
+        // 아무도 듣지 않는 주소로 보내는 producer. send() 가 broker 정보를 0.5초 기다린 뒤 실패한다.
+        DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:1",
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.MAX_BLOCK_MS_CONFIG, 500));
+        // Spring 이 만든 bean 이 아니라서 @Transactional 이 적용되지 않는다. 회차마다 트랜잭션을 직접 연다.
+        OutboxPublisher unreachable = new OutboxPublisher(repository, new KafkaTemplate<>(factory));
+        try {
+            for (int round = 1; round < OutboxPublisher.WARN_AFTER_ATTEMPTS; round++) {
+                // 결과를 변수에 먼저 받는다. execute() 가 돌려주는 타입을 assertThat 안에서는 컴파일러가 정하지 못한다.
+                Boolean goOn = transaction.execute(status -> unreachable.publishBatch());
+                // 다시 보내야 할 실패가 있었으므로 false 다. 부르는 쪽은 곧바로 이어서 돌리지 않는다.
+                assertThat(goOn).isFalse();
+            }
+            // 아직 임계값에 이르지 않았으므로 조용하다.
+            assertThat(output.getOut()).doesNotContain("outbox events still failing");
+
+            Boolean goOn = transaction.execute(status -> unreachable.publishBatch());
+            assertThat(goOn).isFalse();
+        } finally {
+            // 닫지 않으면 producer 의 thread 가 남아 접속을 계속 시도한다.
+            factory.destroy();
+        }
+
+        Map<String, Object> row = row(first);
+        assertThat(row.get("attempts")).isEqualTo(OutboxPublisher.WARN_AFTER_ATTEMPTS);
+        assertThat((String) row.get("last_error")).contains("TimeoutException");
+        assertThat(row.get("quarantined_at")).isNull();
+        assertThat(row.get("published_at")).isNull();
+        // 첫 행에서 멈췄으므로 둘째 행은 시도하지 않았다. 시도하지 않은 행의 횟수는 올리지 않는다.
+        assertThat(row(second).get("attempts")).isEqualTo(0);
+        // 운영에서 이 문구로 반복 실패를 찾는다. 뒤에는 이유별 개수가 붙는다 — 시도한 행이 하나뿐이라 1 이다.
+        assertThat(output.getOut()).contains(
+                "outbox events still failing: {org.apache.kafka.common.errors.TimeoutException=1}");
     }
 }

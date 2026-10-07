@@ -13,19 +13,20 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * outbox_events 테이블을 relay 의 입장에서 읽고 쓴다. relay 의 한 회차는 아래 세 메서드를 이 순서로 부른다.
+ * outbox_events 테이블을 relay 의 입장에서 읽고 쓴다. relay 의 한 회차는 아래 메서드를 이 순서로 부른다.
  *
  * <ol>
  *   <li>{@link #tryRelayLock()} — 이번 회차를 이 인스턴스가 돌려도 되는지 확인한다.
  *   <li>{@link #lockPending(int, long)} — 보낼 행을 순서대로 읽으면서 잠근다.
  *   <li>{@link #markPublished(List)} — 보낸 행에 발행 표시를 한다.
+ *   <li>{@link #markFailed(UUID, String)}, {@link #quarantine(UUID, String)} — 보내지 못한 행에 기록을 남긴다.
  * </ol>
  *
- * <p>전제: 세 메서드는 한 트랜잭션 안에서 불려야 한다. 1번과 2번의 잠금은 트랜잭션이 끝날 때 풀리므로,
+ * <p>전제: 이 메서드들은 한 트랜잭션 안에서 불려야 한다. 1번과 2번의 잠금은 트랜잭션이 끝날 때 풀리므로,
  * 트랜잭션 없이 부르면 SQL 한 줄이 끝나는 순간 풀려 아무것도 지켜 주지 못한다. 트랜잭션은 부르는 쪽
  * ({@link OutboxPublisher#publishBatch()})이 연다.
  *
- * <p>이 전제를 코드가 지키도록 세 메서드에 {@code MANDATORY} 를 붙였다. 이미 열려 있는 트랜잭션에 합류하고,
+ * <p>이 전제를 코드가 지키도록 모든 메서드에 {@code MANDATORY} 를 붙였다. 이미 열려 있는 트랜잭션에 합류하고,
  * 없으면 SQL 을 실행하기 전에 예외를 던진다. 여기서 직접 트랜잭션을 열지는 않는다 — 열면 메서드마다 따로
  * 열리고 닫혀서, 전제를 어긴 호출이 오류 없이 틀린 동작을 하게 된다.
  *
@@ -152,6 +153,55 @@ class OutboxRepository {
                 // List 를 그대로 넘기면 Spring 이 ?, ?, ? 로 펼쳐 SQL 이 깨진다. 배열로 넘겨야 PostgreSQL 배열 하나로
                 // 전달된다.
                 .param("ids", ids.toArray(UUID[]::new))
+                .update();
+    }
+
+    /**
+     * 보내지 못한 행에 시도 횟수와 이유를 남긴다. 행은 미발행으로 남아 다음 회차에 다시 나간다.
+     *
+     * <p>횟수는 격리 판단에 쓰지 않는다. 같은 실패가 이어지고 있다는 것을 사람이 알아채는 단서다.
+     *
+     * @param id 보내지 못한 행의 id
+     * @param error 실패의 이유. 예외의 클래스 이름과 메시지다
+     * @return 이번 실패까지 더한 시도 횟수
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    int markFailed(UUID id, String error) {
+        // attempts = attempts + 1 은 DB 가 한 번에 읽고 더한다. 앱이 읽어 와 더한 값을 다시 쓰는 방식과 달리
+        // 사이에 다른 변경이 끼어들 틈이 없다. returning 은 더한 뒤의 값을 조회 없이 돌려받는다.
+        return jdbcClient
+                .sql("""
+                        update outbox_events
+                        set attempts = attempts + 1, last_error = :error
+                        where id = :id
+                        returning attempts
+                        """)
+                .param("error", error)
+                .param("id", id)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * 다시 보내도 소용없는 행을 줄에서 뺀다. quarantined_at 이 채워진 행은 {@link #lockPending(int, long)} 이
+     * 고르지 않으므로, 그 뒤의 행이 막히지 않고 나간다.
+     *
+     * <p>행을 지우지는 않는다. 원인을 고친 뒤 사람이 quarantined_at 을 비우면 다음 회차에 다시 나간다.
+     *
+     * @param id 격리할 행의 id
+     * @param error 격리한 이유. 예외의 클래스 이름과 메시지다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    void quarantine(UUID id, String error) {
+        // 격리도 한 번의 시도이므로 attempts 를 함께 올린다.
+        jdbcClient
+                .sql("""
+                        update outbox_events
+                        set attempts = attempts + 1, last_error = :error, quarantined_at = now()
+                        where id = :id
+                        """)
+                .param("error", error)
+                .param("id", id)
                 .update();
     }
 
