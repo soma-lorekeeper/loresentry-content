@@ -44,7 +44,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/projects` | Active projects, most recently worked first. |
 | `GET` | `/projects/trash` | Trashed projects, most recently trashed first. |
 | `POST` | `/projects` | Creates a project. `201` with a `Location` header. |
-| `POST` | `/projects/sample` | Creates the example project "유리 정원의 기록" from `sample/glass-garden.json`, numbered `(2)`, `(3)` … when the owner already has an active one. No body; answers exactly like `POST /projects`. |
+| `POST` | `/projects/sample` | Creates the example project "유리 정원의 기록" from `sample/glass-garden.json`, or with `?locale=en` "The Glass Garden Records" from `sample/glass-garden.en.json`. A missing, `ko` or unknown `locale` gives the Korean one. Numbered `(2)`, `(3)` … when the owner already has an active project of that name. No body; answers exactly like `POST /projects`. |
 | `GET` | `/projects/{id}` | One active project. A trashed project is `404` — the requirement says it cannot be opened. |
 | `PATCH` | `/projects/{id}` | Partial update of `name` and `description`. No optimistic locking: last write wins. |
 | `POST` | `/projects/{id}/trash` | Moves to the trash. `204`, and repeating it does not push `trashed_at` forward. |
@@ -400,6 +400,17 @@ one transaction. Every document is saved once at revision `1` with a
 `description` property; manuscripts are saved last, so `last_file` is the final
 chapter. The seed is checked when the service starts (unknown keys, duplicate
 keys or pairs, self relations fail startup).
+
+`?locale=en` builds the English edition from
+`src/main/resources/sample/glass-garden.en.json` instead. It is a translation,
+not another sample: the same keys, folders, episodes, document order, paragraph
+counts and relations, with only the text in English. Only the exact lowercase
+value `en` selects it; a missing `locale`, `ko` or any other value builds the
+Korean project, so a caller that never sends a locale behaves as before. Both
+seeds are read and checked once when the service starts. The English name is
+numbered on its own (`The Glass Garden Records (2)`), compared
+case-insensitively like the unique index. `SampleSeedTest` fails the build when
+the two files drift apart in shape or the English one still contains Hangul.
 
 ## Not implemented yet
 - A retry for S3 objects whose post-commit delete failed. They are logged and
