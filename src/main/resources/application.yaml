@@ -27,6 +27,13 @@ spring:
       properties:
         enable.idempotence: true
         max.request.size: 4194304
+        # send() 가 broker 정보나 버퍼의 빈자리를 기다리는 최대 시간. broker 에 닿지 못하면 여기서 실패한다.
+        max.block.ms: 5000
+        # 요청 하나를 보내고 broker 의 응답을 기다리는 최대 시간. 넘으면 다시 보낸다.
+        request.timeout.ms: 10000
+        # send() 가 돌아온 뒤 성공이나 실패가 확정되기까지의 최대 시간(재시도 포함).
+        # OutboxPublisher 가 결과를 기다리는 25초보다 짧아야 한다.
+        delivery.timeout.ms: 20000
     consumer:
       auto-offset-reset: earliest
       enable-auto-commit: false

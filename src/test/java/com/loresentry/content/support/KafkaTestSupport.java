@@ -1,6 +1,7 @@
 package com.loresentry.content.support;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -10,6 +11,7 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -50,26 +52,56 @@ public abstract class KafkaTestSupport extends ApiTestSupport {
     private ConsumerFactory<String, String> consumerFactory;
 
     /**
-     * topic 에서 이 key 의 레코드가 나올 때까지 읽는다. 컨테이너를 모든 테스트가 같이 쓰므로 topic 에는 다른
-     * 테스트가 보낸 레코드도 남아 있다. 그래서 "하나만 있어야 한다"가 아니라 자기 key 를 찾는다.
+     * topic 에서 이 key 의 레코드가 {@code count} 개 나올 때까지 읽어, topic 에 실린 순서대로 돌려준다.
+     * 컨테이너를 모든 테스트가 같이 쓰므로 topic 에는 다른 테스트가 보낸 레코드도 남아 있다. 그래서 "이만큼만
+     * 있어야 한다"가 아니라 자기 key 를 찾는다.
      *
      * <p>읽을 때마다 새 group 으로 처음부터 읽는다. group 을 다시 쓰면 앞 테스트가 읽은 위치에서 이어 읽게 되어,
      * 테스트가 도는 순서에 따라 결과가 달라진다.
+     *
+     * @param topic 읽을 topic
+     * @param key 찾을 레코드의 key. 테스트마다 새 UUID 를 key 로 써서 서로 겹치지 않게 한다
+     * @param count 기다릴 레코드 수
+     * @return key 가 맞는 레코드 {@code count} 개
+     * @throws AssertionError 20초 안에 {@code count} 개가 모이지 않았을 때
      */
-    protected ConsumerRecord<String, String> awaitRecord(String topic, String key) {
+    protected List<ConsumerRecord<String, String>> awaitRecords(String topic, String key, int count) {
+        // 지금까지 찾은, key 가 맞는 레코드. key 가 같으면 같은 partition 이라 읽은 순서가 곧 실린 순서다.
+        List<ConsumerRecord<String, String>> found = new ArrayList<>();
+        // 새 group 이름으로 consumer 를 만든다. 두 번째 인자는 client id 뒤에 붙일 글자인데 필요 없어 null 이다.
+        // try-with-resources 라 메서드를 나갈 때 consumer 가 닫힌다.
         try (Consumer<String, String> consumer =
                 consumerFactory.createConsumer("test." + UUID.randomUUID(), null)) {
             consumer.subscribe(List.of(topic));
+            // 20초 뒤를 마감으로 잡는다. nanoTime 은 흘러간 시간만 재므로 시스템 시계가 바뀌어도 영향받지 않는다.
             long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
             while (System.nanoTime() < deadline) {
+                // 최대 0.5초 기다려 새로 도착한 레코드를 받는다. 없으면 빈 묶음이 온다.
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
+                    // 다른 테스트가 보낸 레코드는 건너뛴다.
                     if (key.equals(record.key())) {
-                        return record;
+                        found.add(record);
+                        // 다 모였으면 남은 시간을 기다리지 않고 곧바로 돌려준다.
+                        if (found.size() == count) {
+                            return found;
+                        }
                     }
                 }
             }
         }
-        throw new AssertionError("no record with key " + key + " on " + topic);
+        // 마감까지 다 모이지 않았다. 몇 개까지 왔는지 알려 주며 테스트를 실패시킨다.
+        throw new AssertionError("expected " + count + " record(s) with key " + key + " on " + topic
+                + " but found " + found.size());
+    }
+
+    /**
+     * 물려받은 정리는 projects 만 지운다. outbox 와 inbox 는 프로젝트와 외래 키로 묶여 있지 않아서, 앞 테스트가
+     * 남긴 행이 그대로 남는다. 매 테스트 전에 따로 비운다.
+     */
+    @BeforeEach
+    void clearOutboxAndInbox() {
+        jdbcClient.sql("delete from outbox_events").update();
+        jdbcClient.sql("delete from inbox_events").update();
     }
 
     /**

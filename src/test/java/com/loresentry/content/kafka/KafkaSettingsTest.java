@@ -33,7 +33,7 @@ class KafkaSettingsTest extends KafkaTestSupport {
 
         kafkaTemplate.send(record).get(10, TimeUnit.SECONDS);
 
-        ConsumerRecord<String, String> received = awaitRecord(PROJECT_CHANGED, key);
+        ConsumerRecord<String, String> received = awaitRecords(PROJECT_CHANGED, key, 1).getFirst();
         assertThat(received.value()).isEqualTo(value);
         assertThat(new String(received.headers().lastHeader("ce_id").value(), StandardCharsets.UTF_8))
                 .isEqualTo(eventId);
@@ -53,7 +53,7 @@ class KafkaSettingsTest extends KafkaTestSupport {
 
         kafkaTemplate.send(PROJECT_CHANGED, key, body).get(30, TimeUnit.SECONDS);
 
-        assertThat(awaitRecord(PROJECT_CHANGED, key).value()).isEqualTo(body);
+        assertThat(awaitRecords(PROJECT_CHANGED, key, 1).getFirst().value()).isEqualTo(body);
     }
 
     /**
