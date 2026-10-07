@@ -33,11 +33,15 @@ import tools.jackson.databind.node.ObjectNode;
  * 같은 프로젝트 안의 관계, revision 과 자동 버전이 모두 평소 규칙대로 생긴다 — 예시가 실제 문서와
  * 다르게 생기면 예시에서만 나는 버그가 생긴다. 한 트랜잭션이라 중간에 실패하면 반쪽 프로젝트가 남지
  * 않는다.
+ *
+ * <p>한국어와 영어 두 벌이 있다. 둘 다 기동 때 한 번 읽고 검사해 두고, 요청마다 고르기만 한다.
  */
 @Service
 public class SampleProjectService {
 
     private static final String MANUSCRIPT = "MANUSCRIPT";
+
+    private static final String ENGLISH = "en";
 
     private final ProjectService projects;
 
@@ -45,7 +49,9 @@ public class SampleProjectService {
 
     private final DocumentService documents;
 
-    private final SampleSeed seed = SampleSeed.load();
+    private final SampleSeed korean = SampleSeed.load(SampleSeed.KOREAN);
+
+    private final SampleSeed english = SampleSeed.load(SampleSeed.ENGLISH);
 
     private final JsonMapper json = JsonMapper.builder().build();
 
@@ -56,9 +62,10 @@ public class SampleProjectService {
     }
 
     @Transactional
-    public Project create(UUID ownerUserId) {
+    public Project create(UUID ownerUserId, String locale) {
+        SampleSeed seed = seedFor(locale);
         Project project = projects.create(ownerUserId,
-                new CreateProjectRequest(freeName(ownerUserId), seed.description()));
+                new CreateProjectRequest(freeName(ownerUserId, seed.name()), seed.description()));
         UUID projectId = project.id();
 
         Map<String, Created> created = new HashMap<>();
@@ -81,7 +88,7 @@ public class SampleProjectService {
             }
         }
 
-        Map<String, Map<String, String>> links = symmetricLinks();
+        Map<String, Map<String, String>> links = symmetricLinks(seed);
         for (Pending pending : order) {
             List<DocumentSnapshot.Relation> relations = new ArrayList<>();
             links.getOrDefault(pending.key(), Map.of()).forEach((target, description) -> {
@@ -99,16 +106,24 @@ public class SampleProjectService {
     }
 
     /**
+     * 로케일은 소문자 {@code ko} 와 {@code en} 뿐이다. {@code en} 이 아니면 없든 모르는 값이든 한국어
+     * 예시다 — 로케일을 보내지 않는 예전 프론트와 게이트웨이도 지금까지처럼 한국어 예시를 받는다.
+     */
+    private SampleSeed seedFor(String locale) {
+        return ENGLISH.equals(locale) ? english : korean;
+    }
+
+    /**
      * 이미 같은 이름의 활성 프로젝트가 있으면 {@code (2)}, {@code (3)} … 을 붙인다. 이름 비교는
      * 유일 인덱스처럼 대소문자를 가리지 않는다.
      */
-    private String freeName(UUID ownerUserId) {
+    private String freeName(UUID ownerUserId, String base) {
         Set<String> taken = projects.listActive(ownerUserId).stream()
                 .map(project -> project.name().toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
-        String name = seed.name();
+        String name = base;
         for (int suffix = 2; taken.contains(name.toLowerCase(Locale.ROOT)); suffix++) {
-            name = seed.name() + " (" + suffix + ")";
+            name = base + " (" + suffix + ")";
         }
         return name;
     }
@@ -118,7 +133,7 @@ public class SampleProjectService {
      * 뒤에 저장한 문서가 그 쌍을 빠뜨리면 앞에서 만든 행이 지워진다. 그래서 문서마다 자기가 걸린
      * 관계를 다 들고 저장한다.
      */
-    private Map<String, Map<String, String>> symmetricLinks() {
+    private Map<String, Map<String, String>> symmetricLinks(SampleSeed seed) {
         Map<String, Map<String, String>> links = new HashMap<>();
         for (SampleSeed.Link link : seed.relations()) {
             String description = link.description() == null ? "" : link.description();

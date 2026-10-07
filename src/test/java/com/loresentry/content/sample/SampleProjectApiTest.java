@@ -1,6 +1,7 @@
 package com.loresentry.content.sample;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -17,6 +18,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -28,11 +30,14 @@ import com.loresentry.content.support.ApiTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import tools.jackson.databind.JsonNode;
 
 class SampleProjectApiTest extends ApiTestSupport {
 
     private static final String NAME = "유리 정원의 기록";
+
+    private static final String ENGLISH_NAME = "The Glass Garden Records";
 
     private static final int MANUSCRIPTS = 7;
 
@@ -44,7 +49,15 @@ class SampleProjectApiTest extends ApiTestSupport {
     private DocumentService documents;
 
     private JsonNode createSample(UUID user) throws Exception {
-        MvcResult result = mockMvc.perform(as(post("/projects/sample"), user))
+        return createSample(post("/projects/sample"), user);
+    }
+
+    private JsonNode createSample(UUID user, String locale) throws Exception {
+        return createSample(post("/projects/sample?locale={locale}", locale), user);
+    }
+
+    private JsonNode createSample(MockHttpServletRequestBuilder request, UUID user) throws Exception {
+        MvcResult result = mockMvc.perform(as(request, user))
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode body = read(result);
@@ -197,6 +210,83 @@ class SampleProjectApiTest extends ApiTestSupport {
     }
 
     @Test
+    void createsTheEnglishSampleWhenAskedForEnglish() throws Exception {
+        JsonNode created = createSample(owner, "en");
+        assertThat(created.get("name").stringValue()).isEqualTo(ENGLISH_NAME);
+        assertThat(created.get("description").stringValue()).startsWith("The story of the people");
+        assertThat(created.get("last_file").get("title").stringValue())
+                .isEqualTo("Ch. 7 · Night of the Fracture");
+        String project = created.get("id").stringValue();
+
+        JsonNode tree = read(mockMvc.perform(as(get("/projects/" + project + "/files")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.episodes[*].name").value(contains(
+                        "Episode 1. Season of Glass", "Episode 2. The North Door",
+                        "Episode 3. Night of the Fracture")))
+                .andExpect(jsonPath("$.documents.length()").value(MANUSCRIPTS + SETTINGS))
+                .andReturn());
+        String seoyun = null;
+        Map<String, String> titles = new HashMap<>();
+        for (JsonNode document : tree.get("documents")) {
+            titles.put(document.get("id").stringValue(), document.get("title").stringValue());
+            if ("Seoyun".equals(document.get("title").stringValue())) {
+                seoyun = document.get("id").stringValue();
+            }
+        }
+
+        JsonNode content = read(mockMvc.perform(as(get("/files/" + seoyun + "/content")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.doc.content[0].content[0].text").value(
+                        org.hamcrest.Matchers.startsWith("Seoyun is the most recent recorder")))
+                .andExpect(jsonPath("$.properties[0].value").value(
+                        "The youngest recorder in the Garden Recorders"))
+                .andReturn());
+
+        // 키가 같으므로 관계도 한국어판과 같은 문서끼리 이어진다. 제목만 영어다.
+        Set<String> related = new HashSet<>();
+        for (JsonNode relation : content.get("relations")) {
+            related.add(titles.get(relation.get("target_document_id").stringValue()));
+        }
+        assertThat(related).containsExactlyInAnyOrder(
+                "Ch. 1 · The First Greenhouse", "Ch. 2 · Light Patrol", "Ch. 3 · The Cracked Lens",
+                "Ch. 6 · The Glass Garden", "Ch. 7 · Night of the Fracture",
+                "Garden Recorders", "Harin", "First Patrol");
+        assertThat(content.get("relations").toString()).contains("Youngest recorder");
+
+        mockMvc.perform(as(get("/projects/" + project + "/graph")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nodes.length()").value(MANUSCRIPTS + SETTINGS))
+                .andExpect(jsonPath("$.edges.length()").value(RELATIONS))
+                .andExpect(jsonPath("$.episodes[0].document_ids.length()").value(3))
+                .andExpect(jsonPath("$.episodes[1].document_ids.length()").value(2))
+                .andExpect(jsonPath("$.episodes[2].document_ids.length()").value(2));
+    }
+
+    @Test
+    void numbersTheEnglishNameOnItsOwn() throws Exception {
+        // 한국어 예시와 이름이 다르므로 서로의 번호에 끼어들지 않는다.
+        assertThat(createSample(owner).get("name").stringValue()).isEqualTo(NAME);
+        assertThat(createSample(owner, "en").get("name").stringValue()).isEqualTo(ENGLISH_NAME);
+        assertThat(createSample(owner, "en").get("name").stringValue()).isEqualTo(ENGLISH_NAME + " (2)");
+
+        // 영어 이름에는 대소문자가 있다. 유일 인덱스처럼 대소문자를 가리지 않고 겹침을 본다.
+        mockMvc.perform(as(body(post("/projects"), "{\"name\":\"the glass garden records (3)\"}")))
+                .andExpect(status().isCreated());
+        assertThat(createSample(owner, "en").get("name").stringValue()).isEqualTo(ENGLISH_NAME + " (4)");
+    }
+
+    @Test
+    void fallsBackToKoreanForAnyOtherLocale() throws Exception {
+        // 로케일은 소문자 ko 와 en 뿐이다. 그 밖의 값은 오류가 아니라 지금까지의 한국어 예시다.
+        for (String locale : List.of("ko", "", "EN", "en-US", "fr")) {
+            JsonNode created = createSample(UUID.randomUUID(), locale);
+            assertThat(created.get("name").stringValue()).as(locale).isEqualTo(NAME);
+            assertThat(created.get("last_file").get("title").stringValue()).as(locale)
+                    .isEqualTo("7화 · 균열의 밤");
+        }
+    }
+
+    @Test
     void leavesNothingBehindWhenPopulatingFails() throws Exception {
         AtomicInteger saves = new AtomicInteger();
         willAnswer(invocation -> {
@@ -224,7 +314,7 @@ class SampleProjectApiTest extends ApiTestSupport {
 
     @Test
     void loadsAConsistentSeed() {
-        SampleSeed seed = SampleSeed.load();
+        SampleSeed seed = SampleSeed.load(SampleSeed.KOREAN);
 
         assertThat(seed.episodes()).hasSize(3);
         assertThat(seed.episodes().stream().mapToInt(episode -> episode.manuscripts().size()).sum())
