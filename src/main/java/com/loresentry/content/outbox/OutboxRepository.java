@@ -26,9 +26,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 트랜잭션 없이 부르면 SQL 한 줄이 끝나는 순간 풀려 아무것도 지켜 주지 못한다. 트랜잭션은 부르는 쪽
  * ({@link OutboxPublisher#publishBatch()})이 연다.
  *
- * <p>이 전제를 코드가 지키도록 모든 메서드에 {@code MANDATORY} 를 붙였다. 이미 열려 있는 트랜잭션에 합류하고,
+ * <p>이 전제를 코드가 지키도록 위 메서드들에 {@code MANDATORY} 를 붙였다. 이미 열려 있는 트랜잭션에 합류하고,
  * 없으면 SQL 을 실행하기 전에 예외를 던진다. 여기서 직접 트랜잭션을 열지는 않는다 — 열면 메서드마다 따로
  * 열리고 닫혀서, 전제를 어긴 호출이 오류 없이 틀린 동작을 하게 된다.
+ *
+ * <p>{@link #deletePublishedBefore(OffsetDateTime)} 만 예외다. 회차와 무관하게 정리 작업({@link OutboxPurge})이
+ * 하루 한 번 따로 부른다. 잠금에 기대지 않는 SQL 한 줄이라 스스로 트랜잭션을 연다.
  *
  * <p>outbox 에 행을 넣는 메서드는 여기에 없다. 넣는 쪽은 아직 만들지 않았다.
  */
@@ -202,6 +205,31 @@ class OutboxRepository {
                         """)
                 .param("error", error)
                 .param("id", id)
+                .update();
+    }
+
+    /**
+     * 발행이 끝난 지 오래된 행을 지운다. relay 는 보낸 행에 발행 표시만 하고 남겨 두므로, 지우지 않으면 테이블이
+     * 끝없이 커진다.
+     *
+     * <p>발행된 행만 대상이다. 아직 보내지 못한 행과 격리된 행은 {@code published_at} 이 비어 있어 조건에 걸리지
+     * 않는다 — 격리된 행은 사람이 풀어 줄 때까지 남아 있어야 한다.
+     *
+     * <p>다른 메서드와 달리 {@code MANDATORY} 가 아니다. 잠금을 트랜잭션 끝까지 들고 있어야 하는 일이 아니라 SQL
+     * 한 줄로 끝나므로, 불린 자리에서 트랜잭션을 열고 닫는다.
+     *
+     * @param cutoff 이 시각보다 먼저 발행된 행을 지운다
+     * @return 지운 행의 수
+     */
+    @Transactional
+    int deletePublishedBefore(OffsetDateTime cutoff) {
+        return jdbcClient
+                .sql("""
+                        DELETE 
+                        FROM outbox_events 
+                        WHERE published_at < :cutoff
+                        """)
+                .param("cutoff", cutoff)
                 .update();
     }
 
