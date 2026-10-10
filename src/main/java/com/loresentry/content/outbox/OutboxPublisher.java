@@ -11,6 +11,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.loresentry.content.outbox.Round.Outcome;
+
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.slf4j.Logger;
@@ -90,6 +92,9 @@ class OutboxPublisher {
     private record Failure(OutboxEvent event, Throwable cause, boolean quarantine) {
     }
 
+    /** 할 일이 없었던 회차의 결과. 개수가 모두 0 이다. */
+    private static final Round NOTHING_DONE = new Round(Outcome.IDLE, 0, 0, 0);
+
     /**
      * 한 묶음을 보낸다. 흐름은 다음과 같다.
      *
@@ -106,20 +111,20 @@ class OutboxPublisher {
      * 전제: 다른 객체가 불러야 한다. Spring 은 밖에서 들어오는 호출에만 트랜잭션을 씌우므로, 이 클래스 안에서
      * 직접 부르면 트랜잭션이 열리지 않는다.
      *
-     * @return 곧바로 다음 묶음을 보내도 되면 true. 보낼 행이 없었거나, 다른 인스턴스가 돌리고 있거나, 다시 보내야
-     *         할 실패가 있었으면 false — broker 쪽 문제일 수 있으므로 같은 행을 연달아 두드리지 않는다. 격리로
-     *         끝난 실패는 다시 보낼 것이 아니므로 false 로 만들지 않는다
+     * @return 이 회차의 결과. 보낼 행이 없었거나 다른 인스턴스가 돌리고 있으면 {@link Outcome#IDLE}, 다시
+     *         보내야 할 실패가 있었으면 {@link Outcome#FAILED}, 그 밖에는 {@link Outcome#MORE} 다. 격리로 끝난
+     *         실패는 다시 보낼 것이 아니므로 FAILED 로 만들지 않는다
      */
     @Transactional
-    boolean publishBatch() {
+    Round publishBatch() {
         // 1. 다른 인스턴스가 이미 돌리고 있으면 이번 회차는 건너뛴다.
         if (!repository.tryRelayLock()) {
-            return false;
+            return NOTHING_DONE;
         }
-        // 2. 보낼 행을 읽으면서 잠근다. 비어 있으면 할 일이 없으므로 false 를 돌려 다음 주기까지 쉬게 한다.
+        // 2. 보낼 행을 읽으면서 잠근다. 비어 있으면 할 일이 없으므로 IDLE 을 돌려 다음 주기까지 쉬게 한다.
         List<OutboxEvent> batch = repository.lockPending(MAX_ROWS, MAX_BYTES);
         if (batch.isEmpty()) {
-            return false;
+            return NOTHING_DONE;
         }
 
         // 3. 전부 먼저 보내고 결과는 그다음에 기다린다. 행마다 보내고 바로 기다리면 메시지가 하나씩 따로 나가
@@ -169,7 +174,7 @@ class OutboxPublisher {
             } catch (InterruptedException interrupted) {
                 // 종료 신호다. 발행 실패가 아니므로 남은 행은 기록 없이 미발행으로 두고 더 기다리지 않는다.
                 // 흔한 관용구와 달리 interrupt 표시를 다시 켜지 않는다. 표시가 켜진 채로는 virtual thread 에서
-                // 바로 뒤의 DB 기록과 commit 이 실패해 이 회차 전체가 rollback 된다. false 를 돌려주면 부르는
+                // 바로 뒤의 DB 기록과 commit 이 실패해 이 회차 전체가 rollback 된다. FAILED 를 돌려주면 부르는
                 // 쪽이 곧바로 다음 회차를 돌리지 않으므로, 표시가 없어도 종료가 늦어지지 않는다.
                 failed = true;
                 break;
@@ -192,6 +197,9 @@ class OutboxPublisher {
         // WARN_AFTER_ATTEMPTS 번 이상 실패한 행을 이유별로 센 것. 키는 예외의 클래스 이름, 값은 행의 수다.
         // TreeMap 이라 키의 이름순으로 정렬되어, 로그에 찍히는 순서가 실행마다 같다.
         Map<String, Integer> stuck = new TreeMap<>();
+        // 이번 회차에 격리한 행의 수와, 미발행으로 남겨 다시 보낼 행의 수. 결과에 실어 돌려준다.
+        int quarantined = 0;
+        int retrying = 0;
         for (Failure failure : failures) {
             UUID id = failure.event().id();
             // DB 에 남길 이유. 예외의 클래스 이름과 메시지다.
@@ -199,11 +207,13 @@ class OutboxPublisher {
             // 로그에 남길 이유. 예외 메시지는 로그에 적지 않으므로 클래스 이름만 쓴다.
             String reason = failure.cause().getClass().getName();
             if (failure.quarantine()) {
+                quarantined++;
                 repository.quarantine(id, error);
                 // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다.
                 log.error("outbox event quarantined: id={}, type={}, reason={}",
                         id, failure.event().eventType(), reason);
             } else {
+                retrying++;
                 failed = true;
                 if (repository.markFailed(id, error) >= WARN_AFTER_ATTEMPTS) {
                     // 이 이유의 개수를 1 올린다. 처음 나온 이유면 1 로 시작한다.
@@ -217,7 +227,9 @@ class OutboxPublisher {
         if (!stuck.isEmpty()) {
             log.warn("outbox events still failing: {}", stuck);
         }
-        return !failed;
+        // 다시 보내야 할 실패나 종료 신호가 있었으면 FAILED, 없었으면 MORE 다. 여기까지 왔다면 읽은 행이 있었으므로
+        // IDLE 은 아니다.
+        return new Round(failed ? Outcome.FAILED : Outcome.MORE, published.size(), quarantined, retrying);
     }
 
     /**

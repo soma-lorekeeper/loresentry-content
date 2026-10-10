@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import javax.sql.DataSource;
 
+import com.loresentry.content.outbox.Round.Outcome;
 import com.loresentry.content.support.KafkaTestSupport;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -142,8 +143,8 @@ class OutboxPublisherTest extends KafkaTestSupport {
         long seq = jdbcClient.sql("select seq from outbox_events where id = :id")
                 .param("id", id).query(Long.class).single();
 
-        // 보낸 것이 있고 실패가 없었으니 true 다.
-        assertThat(publisher.publishBatch()).isTrue();
+        // 보낸 것이 있고 실패가 없었으니 MORE 다.
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
 
         ConsumerRecord<String, String> record = awaitRecords(PROJECT_CHANGED, projectId, 1).getFirst();
         // header 가 outbox 의 어느 컬럼에서 왔는지 하나씩 확인한다.
@@ -164,11 +165,11 @@ class OutboxPublisherTest extends KafkaTestSupport {
         String projectId = UUID.randomUUID().toString();
         UUID id = insertFileChanged(projectId);
 
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
         OffsetDateTime firstPublishedAt = publishedAt(id);
 
-        // 보낼 행이 없으면 false 다. relay 는 이것을 보고 다음 주기까지 쉰다.
-        assertThat(publisher.publishBatch()).isFalse();
+        // 보낼 행이 없으면 IDLE 이다. relay 는 이것을 보고 다음 주기까지 쉰다.
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.IDLE);
         // 다시 보냈다면 발행 시각이 새로 적혔을 것이다.
         assertThat(publishedAt(id)).isEqualTo(firstPublishedAt);
     }
@@ -203,11 +204,11 @@ class OutboxPublisherTest extends KafkaTestSupport {
         }
 
         // 한 묶음을 보냈고 실패가 없었으니 곧바로 이어서 돌아도 된다.
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
         assertThat(pendingCount()).isEqualTo(1);
 
         // 두 번째 회차가 남은 하나를 보낸다.
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
         assertThat(pendingCount()).isZero();
     }
 
@@ -224,7 +225,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
             insert("FileChanged", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
         }
 
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
 
         // 일곱 개 가운데 여섯 개가 나가고 하나가 남았다. 행 수 상한(50)에는 한참 못 미친다.
         assertThat(pendingCount()).isEqualTo(1);
@@ -247,8 +248,8 @@ class OutboxPublisherTest extends KafkaTestSupport {
                 statement.execute("select pg_advisory_xact_lock(" + OutboxRepository.RELAY_LOCK_KEY + ")");
             }
 
-            // 잠금을 못 얻었으므로 아무것도 보내지 않고 false 다.
-            assertThat(publisher.publishBatch()).isFalse();
+            // 잠금을 못 얻었으므로 아무것도 보내지 않고 IDLE 이다.
+            assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.IDLE);
             assertThat(publishedAt(id)).isNull();
 
             // 트랜잭션을 끝내 잠금을 푼다.
@@ -256,7 +257,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
         }
 
         // 잠금은 트랜잭션이 끝나면서 풀렸다. 이제는 이쪽이 보낸다.
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
         assertThat(publishedAt(id)).isNotNull();
     }
 
@@ -291,8 +292,8 @@ class OutboxPublisherTest extends KafkaTestSupport {
         UUID tooLarge = insert("FileChanged", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
         UUID next = insertFileChanged(projectId);
 
-        // 격리는 다시 보낼 실패가 아니므로 곧바로 이어서 돌아도 된다.
-        assertThat(publisher.publishBatch()).isTrue();
+        // 격리는 다시 보낼 실패가 아니므로 MORE 다. 뒤의 행 하나를 보냈고 하나를 격리했다.
+        assertThat(publisher.publishBatch()).isEqualTo(new Round(Outcome.MORE, 1, 1, 0));
 
         Map<String, Object> row = row(tooLarge);
         assertThat(row.get("quarantined_at")).isNotNull();
@@ -304,7 +305,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
         // 운영에서 이 문구로 격리를 찾는다.
         assertThat(output.getOut()).contains("outbox event quarantined: id=" + tooLarge + ", type=FileChanged");
         // 격리된 행은 다음 회차가 다시 고르지 않는다.
-        assertThat(publisher.publishBatch()).isFalse();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.IDLE);
     }
 
     /** 계약에 없는 종류의 행은 어느 topic 으로 보낼지 정할 수 없다. 다시 읽어도 같으므로 격리한다. */
@@ -314,7 +315,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
         UUID unknown = insert("Mystery", projectId, UUID.randomUUID(), "{}");
         UUID next = insertFileChanged(projectId);
 
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
 
         Map<String, Object> row = row(unknown);
         assertThat(row.get("quarantined_at")).isNotNull();
@@ -339,7 +340,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
         UUID refused = insert("GraphRefreshRequested", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
         UUID next = insertFileChanged(projectId);
 
-        assertThat(publisher.publishBatch()).isTrue();
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
 
         Map<String, Object> row = row(refused);
         assertThat(row.get("quarantined_at")).isNotNull();
@@ -366,17 +367,17 @@ class OutboxPublisherTest extends KafkaTestSupport {
         // Spring 이 만든 bean 이 아니라서 @Transactional 이 적용되지 않는다. 회차마다 트랜잭션을 직접 연다.
         OutboxPublisher unreachable = new OutboxPublisher(repository, new KafkaTemplate<>(factory));
         try {
-            for (int round = 1; round < OutboxPublisher.WARN_AFTER_ATTEMPTS; round++) {
+            for (int attempt = 1; attempt < OutboxPublisher.WARN_AFTER_ATTEMPTS; attempt++) {
                 // 결과를 변수에 먼저 받는다. execute() 가 돌려주는 타입을 assertThat 안에서는 컴파일러가 정하지 못한다.
-                Boolean goOn = transaction.execute(status -> unreachable.publishBatch());
-                // 다시 보내야 할 실패가 있었으므로 false 다. 부르는 쪽은 곧바로 이어서 돌리지 않는다.
-                assertThat(goOn).isFalse();
+                Round result = transaction.execute(status -> unreachable.publishBatch());
+                // 다시 보내야 할 실패가 있었으므로 FAILED 다. 첫 행에서 멈췄으므로 실패로 센 것은 그 한 행이다.
+                assertThat(result).isEqualTo(new Round(Outcome.FAILED, 0, 0, 1));
             }
             // 아직 임계값에 이르지 않았으므로 조용하다.
             assertThat(output.getOut()).doesNotContain("outbox events still failing");
 
-            Boolean goOn = transaction.execute(status -> unreachable.publishBatch());
-            assertThat(goOn).isFalse();
+            Round result = transaction.execute(status -> unreachable.publishBatch());
+            assertThat(result).isEqualTo(new Round(Outcome.FAILED, 0, 0, 1));
         } finally {
             // 닫지 않으면 producer 의 thread 가 남아 접속을 계속 시도한다.
             factory.destroy();
