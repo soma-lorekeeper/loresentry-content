@@ -68,7 +68,7 @@ class MigrationTest {
     void seedsTheBaseFolders() throws Exception {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             assertThat(column(statement, "select code from base_folders order by position"))
-                    .containsExactly("WORLDVIEW", "CHARACTER", "LOCATION", "MANUSCRIPT",
+                    .containsExactly("MANUSCRIPT", "WORLDVIEW", "CHARACTER", "LOCATION",
                             "ORGANIZATION", "ITEM", "EVENT");
         }
     }
