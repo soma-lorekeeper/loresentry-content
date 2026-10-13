@@ -45,6 +45,7 @@ public final class ErrorResponses {
             case INVALID_MEMO -> new Contract(400, "Invalid memo.", "NONE");
             case INVALID_FEEDBACK -> new Contract(400, "Invalid feedback.", "NONE");
             case FEEDBACK_RATE_LIMITED -> new Contract(429, "Too much feedback in the last hour.", "RETRY_LATER");
+            case INVALID_WITHDRAWAL_SURVEY -> new Contract(400, "Invalid withdrawal survey.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }
