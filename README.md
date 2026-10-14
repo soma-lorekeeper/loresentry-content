@@ -84,6 +84,24 @@ relayed yet**: `api.loresentry.com` has no authentication, so relaying them woul
 put an unauthenticated CRUD surface on the public internet. The relay ships with
 the gateway's JWT verification.
 
+## Internal endpoints
+
+These are not relayed by the gateway; only in-cluster callers such as
+`loresentry-ai-chat` use them. They take the same `X-User-Id` header, answer
+`404 PROJECT_NOT_FOUND` for a project that is missing, someone else's or in the
+trash, and send `Cache-Control: no-store`.
+
+| Method | Path | Behaviour |
+| --- | --- | --- |
+| `GET` | `/internal/projects/{id}/chat-snapshot` | Everything the AI chat reads on each turn, in one read-only `REPEATABLE READ` transaction: the project's name and description; manuscripts in reading order (episode rank, then document rank, manuscripts outside an episode last) with a 1-based `ordinal`; setting documents by folder position; every document with its non-empty properties; relations whose two documents are both active; project memos and memos on active documents, oldest first; and `size`. |
+| `GET` | `/internal/projects/{id}/chat-size` | `{"size": n}` from one aggregate query that loads no bodies. Always equal to the snapshot's `size` for the same data. |
+
+`size` counts Unicode code points in the titles and bodies of the included
+documents, their included properties, relation descriptions, and memo titles and
+bodies. Trashed documents, their memos and their relations are left out of both
+the lists and the count. The same data always serialises to the same bytes, so
+the model's prompt cache keeps hitting.
+
 ## Identity
 
 Every `/projects` request carries the caller's user id in the same header
