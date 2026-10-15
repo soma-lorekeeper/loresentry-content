@@ -1,5 +1,6 @@
 package com.loresentry.content.inbox;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -16,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>이 전제를 코드가 지키도록 {@code MANDATORY} 를 붙였다. 이미 열려 있는 트랜잭션에 합류하고, 없으면 SQL 을
  * 실행하기 전에 예외를 던진다. outbox 의 repository 와 같은 방식이다.
+ *
+ * <p>{@link #deleteProcessedBefore(OffsetDateTime)} 만 예외다. 처리와 무관하게 정리 작업({@link InboxPurge})이 하루
+ * 한 번 따로 부르고, SQL 한 줄이라 스스로 트랜잭션을 연다.
  */
 @Repository
 class InboxRepository {
@@ -51,5 +55,22 @@ class InboxRepository {
                 .update();
         // 넣은 행의 수. 겹쳐서 넘어갔으면 0 이다.
         return inserted == 1;
+    }
+
+    /**
+     * 오래된 처리 기록을 지운다. 기록이 지워진 이벤트가 다시 오면 처음 온 것처럼 처리되므로, 같은 이벤트가 다시 올 수
+     * 있는 기간이 지난 기록만 지워야 한다. 그 기간은 부르는 쪽({@link InboxPurge#RETENTION})이 정한다.
+     *
+     * <p>{@code processed_at} 에는 index 가 없어 표 전체를 훑는다. 이벤트 하나에 작은 행 하나라 지금 규모에서는
+     * 문제없다.
+     *
+     * @param cutoff 이 시각보다 먼저 처리된 기록을 지운다
+     * @return 지운 행의 수
+     */
+    @Transactional
+    int deleteProcessedBefore(OffsetDateTime cutoff) {
+        return jdbcClient.sql("delete from inbox_events where processed_at < :cutoff")
+                .param("cutoff", cutoff)
+                .update();
     }
 }
