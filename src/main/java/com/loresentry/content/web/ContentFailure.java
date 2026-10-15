@@ -32,6 +32,7 @@ public class ContentFailure extends RuntimeException {
         INVALID_MEMO,
         INVALID_FEEDBACK,
         FEEDBACK_RATE_LIMITED,
+        INVALID_WITHDRAWAL_SURVEY,
         INTERNAL_ERROR
     }
 

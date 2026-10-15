@@ -44,7 +44,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `GET` | `/projects` | Active projects, most recently worked first. |
 | `GET` | `/projects/trash` | Trashed projects, most recently trashed first. |
 | `POST` | `/projects` | Creates a project. `201` with a `Location` header. |
-| `POST` | `/projects/sample` | Creates the example project "유리 정원의 기록" from `sample/glass-garden.json`, numbered `(2)`, `(3)` … when the owner already has an active one. No body; answers exactly like `POST /projects`. |
+| `POST` | `/projects/sample` | Creates the example project "유리 정원의 기록" from `sample/glass-garden.json`, or with `?locale=en` "The Glass Garden Records" from `sample/glass-garden.en.json`. A missing, `ko` or unknown `locale` gives the Korean one. Numbered `(2)`, `(3)` … when the owner already has an active project of that name. No body; answers exactly like `POST /projects`. |
 | `GET` | `/projects/{id}` | One active project. A trashed project is `404` — the requirement says it cannot be opened. |
 | `PATCH` | `/projects/{id}` | Partial update of `name` and `description`. No optimistic locking: last write wins. |
 | `POST` | `/projects/{id}/trash` | Moves to the trash. `204`, and repeating it does not push `trashed_at` forward. |
@@ -83,6 +83,24 @@ and returns the payload nested under `upstream`. **The project endpoints are not
 relayed yet**: `api.loresentry.com` has no authentication, so relaying them would
 put an unauthenticated CRUD surface on the public internet. The relay ships with
 the gateway's JWT verification.
+
+## Internal endpoints
+
+These are not relayed by the gateway; only in-cluster callers such as
+`loresentry-ai-chat` use them. They take the same `X-User-Id` header, answer
+`404 PROJECT_NOT_FOUND` for a project that is missing, someone else's or in the
+trash, and send `Cache-Control: no-store`.
+
+| Method | Path | Behaviour |
+| --- | --- | --- |
+| `GET` | `/internal/projects/{id}/chat-snapshot` | Everything the AI chat reads on each turn, in one read-only `REPEATABLE READ` transaction: the project's name and description; manuscripts in reading order (episode rank, then document rank, manuscripts outside an episode last) with a 1-based `ordinal`; setting documents by folder position; every document with its non-empty properties; relations whose two documents are both active; project memos and memos on active documents, oldest first; and `size`. |
+| `GET` | `/internal/projects/{id}/chat-size` | `{"size": n}` from one aggregate query that loads no bodies. Always equal to the snapshot's `size` for the same data. |
+
+`size` counts Unicode code points in the titles and bodies of the included
+documents, their included properties, relation descriptions, and memo titles and
+bodies. Trashed documents, their memos and their relations are left out of both
+the lists and the count. The same data always serialises to the same bytes, so
+the model's prompt cache keeps hitting.
 
 ## Identity
 
@@ -400,6 +418,17 @@ one transaction. Every document is saved once at revision `1` with a
 `description` property; manuscripts are saved last, so `last_file` is the final
 chapter. The seed is checked when the service starts (unknown keys, duplicate
 keys or pairs, self relations fail startup).
+
+`?locale=en` builds the English edition from
+`src/main/resources/sample/glass-garden.en.json` instead. It is a translation,
+not another sample: the same keys, folders, episodes, document order, paragraph
+counts and relations, with only the text in English. Only the exact lowercase
+value `en` selects it; a missing `locale`, `ko` or any other value builds the
+Korean project, so a caller that never sends a locale behaves as before. Both
+seeds are read and checked once when the service starts. The English name is
+numbered on its own (`The Glass Garden Records (2)`), compared
+case-insensitively like the unique index. `SampleSeedTest` fails the build when
+the two files drift apart in shape or the English one still contains Hangul.
 
 ## Not implemented yet
 - A retry for S3 objects whose post-commit delete failed. They are logged and

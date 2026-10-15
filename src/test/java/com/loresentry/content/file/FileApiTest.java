@@ -72,8 +72,8 @@ class FileApiTest extends ApiTestSupport {
         mockMvc.perform(as(get("/projects/" + project + "/files")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.folders.length()").value(7))
-                .andExpect(jsonPath("$.folders[0].code").value("WORLDVIEW"))
-                .andExpect(jsonPath("$.folders[3].code").value("MANUSCRIPT"))
+                .andExpect(jsonPath("$.folders[0].code").value("MANUSCRIPT"))
+                .andExpect(jsonPath("$.folders[1].code").value("WORLDVIEW"))
                 .andExpect(jsonPath("$.episodes.length()").value(0))
                 .andExpect(jsonPath("$.documents.length()").value(0));
     }

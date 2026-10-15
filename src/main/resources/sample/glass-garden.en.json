@@ -1,0 +1,266 @@
+{
+  "name": "The Glass Garden Records",
+  "description": "The story of the people who record the fractures spreading through the Glass Garden north of the Royal City. A sample project for your first look around.",
+  "episodes": [
+    {
+      "title": "Episode 1. Season of Glass",
+      "manuscripts": [
+        {
+          "key": "ch-1",
+          "title": "Ch. 1 · The First Greenhouse",
+          "description": "The day Seoyun joins the Garden Recorders",
+          "body": [
+            "On the day Seoyun first stepped through the gate of the Glass Garden, the mist beaded on every greenhouse was slowly scattering the morning sunlight. The place of the Recorders' youngest member, they said, had stood empty for a long time.",
+            "In place of a greeting, Harin handed over a thick record book. Only one line was written on its first page: “Write down where the light has passed.”"
+          ]
+        },
+        {
+          "key": "ch-2",
+          "title": "Ch. 2 · Light Patrol",
+          "description": "Seoyun walks the night patrol for the first time",
+          "body": [
+            "When night fell, the garden became a place nothing like it was by day. Seoyun held the lantern low and followed the narrow paths between the greenhouses.",
+            "A faint grain of light lingered on every glass wall. Harin called it “the echo of the day,” and Seoyun copied its directions into the record book, one by one."
+          ]
+        },
+        {
+          "key": "ch-3",
+          "title": "Ch. 3 · The Cracked Lens",
+          "description": "Finding the traces of memory left in a lens",
+          "body": [
+            "On the third night of patrol, where the path turned toward the North Greenhouse, Seoyun picked up a cracked lens.",
+            "When she raised the lens to her eye, the light strayed from its course and bent to one side. Every bent ray pointed to the locked North Door."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Episode 2. The North Door",
+      "manuscripts": [
+        {
+          "key": "ch-4",
+          "title": "Ch. 4 · The Locked Door",
+          "description": "Why the North Greenhouse door stayed locked so long",
+          "body": [
+            "When talk turned to the North Door, Harin said nothing for a long while. The door had been locked since the day Theo left the garden.",
+            "The key lay deep in Harin's drawer. It had rusted, but it was a key Harin had never been able to throw away."
+          ]
+        },
+        {
+          "key": "ch-5",
+          "title": "Ch. 5 · The Silent Lighthouse",
+          "description": "The lighthouse at Lavender Harbor goes dark",
+          "body": [
+            "That same night, the glass lighthouse of Lavender Harbor went out without a sound. When the light that had shone over the northern route was gone, the whole harbor held its breath.",
+            "Lena Arbel of the Silver Voyagers stood at the end of the pier and looked up at the dark lighthouse. She was reading not the direction in which the light had died, but the direction it had been facing."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Episode 3. Night of the Fracture",
+      "manuscripts": [
+        {
+          "key": "ch-6",
+          "title": "Ch. 6 · The Glass Garden",
+          "description": "The first agreement among those gathered in the garden",
+          "body": [
+            "When morning came to the Glass Garden, the dew that had gathered overnight collected the light like tiny lenses. Seoyun followed the first light to wake and walked to the central greenhouse.",
+            "Harin was already there. The two of them looked up at the cracked pane without a word. The fracture had grown a hand's span longer since the night before.",
+            "Lena, who had come up from the harbor, stood in the doorway. That day, for the first time, the three of them agreed to look toward the same place."
+          ]
+        },
+        {
+          "key": "ch-7",
+          "title": "Ch. 7 · Night of the Fracture",
+          "description": "The night the fracture first shows itself in the greenhouses",
+          "body": [
+            "When night came, the garden held its breath before the glass did. Each time the moonlight swept across the greenhouse roofs, silver lines spread through every cracked pane. Only on the third patrol did Seoyun realize that all of those lines pointed to the same place.",
+            "In front of the long-locked North Door there was only a single set of footprints. There were signs of someone going in, but none of anyone coming back out. When she laid her hand on the handle, a cold tremor climbed up her wrist. A sentence she had written in her notes the night before came back to her: “A fracture is not a door but the direction of a memory.”",
+            "Seoyun set the lantern down on the ground and slowly pushed the door open. From beyond the darkness, a familiar voice called her name. It was exactly the way it had been called the last time, long ago, by someone who had left this garden."
+          ]
+        }
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "c-seoyun",
+      "folder_code": "CHARACTER",
+      "title": "Seoyun",
+      "description": "The youngest recorder in the Garden Recorders",
+      "body": [
+        "Seoyun is the most recent recorder to join the Garden Recorders. Since taking on the night patrol, she has begun to read the direction of the light left on the glass.",
+        "She says little, but once she has written a sentence down, she keeps to it to the end."
+      ]
+    },
+    {
+      "key": "c-lena",
+      "folder_code": "CHARACTER",
+      "title": "Lena Arbel",
+      "description": "A navigator who reads by feel the directions other people's memories leave behind",
+      "body": [
+        "Lena reads by feel the directions that other people's memories leave behind. Even in the thickest fog, she has never once lost her way.",
+        "The Silver Voyagers called her the last navigator. She never uses the title herself. Reading memories always demands a price, and part of every memory she reads stays with her as her own."
+      ]
+    },
+    {
+      "key": "c-harin",
+      "folder_code": "CHARACTER",
+      "title": "Harin",
+      "description": "The gardener who tends the North Greenhouse",
+      "body": [
+        "Harin has worked in the garden longer than any other gardener. Even after the North Greenhouse was locked, she has gone on tending the flower bed in front of it every day.",
+        "It was Harin who handed Seoyun the record book, and she has still told no one what happened on the day Theo left."
+      ]
+    },
+    {
+      "key": "c-teo",
+      "folder_code": "CHARACTER",
+      "title": "Theo",
+      "description": "The one who left the garden and came back",
+      "body": [
+        "Once a recorder with the Garden Recorders. He left the garden on the day the North Door was locked, and no word of him came after that."
+      ]
+    },
+    {
+      "key": "p-garden",
+      "folder_code": "LOCATION",
+      "title": "The Glass Garden",
+      "description": "The Glass Garden north of the Royal City",
+      "body": [
+        "A garden of dozens of glass greenhouses. By day it gathers light, and by night it leaves the grain of that light on its glass walls."
+      ]
+    },
+    {
+      "key": "p-north",
+      "folder_code": "LOCATION",
+      "title": "North Greenhouse",
+      "description": "The northern end of the garden, locked for a long time",
+      "body": [
+        "The northernmost greenhouse in the garden. No one has seen inside since its door was locked. The fractures always grow toward it."
+      ]
+    },
+    {
+      "key": "p-lavender",
+      "folder_code": "LOCATION",
+      "title": "Lavender Harbor",
+      "description": "A harbor where a glass lighthouse lights the northern route every night",
+      "body": [
+        "A harbor town three days' journey from the garden. The light of its glass lighthouse is said to be made of the same glass as the garden's greenhouses."
+      ]
+    },
+    {
+      "key": "o-archive",
+      "folder_code": "ORGANIZATION",
+      "title": "Garden Recorders",
+      "description": "The people who record the garden's light and fractures",
+      "body": [
+        "A circle that records, every night, the direction of the light left in the garden. Their record books run unbroken, without a single volume missing, from the day the garden was made."
+      ]
+    },
+    {
+      "key": "o-fleet",
+      "folder_code": "ORGANIZATION",
+      "title": "Silver Voyagers",
+      "description": "A seafaring company working to secure safe memory routes",
+      "body": [
+        "A seafaring company that opens routes by following the directions memories leave behind. Its base is Lavender Harbor."
+      ]
+    },
+    {
+      "key": "i-key",
+      "folder_code": "ITEM",
+      "title": "Old Key",
+      "description": "The key that opens the North Door",
+      "body": [
+        "A rusted brass key. Harin has kept it deep in a drawer."
+      ]
+    },
+    {
+      "key": "i-lens",
+      "folder_code": "ITEM",
+      "title": "Cracked Lens",
+      "description": "A lens that shows the direction of light twisted",
+      "body": [
+        "Look through it and the light seems to bend to one side. The bent light always points to the same place."
+      ]
+    },
+    {
+      "key": "e-patrol",
+      "folder_code": "EVENT",
+      "title": "First Patrol",
+      "description": "Seoyun's first night patrol",
+      "body": [
+        "The day Seoyun first walked the night patrol alone. In that day's record, the directions of the light gather in one place for the first time."
+      ]
+    },
+    {
+      "key": "e-crack",
+      "folder_code": "EVENT",
+      "title": "Night of the Fracture",
+      "description": "The night a fracture first appeared in the greenhouses",
+      "body": [
+        "The night the fracture reaching toward the North Greenhouse became visible. The locked North Door opens again."
+      ]
+    },
+    {
+      "key": "w-law",
+      "folder_code": "WORLDVIEW",
+      "title": "Law of Fractures",
+      "description": "A fracture is not a door but the direction of a memory",
+      "body": [
+        "A fracture in glass does not grow from where the glass broke. It grows along the direction in which someone's memory is heading.",
+        "So if you follow a fracture, you reach the one the memory belongs to."
+      ]
+    }
+  ],
+  "relations": [
+    { "from": "ch-1", "to": "c-seoyun", "description": "Joins the Recorders" },
+    { "from": "ch-1", "to": "c-harin", "description": "" },
+    { "from": "ch-1", "to": "p-garden", "description": "" },
+    { "from": "ch-1", "to": "o-archive", "description": "" },
+    { "from": "ch-2", "to": "c-seoyun", "description": "" },
+    { "from": "ch-2", "to": "c-harin", "description": "" },
+    { "from": "ch-2", "to": "p-garden", "description": "" },
+    { "from": "ch-2", "to": "e-patrol", "description": "" },
+    { "from": "ch-3", "to": "c-seoyun", "description": "" },
+    { "from": "ch-3", "to": "p-north", "description": "" },
+    { "from": "ch-3", "to": "i-lens", "description": "Picks up the lens" },
+    { "from": "ch-3", "to": "w-law", "description": "" },
+    { "from": "ch-4", "to": "c-harin", "description": "" },
+    { "from": "ch-4", "to": "c-teo", "description": "The day he left is first mentioned" },
+    { "from": "ch-4", "to": "p-north", "description": "" },
+    { "from": "ch-4", "to": "i-key", "description": "" },
+    { "from": "ch-5", "to": "c-lena", "description": "First appearance" },
+    { "from": "ch-5", "to": "p-lavender", "description": "" },
+    { "from": "ch-5", "to": "o-fleet", "description": "" },
+    { "from": "ch-6", "to": "c-seoyun", "description": "" },
+    { "from": "ch-6", "to": "c-harin", "description": "" },
+    { "from": "ch-6", "to": "c-lena", "description": "Joins the garden" },
+    { "from": "ch-6", "to": "p-garden", "description": "" },
+    { "from": "ch-6", "to": "o-archive", "description": "" },
+    { "from": "ch-7", "to": "c-seoyun", "description": "Opens the North Door" },
+    { "from": "ch-7", "to": "c-teo", "description": "The voice beyond the door" },
+    { "from": "ch-7", "to": "p-north", "description": "" },
+    { "from": "ch-7", "to": "e-crack", "description": "" },
+    { "from": "ch-7", "to": "i-key", "description": "" },
+    { "from": "ch-7", "to": "w-law", "description": "" },
+    { "from": "c-seoyun", "to": "o-archive", "description": "Youngest recorder" },
+    { "from": "c-seoyun", "to": "c-harin", "description": "Senior who walks the patrol with her" },
+    { "from": "c-seoyun", "to": "e-patrol", "description": "" },
+    { "from": "c-lena", "to": "o-fleet", "description": "The last navigator" },
+    { "from": "c-lena", "to": "p-lavender", "description": "" },
+    { "from": "c-harin", "to": "p-north", "description": "Tends the North Greenhouse" },
+    { "from": "c-harin", "to": "i-key", "description": "Has kept the key" },
+    { "from": "c-harin", "to": "c-teo", "description": "Watched him leave" },
+    { "from": "c-teo", "to": "o-archive", "description": "Former recorder" },
+    { "from": "i-key", "to": "p-north", "description": "Opens the North Door" },
+    { "from": "i-lens", "to": "w-law", "description": "" },
+    { "from": "e-patrol", "to": "p-garden", "description": "" },
+    { "from": "e-crack", "to": "p-north", "description": "" },
+    { "from": "e-crack", "to": "w-law", "description": "" },
+    { "from": "o-archive", "to": "p-garden", "description": "" },
+    { "from": "o-fleet", "to": "p-lavender", "description": "Home base" }
+  ]
+}
