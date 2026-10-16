@@ -93,3 +93,9 @@ kafka:
       # relay 를 돌릴지. false 면 이벤트가 outbox 에 쌓이기만 하고 Kafka 로 나가지 않는다.
       # 급히 멈춰야 할 때 Deployment 에 KAFKA_PRODUCER_RELAY_ENABLED=false 를 넣으면 재배포 없이 끌 수 있다.
       enabled: ${KAFKA_PRODUCER_RELAY_ENABLED:true}
+
+# Private S3 bucket and request API; completion listener remains separately controlled.
+graph-refresh:
+  enabled: ${GRAPH_REFRESH_ENABLED:false}
+  bucket: ${GRAPHRAG_S3_BUCKET:}
+  model: ${GRAPH_REFRESH_MODEL:gpt-6-luna}

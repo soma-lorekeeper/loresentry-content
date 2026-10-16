@@ -3,6 +3,9 @@ package com.loresentry.content.user;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.outbox.ContentEvents;
+import com.loresentry.content.refresh.RefreshObjects;
+
 import com.loresentry.content.media.MediaCleanup;
 
 import org.springframework.stereotype.Service;
@@ -17,21 +20,31 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserDataService {
 
+    private final ContentEvents events;
+
+    private final RefreshObjects refreshObjects;
+
     private final UserDataRepository repository;
 
     private final MediaCleanup mediaCleanup;
 
-    public UserDataService(UserDataRepository repository, MediaCleanup mediaCleanup) {
+    public UserDataService(UserDataRepository repository, MediaCleanup mediaCleanup, ContentEvents events, RefreshObjects refreshObjects) {
+        this.refreshObjects = refreshObjects;
+        this.events = events;
         this.repository = repository;
         this.mediaCleanup = mediaCleanup;
     }
 
     @Transactional
     public void purge(UUID ownerUserId) {
+        events.lock(ownerUserId);
         List<String> imageKeys = repository.imageKeysOf(ownerUserId);
         repository.deleteWorkspaceStates(ownerUserId);
         repository.deleteFeedback(ownerUserId);
+        List<UUID> projectIds = events.projects(ownerUserId);
+        events.userDeleted(ownerUserId);
         repository.deleteProjects(ownerUserId);
+        projectIds.forEach(refreshObjects::deleteProjectAfterCommit);
         mediaCleanup.deleteAfterCommit(imageKeys);
     }
 }

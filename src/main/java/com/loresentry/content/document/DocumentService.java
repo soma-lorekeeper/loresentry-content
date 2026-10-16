@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.outbox.ContentEvents;
+
 import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
 
@@ -30,6 +32,8 @@ public class DocumentService {
     /** 에디터 스키마의 판. 노드·마크 구성이 바뀌면 올린다. */
     static final int BODY_SCHEMA_VERSION = 1;
 
+    private final ContentEvents events;
+
     private final JsonMapper json = JsonMapper.builder().build();
 
     static final int TITLE_MAX = 255;
@@ -38,7 +42,8 @@ public class DocumentService {
 
     private final ProjectActivity activity;
 
-    public DocumentService(DocumentRepository repository, ProjectActivity activity) {
+    public DocumentService(DocumentRepository repository, ProjectActivity activity, ContentEvents events) {
+        this.events = events;
         this.repository = repository;
         this.activity = activity;
     }
@@ -57,6 +62,7 @@ public class DocumentService {
     @Transactional
     public DocumentResponses.Content save(UUID ownerUserId, UUID fileId, long expectedRevision,
             UUID saveId, DocumentSnapshot incoming) {
+        events.lock(ownerUserId);
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         if (header.locked()) {
             throw new ContentFailure(ContentFailure.Reason.DOCUMENT_LOCKED);
@@ -83,8 +89,12 @@ public class DocumentService {
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
 
+        var affected = new java.util.HashSet<>(events.neighbors(fileId));
         repository.replaceProperties(fileId, snapshot.properties());
         repository.replaceRelations(fileId, snapshot.relations());
+        affected.addAll(events.neighbors(fileId));
+        events.fileChanged(fileId, "UPDATED");
+        affected.forEach(id -> events.fileChanged(id, "UPDATED"));
 
         DocumentResponses.Content saved = repository.find(ownerUserId, fileId).orElseThrow();
         recordAutoVersion(fileId, saved);
@@ -95,6 +105,7 @@ public class DocumentService {
 
     @Transactional
     public DocumentResponses.Content setLocked(UUID ownerUserId, UUID fileId, boolean locked) {
+        events.lock(ownerUserId);
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         repository.setLocked(fileId, locked);
         activity.touch(header.projectId());
@@ -110,6 +121,7 @@ public class DocumentService {
     /** 사용자가 이름을 붙인 버전은 파일이 영구 삭제될 때까지 남는다 — {@code expires_at}이 없다. */
     @Transactional
     public DocumentResponses.Version saveNamed(UUID ownerUserId, UUID fileId, String label) {
+        events.lock(ownerUserId);
         DocumentResponses.Content current = get(ownerUserId, fileId);
         UUID versionId = repository.insertVersion(fileId, current.revisionNo(), "NAMED",
                 label == null || label.isBlank() ? null : label.trim(), current.snapshot(), null);
@@ -125,6 +137,7 @@ public class DocumentService {
     @Transactional
     public DocumentResponses.Content restore(UUID ownerUserId, UUID fileId, UUID versionId,
             long expectedRevision) {
+        events.lock(ownerUserId);
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         if (header.locked()) {
             throw new ContentFailure(ContentFailure.Reason.DOCUMENT_LOCKED);
@@ -149,8 +162,12 @@ public class DocumentService {
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
 
+        var affected = new java.util.HashSet<>(events.neighbors(fileId));
         repository.replaceProperties(fileId, snapshot.properties());
         repository.replaceRelations(fileId, snapshot.relations());
+        affected.addAll(events.neighbors(fileId));
+        events.fileChanged(fileId, "UPDATED");
+        affected.forEach(id -> events.fileChanged(id, "UPDATED"));
         // 버전 복원도 본문을 바꾼다.
         activity.recordWorkedFile(header.projectId(), fileId);
         return repository.find(ownerUserId, fileId).orElseThrow();
@@ -158,6 +175,7 @@ public class DocumentService {
 
     @Transactional
     public void deleteVersion(UUID ownerUserId, UUID fileId, UUID versionId) {
+        events.lock(ownerUserId);
         requireHeader(ownerUserId, fileId);
         DocumentResponses.Version version = repository.findVersion(fileId, versionId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.VERSION_NOT_FOUND));

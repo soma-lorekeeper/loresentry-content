@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.loresentry.content.outbox.ContentEvents;
+
 import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
 
@@ -19,11 +21,14 @@ public class FileService {
     /** {@code base_folders} 시드의 원고 폴더. 에피소드가 붙을 수 있는 유일한 분류다. */
     private static final String MANUSCRIPT = "MANUSCRIPT";
 
+    private final ContentEvents events;
+
     private final FileRepository repository;
 
     private final ProjectActivity activity;
 
-    public FileService(FileRepository repository, ProjectActivity activity) {
+    public FileService(FileRepository repository, ProjectActivity activity, ContentEvents events) {
+        this.events = events;
         this.repository = repository;
         this.activity = activity;
     }
@@ -43,6 +48,7 @@ public class FileService {
 
     @Transactional
     public Object create(UUID ownerUserId, UUID projectId, FileRequests.Create request) {
+        events.lock(ownerUserId);
         requireProject(ownerUserId, projectId);
         String title = validateTitle(request.title());
         String kind = request.kind() == null ? "" : request.kind();
@@ -52,6 +58,7 @@ public class FileService {
             case "episode" -> createEpisode(ownerUserId, projectId, title);
             default -> throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         };
+        if (created instanceof FileResponses.Document document) { events.fileChanged(document.id(), "CREATED"); }
         activity.touch(projectId);
         return created;
     }
@@ -76,6 +83,7 @@ public class FileService {
 
     @Transactional
     public FileResponses.Document rename(UUID ownerUserId, UUID fileId, FileRequests.Rename request) {
+        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         String title = validateTitle(request.title());
@@ -83,11 +91,13 @@ public class FileService {
         FileResponses.Document renamed = FileResponses.Document.from(
                 duplicateAware(() -> repository.renameDocument(fileId, title)));
         activity.touch(document.projectId());
+        events.fileChanged(fileId, "UPDATED");
         return renamed;
     }
 
     @Transactional
     public FileResponses.Episode renameEpisode(UUID ownerUserId, UUID episodeId, FileRequests.Rename request) {
+        events.lock(ownerUserId);
         requireEpisode(ownerUserId, episodeId);
         String name = validateTitle(request.title());
 
@@ -103,6 +113,7 @@ public class FileService {
      */
     @Transactional
     public FileResponses.Document move(UUID ownerUserId, UUID fileId, FileRequests.Move request) {
+        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
 
@@ -116,6 +127,7 @@ public class FileService {
         FileResponses.Document moved = FileResponses.Document.from(
                 duplicateAware(() -> repository.moveDocument(fileId, folderId, episodeId, rank)));
         activity.touch(document.projectId());
+        events.fileChanged(fileId, "UPDATED");
         return moved;
     }
 
@@ -140,14 +152,17 @@ public class FileService {
 
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID fileId) {
+        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         repository.trashDocument(fileId);
+        events.fileChanged(fileId, "TRASHED");
         activity.touch(document.projectId());
     }
 
     @Transactional
     public FileResponses.Document restore(UUID ownerUserId, UUID fileId) {
+        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
             return FileResponses.Document.from(document);
@@ -165,22 +180,28 @@ public class FileService {
         FileResponses.Document restored = FileResponses.Document.from(
                 duplicateAware(() -> repository.restoreDocument(fileId, dropEpisode, rank)));
         activity.touch(document.projectId());
+        events.fileChanged(fileId, "RESTORED");
         return restored;
     }
 
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID fileId) {
+        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.FILE_NOT_TRASHED);
         }
+        List<UUID> neighbors = events.neighbors(fileId);
         repository.deleteDocument(fileId);
+        events.fileDeleted(document.projectId(), fileId);
+        neighbors.forEach(id -> events.fileChanged(id, "UPDATED"));
         activity.touch(document.projectId());
     }
 
     /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). */
     @Transactional
     public void deleteEpisode(UUID ownerUserId, UUID episodeId) {
+        events.lock(ownerUserId);
         requireEpisode(ownerUserId, episodeId);
         UUID projectId = repository.projectOfEpisodeOrNull(episodeId);
         repository.deleteEpisode(episodeId);

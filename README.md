@@ -438,7 +438,32 @@ the two files drift apart in shape or the English one still contains Hangul.
 - User-created sections and general folders. **Decided against**: episode folders
   stay the only folder a user can create, so the frontend drops those menus.
 - Export to PDF, DOCX and HWP.
-- Everything that needs graph-rag or Kafka: the relation graph, the AI graph
-  refresh, and publishing `outbox_events`.
+- User approval and application of generated refresh proposals; the Kafka request/completion flow is implemented.
 
-- Kafka change-event publishing.
+- Production refresh activation needs the private artifact bucket, Pod Identity grants, and enabled flags.
+
+## Kafka business integration
+
+Domain changes now write FileChanged/ProjectDeleted snapshots to Outbox in the same transaction.
+ContentEvents serializes writes per owner before taking snapshots. Document saves publish both old
+and current relation neighbors. The existing relay publishes the immutable rows.
+V15 adds projection_heads and stored refresh-result-v3 candidates.
+
+With GRAPH_REFRESH_ENABLED=true, POST /projects/{projectId}/graph-refresh accepts
+{"files":["document UUID"]} and returns 202 with request_id. GET on that path plus /{requestId}
+returns status and candidate JSON. The request checks project ownership, at most 20 documents,
+and at most 5,000 Unicode code points per active body. It stores exact S3 input bytes first,
+then commits the request and its Outbox event with checksum, user context, model profile, and
+required projection event IDs. Missing projection heads for existing documents are seeded.
+
+KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED=true enables completion consumption.
+The handler verifies request/project/fingerprint/result outcome and stores candidates plus
+READY/FAILED in the Inbox transaction. Repeated request completions do not duplicate candidates.
+Proposals are never automatically applied. S3 reads are bounded to 15 seconds; include this cost
+when changing poll batches. Incomplete runs expire after one hour. Project/user deletion cleans
+private artifacts after commit; late orphan completions also clean their result. Cleanup failures
+fall back to the bucket lifecycle. GRAPH_REFRESH_ENABLED defaults to false and requires
+GRAPHRAG_S3_BUCKET; the media bucket is not used.
+
+Deployment infrastructure and the two-service test commands are maintained in the sibling
+GraphRAG repository's deploy/README.md and tests/fullstack/README.md.

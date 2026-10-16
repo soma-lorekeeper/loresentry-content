@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class UserDeletedService {
+    private final UserDataService data;
+    public UserDeletedService(UserDataService data) { this.data=data; }
 
     /**
      * 유저 삭제 이벤트 하나를 처리한다.
@@ -25,9 +27,6 @@ public class UserDeletedService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void handle(UserDeletedEvent event) {
-        // 다음 task: UserDataService.purge(event.userId()) 를 부른다. purge 의 @Transactional 은 이 트랜잭션에 합류하고,
-        // S3 이미지는 commit 뒤에 지운다. 지금은 gateway 가 HTTP 로 같은 purge 를 부르고 있고, purge 는 여러 번 불려도
-        // 결과가 같다.
-        // 그때까지 listener 는 kafka.consumer.enabled.user-deleted 로 꺼 둔다. 켜면 받은 이벤트를 처리한 것으로 기록만 한다.
+        data.purge(event.userId());
     }
 }

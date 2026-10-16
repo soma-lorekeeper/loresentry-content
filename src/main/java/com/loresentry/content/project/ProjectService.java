@@ -3,6 +3,9 @@ package com.loresentry.content.project;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.outbox.ContentEvents;
+import com.loresentry.content.refresh.RefreshObjects;
+
 import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.web.ContentFailure;
 
@@ -18,11 +21,17 @@ public class ProjectService {
 
     static final int DESCRIPTION_MAX = 500;
 
+    private final ContentEvents events;
+
+    private final RefreshObjects refreshObjects;
+
     private final ProjectRepository repository;
 
     private final MediaCleanup mediaCleanup;
 
-    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup) {
+    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup, ContentEvents events, RefreshObjects refreshObjects) {
+        this.refreshObjects = refreshObjects;
+        this.events = events;
         this.repository = repository;
         this.mediaCleanup = mediaCleanup;
     }
@@ -49,6 +58,7 @@ public class ProjectService {
 
     @Transactional
     public Project create(UUID ownerUserId, CreateProjectRequest request) {
+        events.lock(ownerUserId);
         String name = validateName(request.name());
         String description = validateDescription(request.description());
 
@@ -57,6 +67,7 @@ public class ProjectService {
 
     @Transactional
     public Project update(UUID ownerUserId, UUID projectId, UpdateProjectRequest request) {
+        events.lock(ownerUserId);
         if (request.name() == null && request.description() == null) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
@@ -77,12 +88,14 @@ public class ProjectService {
     /** 이미 휴지통에 있으면 아무것도 하지 않는다. 재시도가 {@code trashed_at}을 밀지 않아야 한다. */
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID projectId) {
+        events.lock(ownerUserId);
         require(ownerUserId, projectId);
         repository.markTrashed(projectId);
     }
 
     @Transactional
     public Project restore(UUID ownerUserId, UUID projectId) {
+        events.lock(ownerUserId);
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             return project;
@@ -100,12 +113,15 @@ public class ProjectService {
      */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID projectId) {
+        events.lock(ownerUserId);
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_TRASHED);
         }
         List<String> imageKeys = repository.imageKeys(projectId);
+        events.projectDeleted(projectId, "PROJECT_DELETED");
         repository.delete(projectId);
+        refreshObjects.deleteProjectAfterCommit(projectId);
         mediaCleanup.deleteAfterCommit(imageKeys);
     }
 

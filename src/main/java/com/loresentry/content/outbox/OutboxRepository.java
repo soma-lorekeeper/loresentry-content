@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>{@link #deletePublishedBefore(OffsetDateTime)} 만 예외다. 회차와 무관하게 정리 작업({@link OutboxPurge})이
  * 하루 한 번 따로 부른다. 잠금에 기대지 않는 SQL 한 줄이라 스스로 트랜잭션을 연다.
  *
- * <p>outbox 에 행을 넣는 메서드는 여기에 없다. 넣는 쪽은 아직 만들지 않았다.
+ * <p>outbox 에 행을 넣는 업무 연결은 ContentEvents 와 GraphRefreshRequests 가 맡는다.
  */
 @Repository
 class OutboxRepository {
