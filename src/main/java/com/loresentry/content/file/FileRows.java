@@ -34,6 +34,13 @@ public final class FileRows {
         }
     }
 
+    /**
+     * 이동·복원 뒤의 문서와, 그 update 가 분류나 에피소드를 실제로 바꿨는지. 순서(rank)만 바뀐 이동은 false 다.
+     * 바뀌었는지는 update 문이 돌려준 전후 값으로 정한다 — 미리 읽은 위치와 비교하면 그 사이의 다른 이동에 속는다.
+     */
+    public record Placed(Document document, boolean locationChanged) {
+    }
+
     /** 휴지통 항목. 원래 위치를 보여 주려면 분류와 에피소드 이름이 함께 있어야 한다. */
     public record TrashEntry(
             UUID id,

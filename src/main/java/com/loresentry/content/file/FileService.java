@@ -1,11 +1,17 @@
 package com.loresentry.content.file;
 
+import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-import com.loresentry.content.outbox.ContentEvents;
-
+import com.loresentry.content.event.FileChanged.ChangeType;
+import com.loresentry.content.event.FileChanged.Field;
+import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.outbox.OutboxRecord;
+import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
 
@@ -21,16 +27,24 @@ public class FileService {
     /** {@code base_folders} 시드의 원고 폴더. 에피소드가 붙을 수 있는 유일한 분류다. */
     private static final String MANUSCRIPT = "MANUSCRIPT";
 
-    private final ContentEvents events;
-
     private final FileRepository repository;
 
     private final ProjectActivity activity;
 
-    public FileService(FileRepository repository, ProjectActivity activity, ContentEvents events) {
-        this.events = events;
+    /**
+     * 문서가 바뀌면 메서드 마지막에 {@code outbox.append(messages.xxx(...))} 를 한 번 부른다. 무엇이 바뀌었는지는
+     * 쓰기 SQL 이 돌려준 결과로 정한다. 이벤트를 어떻게 쓰고 순서를 어떻게 지키는지는 OutboxRepository 가 맡는다.
+     */
+    private final OutboxRepository outbox;
+
+    private final ProjectChangedMessages messages;
+
+    public FileService(FileRepository repository, ProjectActivity activity, OutboxRepository outbox,
+            ProjectChangedMessages messages) {
         this.repository = repository;
         this.activity = activity;
+        this.outbox = outbox;
+        this.messages = messages;
     }
 
     @Transactional(readOnly = true)
@@ -48,7 +62,6 @@ public class FileService {
 
     @Transactional
     public Object create(UUID ownerUserId, UUID projectId, FileRequests.Create request) {
-        events.lock(ownerUserId);
         requireProject(ownerUserId, projectId);
         String title = validateTitle(request.title());
         String kind = request.kind() == null ? "" : request.kind();
@@ -58,8 +71,12 @@ public class FileService {
             case "episode" -> createEpisode(ownerUserId, projectId, title);
             default -> throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         };
-        if (created instanceof FileResponses.Document document) { events.fileChanged(document.id(), "CREATED"); }
         activity.touch(projectId);
+        // 에피소드는 문서 스냅샷이 아니다. 문서는 episode_id 만 가진다.
+        if (created instanceof FileResponses.Document document) {
+            outbox.append(messages.fileChanged(projectId, document.id(), ChangeType.CREATED,
+                    EnumSet.allOf(Field.class)));
+        }
         return created;
     }
 
@@ -83,7 +100,6 @@ public class FileService {
 
     @Transactional
     public FileResponses.Document rename(UUID ownerUserId, UUID fileId, FileRequests.Rename request) {
-        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         String title = validateTitle(request.title());
@@ -91,13 +107,14 @@ public class FileService {
         FileResponses.Document renamed = FileResponses.Document.from(
                 duplicateAware(() -> repository.renameDocument(fileId, title)));
         activity.touch(document.projectId());
-        events.fileChanged(fileId, "UPDATED");
+        outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.UPDATED,
+                Set.of(Field.TITLE)));
         return renamed;
     }
 
+    /** 에피소드 이름은 어느 문서의 스냅샷에도 없으므로 이벤트가 없다. */
     @Transactional
     public FileResponses.Episode renameEpisode(UUID ownerUserId, UUID episodeId, FileRequests.Rename request) {
-        events.lock(ownerUserId);
         requireEpisode(ownerUserId, episodeId);
         String name = validateTitle(request.title());
 
@@ -113,7 +130,6 @@ public class FileService {
      */
     @Transactional
     public FileResponses.Document move(UUID ownerUserId, UUID fileId, FileRequests.Move request) {
-        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
 
@@ -124,11 +140,14 @@ public class FileService {
         List<String> siblings = repository.siblingRanks(document.projectId(), folderId, episodeId, fileId);
         String rank = rankFor(document.projectId(), folderId, episodeId, request.beforeFileId(), siblings);
 
-        FileResponses.Document moved = FileResponses.Document.from(
-                duplicateAware(() -> repository.moveDocument(fileId, folderId, episodeId, rank)));
+        FileRows.Placed moved = duplicateAware(() -> repository.moveDocument(fileId, folderId, episodeId, rank));
         activity.touch(document.projectId());
-        events.fileChanged(fileId, "UPDATED");
-        return moved;
+        // 같은 자리 안에서 순서만 바꾼 이동은 스냅샷이 그대로다(rank 는 싣지 않는다).
+        if (moved.locationChanged()) {
+            outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.UPDATED,
+                    Set.of(Field.FOLDER)));
+        }
+        return FileResponses.Document.from(moved.document());
     }
 
     private String rankFor(UUID projectId, short folderId, UUID episodeId, UUID beforeFileId,
@@ -152,17 +171,19 @@ public class FileService {
 
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID fileId) {
-        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
-        repository.trashDocument(fileId);
-        events.fileChanged(fileId, "TRASHED");
+        boolean trashed = repository.trashDocument(fileId);
         activity.touch(document.projectId());
+        // 관계 행은 남는다. 이웃 문서의 스냅샷은 그대로이므로 이 문서의 이벤트 하나면 된다.
+        if (trashed) {
+            outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.TRASHED,
+                    Set.of(Field.STATE)));
+        }
     }
 
     @Transactional
     public FileResponses.Document restore(UUID ownerUserId, UUID fileId) {
-        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
             return FileResponses.Document.from(document);
@@ -177,35 +198,48 @@ public class FileService {
                 document.projectId(), document.folderId(), episodeId, fileId);
         String rank = Ranks.between(siblings.isEmpty() ? null : siblings.getLast(), null);
 
-        FileResponses.Document restored = FileResponses.Document.from(
-                duplicateAware(() -> repository.restoreDocument(fileId, dropEpisode, rank)));
+        FileRows.Placed restored = duplicateAware(() -> repository.restoreDocument(fileId, dropEpisode, rank));
         activity.touch(document.projectId());
-        events.fileChanged(fileId, "RESTORED");
-        return restored;
+        Set<Field> changed = restored.locationChanged()
+                ? EnumSet.of(Field.STATE, Field.FOLDER)
+                : EnumSet.of(Field.STATE);
+        outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.RESTORED, changed));
+        return FileResponses.Document.from(restored.document());
     }
 
+    /**
+     * 이 문서가 가진 관계(이 문서가 low)는 DELETED 와 함께 사라진다. 이 문서가 high 인 관계는 상대(low) 문서의
+     * 것이므로, 그 문서들의 관계가 바뀐 것으로 알린다.
+     */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID fileId) {
-        events.lock(ownerUserId);
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.FILE_NOT_TRASHED);
         }
-        List<UUID> neighbors = events.neighbors(fileId);
+        // 잠근 뒤에 읽어야, 읽은 뒤 새로 걸린 관계가 삭제에 휩쓸려 알림 없이 사라지지 않는다.
+        repository.lockForDelete(fileId);
+        List<UUID> owners = repository.relationOwnersOf(fileId);
         repository.deleteDocument(fileId);
-        events.fileDeleted(document.projectId(), fileId);
-        neighbors.forEach(id -> events.fileChanged(id, "UPDATED"));
         activity.touch(document.projectId());
+
+        List<OutboxRecord> changes = new ArrayList<>();
+        changes.add(messages.fileDeleted(document.projectId(), fileId));
+        owners.forEach(owner -> changes.add(messages.fileChanged(document.projectId(), owner,
+                ChangeType.UPDATED, Set.of(Field.RELATIONS))));
+        outbox.append(changes.toArray(OutboxRecord[]::new));
     }
 
-    /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). */
+    /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). 돌아간 문서마다 위치가 바뀐다. */
     @Transactional
     public void deleteEpisode(UUID ownerUserId, UUID episodeId) {
-        events.lock(ownerUserId);
         requireEpisode(ownerUserId, episodeId);
         UUID projectId = repository.projectOfEpisodeOrNull(episodeId);
-        repository.deleteEpisode(episodeId);
+        List<UUID> moved = repository.deleteEpisode(episodeId);
         activity.touch(projectId);
+        outbox.append(moved.stream()
+                .map(id -> messages.fileChanged(projectId, id, ChangeType.UPDATED, Set.of(Field.FOLDER)))
+                .toArray(OutboxRecord[]::new));
     }
 
     private void requireProject(UUID ownerUserId, UUID projectId) {
@@ -267,7 +301,7 @@ public class FileService {
         return title;
     }
 
-    private static FileRows.Document duplicateAware(Supplier<FileRows.Document> write) {
+    private static <T> T duplicateAware(Supplier<T> write) {
         try {
             return write.get();
         } catch (DuplicateKeyException exception) {

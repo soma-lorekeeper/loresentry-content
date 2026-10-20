@@ -1,6 +1,9 @@
 package com.loresentry.content.document;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -122,12 +125,25 @@ public class DocumentRepository {
     }
 
     /**
-     * 조건부 저장이다. 0행이 바뀌면 다른 탭이 먼저 저장한 것이므로, 오래된 본문으로 최신 문서를
-     * 덮어쓰지 않고 호출자에게 알린다(TABLE_AND_LOGIC §7.2).
+     * 저장이 실제로 바꾼 것. 저장 전에 따로 읽어 비교하지 않고 update 문이 돌려준 전후 값으로 정한다 — 따로 읽으면
+     * 읽은 뒤 update 전에 다른 트랜잭션(이름 변경은 revision 을 올리지 않는다)이 끼어들 수 있다.
+     *
+     * @param bodyChanged 본문 평문({@code body_text})이 바뀌었나. 서식만 바뀐 저장은 false 다
      */
-    boolean updateIfRevisionMatches(UUID fileId, long expectedRevision, DocumentSnapshot snapshot,
+    record Updated(boolean titleChanged, boolean bodyChanged) {
+    }
+
+    /** 바뀐 관계 한 쌍. 행의 low·high 그대로다. */
+    record RelationPair(UUID low, UUID high) {
+    }
+
+    /**
+     * 조건부 저장이다. 0행이 바뀌면 다른 탭이 먼저 저장한 것이므로, 오래된 본문으로 최신 문서를
+     * 덮어쓰지 않고 호출자에게 알린다(TABLE_AND_LOGIC §7.2). 그때 결과가 비어 있다.
+     */
+    Optional<Updated> updateIfRevisionMatches(UUID fileId, long expectedRevision, DocumentSnapshot snapshot,
             String bodyText, UUID saveId) {
-        int updated = jdbcClient
+        return jdbcClient
                 .sql("""
                         update document
                         set title = :title,
@@ -139,6 +155,8 @@ public class DocumentRepository {
                             last_save_id = :saveId,
                             updated_at = now()
                         where id = :id and revision_no = :expected
+                        returning old.title is distinct from new.title as title_changed,
+                                  old.body_text is distinct from new.body_text as body_changed
                         """)
                 .param("id", fileId)
                 .param("expected", expectedRevision)
@@ -148,8 +166,9 @@ public class DocumentRepository {
                 .param("text", bodyText)
                 .param("chars", BodyText.charCount(bodyText))
                 .param("saveId", saveId)
-                .update();
-        return updated == 1;
+                .query((rows, index) -> new Updated(
+                        rows.getBoolean("title_changed"), rows.getBoolean("body_changed")))
+                .optional();
     }
 
     void replaceProperties(UUID fileId, List<DocumentSnapshot.TextProperty> properties) {
@@ -178,8 +197,11 @@ public class DocumentRepository {
      *
      * <p>들어온 {@code relation_key}는 쓰지 않는다. 키는 대상 문서의 분류에서 나오므로 저장할 것이
      * 없고, 저장하면 분류를 바꿨을 때 어긋난다.
+     *
+     * @return 실제로 지워지거나, 새로 생기거나, 설명이 바뀐 쌍. 각 SQL 이 돌려준 행이라 저장 전후를 따로 읽는 것과
+     *         달리 그 사이에 끼어든 다른 저장에 속지 않는다. 그 관계를 가진 문서(low)의 이벤트를 고르는 데 쓴다
      */
-    void replaceRelations(UUID fileId, List<DocumentSnapshot.Relation> relations) {
+    List<RelationPair> replaceRelations(UUID fileId, List<DocumentSnapshot.Relation> relations) {
         // 같은 대상을 여러 키로 가리켜도 쌍은 하나다. 설명이 적힌 쪽을 남긴다.
         Map<UUID, String> wanted = new LinkedHashMap<>();
         for (DocumentSnapshot.Relation relation : relations) {
@@ -193,7 +215,7 @@ public class DocumentRepository {
             }
         }
 
-        jdbcClient
+        List<RelationPair> changed = new ArrayList<>(jdbcClient
                 .sql("""
                         delete from document_relations r
                         using document other
@@ -202,12 +224,15 @@ public class DocumentRepository {
                                               then r.high_document_id else r.low_document_id end
                           and other.trashed_at is null
                           and other.id <> all (:keep)
+                        returning r.low_document_id, r.high_document_id
                         """)
                 .param("id", fileId)
                 .param("keep", wanted.keySet().toArray(UUID[]::new))
-                .update();
+                .query(DocumentRepository::mapPair)
+                .list());
 
         for (Map.Entry<UUID, String> entry : wanted.entrySet()) {
+            // 설명이 같으면 갱신하지 않는다. 그래야 returning 이 행을 내놓지 않아 "바뀐 것"에서 빠진다.
             jdbcClient
                     .sql("""
                             insert into document_relations
@@ -215,12 +240,22 @@ public class DocumentRepository {
                             values (least(:id, :target), greatest(:id, :target), :description)
                             on conflict (low_document_id, high_document_id)
                             do update set description = excluded.description
+                            where document_relations.description is distinct from excluded.description
+                            returning low_document_id, high_document_id
                             """)
                     .param("id", fileId)
                     .param("target", entry.getKey())
                     .param("description", entry.getValue())
-                    .update();
+                    .query(DocumentRepository::mapPair)
+                    .optional()
+                    .ifPresent(changed::add);
         }
+        return changed;
+    }
+
+    private static RelationPair mapPair(ResultSet rows, int index) throws SQLException {
+        return new RelationPair(
+                rows.getObject("low_document_id", UUID.class), rows.getObject("high_document_id", UUID.class));
     }
 
     /** 관계 대상은 같은 프로젝트의 활성 문서여야 한다. 외래 키는 존재만 보장하고 프로젝트는 보지 않는다. */

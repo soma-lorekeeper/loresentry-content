@@ -445,8 +445,10 @@ the two files drift apart in shape or the English one still contains Hangul.
 ## Kafka business integration
 
 Domain changes now write FileChanged/ProjectDeleted snapshots to Outbox in the same transaction.
-ContentEvents serializes writes per owner before taking snapshots. Document saves publish both old
-and current relation neighbors. The existing relay publishes the immutable rows.
+`OutboxRepository.append` locks each event's aggregate (one document) and only then builds the snapshot, so
+events of one document are ordered; a relation travels only in its low document's event. Payloads
+and the per-action rules are in [docs/events/content-project-changed-v1.md](docs/events/content-project-changed-v1.md).
+The existing relay publishes the immutable rows.
 V15 adds projection_heads and stored refresh-result-v3 candidates.
 
 With GRAPH_REFRESH_ENABLED=true, POST /projects/{projectId}/graph-refresh accepts

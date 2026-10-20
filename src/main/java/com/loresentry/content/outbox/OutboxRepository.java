@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -11,9 +12,16 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
- * outbox_events 테이블을 relay 의 입장에서 읽고 쓴다. relay 의 한 회차는 아래 메서드를 이 순서로 부른다.
+ * outbox_events 테이블을 읽고 쓴다. 쓰는 쪽은 둘이다.
+ *
+ * <p><b>이벤트를 넣는 쪽</b>은 도메인 변경 트랜잭션이다. {@link #append(OutboxRecord...)} 하나만 부르고, 패키지 밖에서
+ * 부를 수 있는 것도 이 메서드뿐이다. 이벤트의 종류도 payload 의 모양도 모른다 — 받은 {@link OutboxRecord} 를 같은
+ * 방법으로 쓴다. 아직 옮기지 않은 ContentEvents(그래프 최신화·회원 탈퇴)와 GraphRefreshRequests 는 직접 넣는다.
+ *
+ * <p><b>넣은 행을 보내는 쪽</b>은 relay 다. relay 의 한 회차는 아래 메서드를 이 순서로 부른다.
  *
  * <ol>
  *   <li>{@link #tryRelayLock()} — 이번 회차를 이 인스턴스가 돌려도 되는지 확인한다.
@@ -32,11 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>{@link #deletePublishedBefore(OffsetDateTime)} 만 예외다. 회차와 무관하게 정리 작업({@link OutboxPurge})이
  * 하루 한 번 따로 부른다. 잠금에 기대지 않는 SQL 한 줄이라 스스로 트랜잭션을 연다.
- *
- * <p>outbox 에 행을 넣는 업무 연결은 ContentEvents 와 GraphRefreshRequests 가 맡는다.
  */
 @Repository
-class OutboxRepository {
+public class OutboxRepository {
 
     /**
      * relay 를 한 인스턴스만 돌게 하는 advisory lock 의 번호. DB 는 이 숫자가 무엇을 뜻하는지 모른다 —
@@ -54,9 +60,69 @@ class OutboxRepository {
     /** SQL 을 실행하는 Spring 의 도구. 이 프로젝트는 JPA 없이 SQL 을 직접 쓴다. */
     private final JdbcClient jdbcClient;
 
+    /** {@link #append(OutboxRecord...)} 가 payload 를 JSON 글자로 바꿀 때 쓴다. */
+    private final JsonMapper json = JsonMapper.builder().build();
+
     /** 생성자가 하나뿐이라 Spring 이 JdbcClient 를 찾아 넣어 준다. */
     OutboxRepository(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
+    }
+
+    /**
+     * 메시지들을 도메인 변경과 같은 트랜잭션에서 쓴다. 트랜잭션 없이 불리면 실행하기 전에 예외를 던진다({@code MANDATORY})
+     * — 따로 커밋되면 변경 없이 이벤트만 나가거나, 이벤트 없이 변경만 남는다.
+     *
+     * <p>순서는 lock → 조립 → 쓰기다.
+     * <ol>
+     *   <li>메시지들의 {@code aggregateId} 마다 트랜잭션 advisory lock 을 잡는다. 커밋할 때 풀린다.</li>
+     *   <li>각 메시지의 {@code payload} 를 부른다. 같은 aggregate 를 쓰려는 다른 트랜잭션은 1에서 기다리고 있거나
+     *       이미 커밋했으므로, 여기서 읽는 상태에는 그 결과가 모두 들어 있다.</li>
+     *   <li>행을 쓴다. seq 도 이때 받으므로, 같은 aggregate 의 이벤트는 seq 순서 = 커밋 순서 = 상태 순서다.</li>
+     * </ol>
+     *
+     * <p><b>트랜잭션마다 맨 마지막에 한 번</b> 부른다. 여러 번 나눠 부르면 lock 을 잡는 순서를 정렬할 수 없고, 중간에
+     * 부르면 lock 을 쥔 채 다른 행의 lock 을 기다리게 된다. 둘 다 교착이 될 수 있다. 예외는 아직 커밋되지 않은
+     * 새 행만 다루는 트랜잭션(샘플 프로젝트 생성)이다. 다른 트랜잭션이 그 행을 볼 수 없으니 다툴 일이 없다.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void append(OutboxRecord... outboxRecords) {
+        // 모든 트랜잭션이 같은 순서(id 문자열 순)로 잡아야 서로 반대 순서로 기다리는 교착이 생기지 않는다.
+        Arrays.stream(outboxRecords)
+                .map(outboxRecord -> outboxRecord.aggregateId().toString())
+                .distinct()
+                .sorted()
+                .forEach(this::lockAggregate);
+
+        for (OutboxRecord outboxRecord : outboxRecords) {
+            Object payload = outboxRecord.payload().get();
+            if (payload == null) {
+                // 만들 시점에 대상이 이미 없다. 예: 관계로 묶인 두 휴지통 문서를 동시에 영구 삭제하면,
+                // 한쪽이 상대(owner)의 관계 이벤트를 내려 할 때 그 문서는 먼저 지워져 있다.
+                continue;
+            }
+            jdbcClient
+                    .sql("""
+                            insert into outbox_events (event_type, aggregate_id, event_key, payload)
+                            values (:type, :aggregate, :key, :payload::jsonb)
+                            """)
+                    .param("type", outboxRecord.eventType())
+                    .param("aggregate", outboxRecord.aggregateId())
+                    .param("key", outboxRecord.key())
+                    .param("payload", json.writeValueAsString(payload))
+                    .update();
+        }
+    }
+
+    /**
+     * aggregate 하나의 lock. 키는 64비트 해시라 서로 다른 id 가 같은 lock 을 쓸 수 있지만, 그때는 불필요하게
+     * 기다릴 뿐 틀리지 않는다. 그 드문 경우에 정렬 순서가 어긋나 교착이 나도 PostgreSQL 이 감지해 한쪽을 되돌린다.
+     * relay 의 {@link #RELAY_LOCK_KEY}(7001) 와 같은 값이 나올 확률도 마찬가지로 무시할 만하다.
+     */
+    private void lockAggregate(String aggregateId) {
+        jdbcClient.sql("select pg_advisory_xact_lock(hashtextextended(:key, 0))")
+                .param("key", "outbox-aggregate:" + aggregateId)
+                .query((rows, index) -> 1)
+                .single();
     }
 
     /**
