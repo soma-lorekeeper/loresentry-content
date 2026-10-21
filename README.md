@@ -76,7 +76,6 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
 | `POST` | `/feedback` | Stores in-app feedback. `201` with `{id, created_at}`. At most 20 per user per hour. |
-| `DELETE` | `/users/me/data` | Account withdrawal: deletes every project of the caller, active and trashed, with everything under it, their feedback, then their S3 images. `204`, also when nothing is left. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -212,7 +211,7 @@ external-form links. The body is `{"category":"BUG|IDEA|OTHER","message":"...",
 "page":"/projects/"|null,"client":"<user agent>"|null}`. The message is trimmed
 and must be 1 to 2000 characters, otherwise `400 INVALID_FEEDBACK`. `page` and
 `client` are optional and cut to 200 and 300 characters. A 21st message within
-an hour answers `429 FEEDBACK_RATE_LIMITED`. Withdrawal deletes the user's rows.
+an hour answers `429 FEEDBACK_RATE_LIMITED`. Rows are kept when the user withdraws.
 
 There is no read endpoint. Operators read it from the `content` database:
 
@@ -392,13 +391,16 @@ offering one as the last file would be a dead link.
 
 ## Deleting data
 
-`DELETE /users/me/data` is the content step of account withdrawal. The gateway
-calls it before the authentication service deletes the account, so it must be
-safe to repeat: a second call finds nothing and still answers `204`. One
-transaction collects every `image.s3_key` of the caller's projects, deletes the
-caller's `workspace_state` rows and then the projects; the foreign-key cascades
-remove documents, properties, relations, versions, episodes, images, memos,
-favorites and refresh runs.
+Account withdrawal reaches content only as a `UserDeleted` event on
+`auth.user.deleted.v1`, which the authentication service publishes after it
+deletes the account; there is no HTTP endpoint for it. `UserDeletedService`
+handles it in the inbox transaction: it collects every `image.s3_key` of the
+user's projects, deletes the user's `workspace_state` rows and then the projects;
+the foreign-key cascades remove documents, properties, relations, versions,
+episodes, images, memos, favorites and refresh runs. Feedback is kept. In the
+same transaction it appends one `ProjectDeleted` (`OWNER_DELETED`) per deleted
+project to the outbox. It is safe to repeat: the inbox skips a redelivered
+event, and another event for the same user finds nothing and writes nothing.
 
 S3 objects are deleted only **after the commit**, for both the purge and a
 single permanent project delete. Deleting first would leave broken images if the

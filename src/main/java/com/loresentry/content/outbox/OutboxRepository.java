@@ -287,7 +287,6 @@ public class OutboxRepository {
      * @param cutoff 이 시각보다 먼저 발행된 행을 지운다
      * @return 지운 행의 수
      */
-    @Transactional
     int deletePublishedBefore(OffsetDateTime cutoff) {
         return jdbcClient
                 .sql("""

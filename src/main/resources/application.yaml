@@ -84,10 +84,11 @@ kafka:
       graph-refresh-completed: content.graph-refresh-completed
       user-deleted: content.user-deleted
     enabled:
-      # listener 를 돌릴지. 처리 로직이 들어오는 commit 에서 true 로 바꾼다.
-      # 그전에 켜면 받은 이벤트를 처리한 것으로 기록만 하고 아무것도 하지 않는다. 꺼 둔 동안의 메시지는 topic 에 남는다.
+      # listener 를 돌릴지. 꺼 둔 동안의 메시지는 topic 에 남는다.
+      # graph-refresh-completed 는 처리 로직이 들어오는 commit 에서 true 로 바꾼다.
       graph-refresh-completed: ${KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED:false}
-      user-deleted: ${KAFKA_CONSUMER_USER_DELETED_ENABLED:false}
+      # 회원 탈퇴가 content 에 들어오는 유일한 길이라 기본으로 켠다. 끄면 탈퇴한 사용자의 데이터가 지워지지 않고 남는다.
+      user-deleted: ${KAFKA_CONSUMER_USER_DELETED_ENABLED:true}
   producer:
     relay:
       # relay 를 돌릴지. false 면 이벤트가 outbox 에 쌓이기만 하고 Kafka 로 나가지 않는다.

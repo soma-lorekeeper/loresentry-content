@@ -25,9 +25,9 @@ import org.springframework.stereotype.Component;
  * <p>처리하지 않는 종류의 메시지는 건너뛰고 처리 기록도 남기지 않는다. 계약에 맞지 않는 메시지는
  * {@link InvalidEventException} 이 이 메서드 밖으로 나가 spring-kafka 의 error handler 가 다룬다.
  *
- * <p>두 listener 는 설정(kafka.consumer.enabled.*)으로 따로 켜고 끈다. 기본은 꺼짐이다 — Service 의 처리가 아직
- * 비어 있어서, 켜면 받은 이벤트를 처리한 것으로 기록만 하고 아무것도 하지 않는다. 꺼져 있어도 listener 는 등록되고
- * 시작만 하지 않는다.
+ * <p>두 listener 는 설정(kafka.consumer.enabled.*)으로 따로 켜고 끈다. UserDeleted 는 기본으로 켜져 있다 — 회원
+ * 탈퇴가 content 에 들어오는 유일한 길이다. GraphRefreshCompleted 는 기본이 꺼짐이다. 꺼져 있어도 listener 는
+ * 등록되고 시작만 하지 않는다.
  *
  * <p>listener id, consumer group id, 처리 기록의 consumer_name 은 모두 kafka.consumer.groups.* 의 같은 값이다.
  * group id 는 적지 않아도 spring-kafka 가 listener id 를 쓰지만, 셋이 같다는 것을 드러내려고 직접 적는다.

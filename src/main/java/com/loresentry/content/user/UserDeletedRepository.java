@@ -6,12 +6,13 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+/** 탈퇴한 사용자의 행을 지운다. {@link UserDeletedService} 가 inbox 트랜잭션 안에서 부른다. */
 @Repository
-class UserDataRepository {
+class UserDeletedRepository {
 
     private final JdbcClient jdbcClient;
 
-    UserDataRepository(JdbcClient jdbcClient) {
+    UserDeletedRepository(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
     }
 
@@ -29,23 +30,23 @@ class UserDataRepository {
                 .list();
     }
 
-    /** 문서·버전·에피소드·이미지 행·메모·즐겨찾기·최신화·작업공간은 외래 키 CASCADE 가 지운다. */
-    int deleteProjects(UUID ownerUserId) {
-        return jdbcClient.sql("delete from projects where owner_user_id = :owner")
+    /**
+     * 문서·버전·에피소드·이미지 행·메모·즐겨찾기·최신화·작업공간은 외래 키 CASCADE 가 지운다.
+     *
+     * @return 실제로 지운 프로젝트의 id. 지운 결과에서 얻으므로, 따로 조회한 뒤 지울 때와 달리 그 사이에 생긴
+     *         프로젝트도 빠지지 않는다. 지운 프로젝트마다 ProjectDeleted 를 내는 데 쓴다
+     */
+    List<UUID> deleteProjects(UUID ownerUserId) {
+        return jdbcClient.sql("delete from projects where owner_user_id = :owner returning id")
                 .param("owner", ownerUserId)
-                .update();
+                .query(UUID.class)
+                .list();
     }
 
     /** 작업공간 행은 사용자 키도 갖는다. 남의 프로젝트를 열었던 기록이 생겨도 함께 지운다. */
     int deleteWorkspaceStates(UUID ownerUserId) {
         return jdbcClient.sql("delete from workspace_state where owner_user_id = :owner")
                 .param("owner", ownerUserId)
-                .update();
-    }
-
-    int deleteFeedback(UUID userId) {
-        return jdbcClient.sql("delete from feedback where user_id = :user")
-                .param("user", userId)
                 .update();
     }
 }

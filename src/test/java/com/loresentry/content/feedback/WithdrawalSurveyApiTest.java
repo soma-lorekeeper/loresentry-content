@@ -1,7 +1,6 @@
 package com.loresentry.content.feedback;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -11,13 +10,25 @@ import java.util.List;
 import java.util.Map;
 
 import com.loresentry.content.support.ApiTestSupport;
+import com.loresentry.content.user.UserDeletedEvent;
+import com.loresentry.content.user.UserDeletedService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class WithdrawalSurveyApiTest extends ApiTestSupport {
+
+    /** 회원 탈퇴의 데이터 삭제. UserDeleted 를 받았을 때 inbox 가 부르는 곳이다. */
+    @Autowired
+    UserDeletedService userDeleted;
+
+    /** inbox 의 InboxTransaction 처럼 트랜잭션을 열고 commit 한다. */
+    @Autowired
+    TransactionTemplate transaction;
 
     @BeforeEach
     void empty() {
@@ -95,7 +106,7 @@ class WithdrawalSurveyApiTest extends ApiTestSupport {
     void outlivesTheDataPurgeOfTheAccountThatLeft() throws Exception {
         mockMvc.perform(as(body(post("/withdrawal-surveys"), "{\"reasons\":[\"PRIVACY\"]}")))
                 .andExpect(status().isNoContent());
-        mockMvc.perform(as(delete("/users/me/data"))).andExpect(status().isNoContent());
+        transaction.executeWithoutResult(status -> userDeleted.handle(new UserDeletedEvent(owner)));
 
         assertThat(rows()).hasSize(1);
     }

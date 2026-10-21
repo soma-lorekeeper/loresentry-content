@@ -116,7 +116,7 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | 잠금 `PUT /files/{id}/lock`, 버전 저장·삭제 | 없음 | | | payload에 없는 값만 바뀐다 |
 | 프로젝트 휴지통 이동·복원 | 없음 | | | 프로젝트 상태는 아직 싣지 않는다 |
 | 프로젝트 영구 삭제 `DELETE /projects/{p}` | ProjectDeleted 1개 | | | 5절 |
-| 회원 탈퇴 `DELETE /users/me/data`, `auth.user.deleted.v1` | 프로젝트마다 ProjectDeleted | | | 5절 |
+| 회원 탈퇴 `auth.user.deleted.v1` 수신 | 프로젝트마다 ProjectDeleted | | | 5절 |
 | 샘플 프로젝트 생성 `POST /projects/sample` | 위 생성·저장 규칙대로 | | | 내부에서 문서 생성과 저장을 차례로 부른다 |
 
 **문서 저장의 changed_fields**는 저장 SQL이 실제로 바꾼 것으로 정한다(저장 전후를 따로 읽어 비교하지 않는다).
@@ -143,7 +143,7 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | reason | 발행처 |
 |---|---|
 | `PROJECT_DELETED` | 휴지통 프로젝트의 영구 삭제(`ProjectService.deletePermanently`) |
-| `OWNER_DELETED` | 회원 탈퇴. gateway의 `DELETE /users/me/data`, 또는 `auth.user.deleted.v1` 수신. 그 사용자의 프로젝트마다(휴지통 포함) 하나씩(`UserDataService.purge`) |
+| `OWNER_DELETED` | 회원 탈퇴. `auth.user.deleted.v1` 수신. 그 사용자의 프로젝트마다(휴지통 포함) 하나씩(`UserDeletedService.handle`) |
 
 - 소비자에게는 tombstone이다. 그 프로젝트의 모든 문서를 지우고, 이후 오는 그 프로젝트의 이벤트를 무시한다.
 - 문서별 DELETED는 따로 나가지 않는다.
@@ -168,7 +168,6 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 
 **아직 이전 형식을 내는 곳:**
 - refresh의 `GraphRefreshRequests`가 부르는 `ContentEvents.seedMissing`은 이전 형식의 FileChanged를 낸다. prod에서는 `GRAPH_REFRESH_ENABLED`가 꺼져 있어 실행되지 않는다. 다음 커밋에서 이 문서의 형식으로 옮긴다.
-- 회원 탈퇴의 ProjectDeleted(`ContentEvents.userDeleted`)는 payload가 위와 같다.
 
 ## 7. graph-rag가 바꿔야 할 것
 
