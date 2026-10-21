@@ -257,6 +257,115 @@ class ChatApiTest extends ApiTestSupport {
         }
     }
 
+    @Test
+    void mapsTheProjectWithoutBodiesInSnapshotOrder() throws Exception {
+        seedWorks();
+
+        JsonNode snapshot = read(mockMvc.perform(as(get(snapshotPath()))).andReturn());
+        MvcResult result = mockMvc.perform(as(get(mapPath())))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andReturn();
+        JsonNode map = read(result);
+
+        assertThat(map.propertyNames()).containsExactly("project", "manuscripts", "settings", "relations", "memos");
+        JsonNode manuscripts = map.get("manuscripts");
+        assertThat(manuscripts.get(0).propertyNames()).containsExactly(
+                "id", "title", "ordinal", "episode_name", "properties", "revision_no", "chars", "updated_at");
+        assertThat(texts(manuscripts, "id")).containsExactlyElementsOf(texts(snapshot.get("manuscripts"), "id"));
+        assertThat(numbers(manuscripts, "ordinal")).containsExactly(1L, 2L, 3L, 4L);
+        assertThat(map.get("settings").get(0).propertyNames()).containsExactly(
+                "id", "folder_code", "title", "properties", "revision_no", "chars", "updated_at");
+        assertThat(texts(map.get("settings"), "id")).containsExactlyElementsOf(texts(snapshot.get("settings"), "id"));
+        assertThat(map.get("memos").get(0).propertyNames())
+                .containsExactly("id", "scope", "document_id", "title", "chars", "updated_at");
+        assertThat(texts(map.get("memos"), "id")).containsExactlyElementsOf(texts(snapshot.get("memos"), "id"));
+        assertThat(map.get("relations")).isEqualTo(snapshot.get("relations"));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("서윤이 문을 넘었다");
+
+        assertThat(manuscripts.get(0).get("chars").longValue()).isEqualTo(codePoints(List.of(
+                "1화 · 첫 번째 온실", "서윤이 문을 넘었다.\n👩‍👩‍👧 가족이 기다렸다.", "첫 회차 설명 🌙", "온실 편")));
+        assertThat(map.get("settings").get(1).get("chars").longValue()).isEqualTo(codePoints(List.of(
+                "레나 아르벨", "레나는 🌱 정원사다.\n왼손으로 기록한다.", "처음 각성한 사람 ✨", "레나", "아르벨")));
+        assertThat(map.get("memos").get(1).get("chars").longValue()).isEqualTo(codePoints(List.of("레나는 왼손잡이")));
+
+        long documentChars = 0;
+        for (JsonNode node : manuscripts) {
+            documentChars += node.get("chars").longValue();
+        }
+        for (JsonNode node : map.get("settings")) {
+            documentChars += node.get("chars").longValue();
+        }
+        for (JsonNode node : map.get("memos")) {
+            documentChars += node.get("chars").longValue();
+        }
+        long relationChars = codePoints(List.of("처음 각성한 곳 🔥", "레나가 일하는 곳"));
+        assertThat(documentChars + relationChars).isEqualTo(chatSize());
+    }
+
+    @Test
+    void readsChosenDocumentsWithProjectWideOrdinals() throws Exception {
+        Works works = seedWorks();
+        JsonNode snapshot = read(mockMvc.perform(as(get(snapshotPath()))).andReturn());
+        UUID unknown = UUID.randomUUID();
+
+        JsonNode documents = read(mockMvc.perform(as(body(post(documentsPath()), json.writeValueAsString(Map.of(
+                        "document_ids", List.of(works.chapterThree().toString(), works.lena().toString(),
+                                works.abandoned().toString(), unknown.toString(), works.lena().toString()),
+                        "memo_ids", List.of(works.lenaMemo().toString()))))))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andReturn());
+
+        assertThat(documents.propertyNames()).containsExactly("manuscripts", "settings", "memos", "missing");
+        assertThat(documents.get("manuscripts").size()).isEqualTo(1);
+        assertThat(documents.get("manuscripts").get(0)).isEqualTo(snapshot.get("manuscripts").get(2));
+        assertThat(documents.get("settings").size()).isEqualTo(1);
+        assertThat(documents.get("settings").get(0)).isEqualTo(snapshot.get("settings").get(1));
+        assertThat(documents.get("memos").size()).isEqualTo(1);
+        assertThat(documents.get("memos").get(0)).isEqualTo(snapshot.get("memos").get(1));
+        assertThat(texts(documents.get("missing"), null))
+                .containsExactly(works.abandoned().toString(), unknown.toString());
+    }
+
+    @Test
+    void limitsAndGuardsDocumentReads() throws Exception {
+        Works works = seedWorks();
+        List<String> tooMany = new ArrayList<>();
+        for (int i = 0; i <= ChatService.DOCUMENTS_LIMIT; i++) {
+            tooMany.add(UUID.randomUUID().toString());
+        }
+        mockMvc.perform(as(body(post(documentsPath()), json.writeValueAsString(Map.of("document_ids", tooMany)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        mockMvc.perform(as(body(post(documentsPath()), json.writeValueAsString(Map.of(
+                        "document_ids", List.of(works.lena().toString())))), stranger))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PROJECT_NOT_FOUND"));
+        mockMvc.perform(as(get(mapPath()), stranger))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PROJECT_NOT_FOUND"));
+        mockMvc.perform(as(body(post(documentsPath()), "{}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manuscripts.length()").value(0))
+                .andExpect(jsonPath("$.missing.length()").value(0));
+
+        UUID other = createProject("{\"name\":\"다른 작품\"}");
+        mockMvc.perform(as(body(post("/internal/projects/" + other + "/chat-documents"),
+                        json.writeValueAsString(Map.of("document_ids", List.of(works.lena().toString()))))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.settings.length()").value(0))
+                .andExpect(jsonPath("$.missing[0]").value(works.lena().toString()));
+    }
+
+    private String mapPath() {
+        return "/internal/projects/" + project + "/chat-map";
+    }
+
+    private String documentsPath() {
+        return "/internal/projects/" + project + "/chat-documents";
+    }
+
     private String snapshotPath() {
         return "/internal/projects/" + project + "/chat-snapshot";
     }
@@ -338,7 +447,7 @@ class ChatApiTest extends ApiTestSupport {
     private static List<String> texts(JsonNode array, String field) {
         List<String> values = new ArrayList<>();
         for (JsonNode element : array) {
-            JsonNode value = element.get(field);
+            JsonNode value = field == null ? element : element.get(field);
             values.add(value.isNull() ? null : value.stringValue());
         }
         return values;

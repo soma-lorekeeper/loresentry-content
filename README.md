@@ -95,6 +95,9 @@ trash, and send `Cache-Control: no-store`.
 | --- | --- | --- |
 | `GET` | `/internal/projects/{id}/chat-snapshot` | Everything the AI chat reads on each turn, in one read-only `REPEATABLE READ` transaction: the project's name and description; manuscripts in reading order (episode rank, then document rank, manuscripts outside an episode last) with a 1-based `ordinal`; setting documents by folder position; every document with its non-empty properties; relations whose two documents are both active; project memos and memos on active documents, oldest first; and `size`. |
 | `GET` | `/internal/projects/{id}/chat-size` | `{"size": n}` from one aggregate query that loads no bodies. Always equal to the snapshot's `size` for the same data. |
+| `GET` | `/internal/projects/{id}/chat-map` | The AI chat's map: the snapshot without bodies, in the same order and with the same properties and relations. Every manuscript, setting document and memo carries `chars`, what reading it adds to `size`. |
+| `POST` | `/internal/projects/{id}/chat-documents` | `{"document_ids": [...], "memo_ids": [...]}`, at most 100 ids. The chosen items in the snapshot's shape (manuscript `ordinal` counts the whole project) and `missing` for ids that are not active in this project. |
+| `POST` | `/internal/admin/file-events/replay?after=&limit=` | Writes `FileChanged(UPDATED)` again for every active document, one project per transaction, `limit` projects (default 20) after `after`. Returns `{projects, documents, last}`. For backfilling consumers such as the AI chat summarizer; not routed by the gateway. |
 
 `size` counts Unicode code points in the titles and bodies of the included
 documents, their included properties, relation descriptions, and memo titles and

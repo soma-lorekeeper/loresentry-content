@@ -8,6 +8,8 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -28,5 +30,17 @@ class ChatController {
     @GetMapping("/internal/projects/{projectId}/chat-size")
     public ResponseEntity<ChatResponses.Size> size(@CurrentUser UUID userId, @PathVariable UUID projectId) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(chat.size(userId, projectId));
+    }
+
+    @GetMapping("/internal/projects/{projectId}/chat-map")
+    public ResponseEntity<ChatResponses.ChatMap> map(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(chat.map(userId, projectId));
+    }
+
+    @PostMapping("/internal/projects/{projectId}/chat-documents")
+    public ResponseEntity<ChatResponses.Documents> documents(@CurrentUser UUID userId,
+            @PathVariable UUID projectId, @RequestBody ChatResponses.DocumentsRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(chat.documents(userId, projectId, request));
     }
 }
