@@ -28,7 +28,7 @@ class RefreshInputStorage {
 
     private final String bucket;
 
-    RefreshInputStorage(S3Client s3, @Value("${graph-refresh.bucket:}") String bucket) {
+    RefreshInputStorage(S3Client s3, @Value("${graph-refresh.request-bucket:}") String bucket) {
         this.s3 = s3;
         this.bucket = bucket;
     }

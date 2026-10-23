@@ -37,7 +37,7 @@ import tools.jackson.databind.JsonNode;
  * 그래프 최신화 요청을 API 로 보내고, 무엇이 S3 에 올라가고 무엇이 기록·발행되는지 본다. S3 는 흉내 내고 올린 요청과
  * 바이트를 붙잡는다. outbox_events 와 refresh_runs 는 테스트 사이에 지워지지 않으므로 이 테스트의 프로젝트로 거른다.
  */
-@TestPropertySource(properties = "graph-refresh.bucket=" + GraphRefreshRequestApiTest.BUCKET)
+@TestPropertySource(properties = "graph-refresh.request-bucket=" + GraphRefreshRequestApiTest.BUCKET)
 class GraphRefreshRequestApiTest extends ApiTestSupport {
 
     static final String BUCKET = "refresh-test-bucket";
