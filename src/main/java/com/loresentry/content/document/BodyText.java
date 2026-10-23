@@ -22,6 +22,16 @@ final class BodyText {
         return text.toString();
     }
 
+    /**
+     * 최상위 블록 하나의 텍스트. {@link #extract} 가 이 블록에서 얻는 값과 같고, 블록 사이 줄바꿈만 빠진다.
+     * 평문을 다시 본문으로 바꿀 때({@link BodyFromText}) 어느 블록이 그대로 남았는지 비교하는 데 쓴다.
+     */
+    static String blockText(JsonNode block) {
+        StringBuilder text = new StringBuilder();
+        appendInline(block, text);
+        return text.toString();
+    }
+
     private static void appendBlocks(JsonNode blocks, StringBuilder text) {
         if (blocks == null || !blocks.isArray()) {
             return;
