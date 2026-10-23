@@ -136,7 +136,7 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         assertThat(payload.has("model_settings")).isFalse();
         assertThat(payload).isEqualTo(json.readTree("""
                 {"project_id":"%s","request_id":"%s","user_id":"%s","input_fingerprint":"%s",
-                 "input":{"bucket":"%s","key":"%s"},
+                 "location":{"bucket":"%s","key":"%s"},
                  "files":%s,
                  "required_events":%s}
                 """.formatted(project, request, owner, sha256Hex(upload.body()), BUCKET, key,

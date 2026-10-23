@@ -63,7 +63,7 @@ public class GraphRefreshMessages {
         List<GraphRefreshRequested.File> files = input.files();
         return new OutboxRecord(GRAPH_REFRESH_REQUESTED, requestId, projectId.toString(),
                 () -> new GraphRefreshRequested(projectId, requestId, userId, input.fingerprint(),
-                        new GraphRefreshRequested.Input(bucket, key), files,
+                        new GraphRefreshRequested.Location(bucket, key), files,
                         repository.latestFileChangedEvents(projectId)));
     }
 

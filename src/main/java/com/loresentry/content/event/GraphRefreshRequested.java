@@ -20,12 +20,12 @@ public record GraphRefreshRequested(
         @JsonProperty("request_id") UUID requestId,
         @JsonProperty("user_id") UUID userId,
         @JsonProperty("input_fingerprint") String inputFingerprint,
-        Input input,
+        Location location,
         List<File> files,
         @JsonProperty("required_events") List<UUID> requiredEvents) {
 
     /** S3 입력의 위치. */
-    public record Input(String bucket, String key) {
+    public record Location(String bucket, String key) {
     }
 
     /** 실은 문서 하나. 휴지통·삭제 문서는 보내지 않으므로 모두 활성이다. */
