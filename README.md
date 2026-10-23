@@ -447,7 +447,7 @@ the two files drift apart in shape or the English one still contains Hangul.
 - Handling `GraphRefreshCompleted` and a timeout for refresh runs. Until then a
   run stays `GENERATING` and its project cannot start another refresh.
 - User approval and application of generated refresh proposals.
-- Production refresh needs the private bucket (`GRAPHRAG_S3_BUCKET`), created with
+- Production refresh needs the private bucket (`GRAPH_REFRESH_BUCKET`), created with
   content's access by [`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), and
   graph-rag's role from `deploy/setup-refresh.sh` in `loresentry-graph-rag`.
 
@@ -465,7 +465,7 @@ that was never sent. Runs that `FAILED` or were `CANCELLED` do not count, so the
 documents go again. In one `REPEATABLE READ` transaction it records the run as
 `GENERATING` and the files it sends (`refresh_run_files`), uploads a
 `refresh-input-v2` object to `refresh/{project}/{request}/input.json` in
-`GRAPHRAG_S3_BUCKET`, and appends `GraphRefreshRequested` with the object's
+`GRAPH_REFRESH_BUCKET`, and appends `GraphRefreshRequested` with the object's
 location and sha256, the files, and the latest `FileChanged` id of every document
 in the project (`required_events`). graph-rag chooses the model and prompt. Without
 a bucket, or when S3 fails, the answer is `503 REFRESH_UNAVAILABLE` and nothing is

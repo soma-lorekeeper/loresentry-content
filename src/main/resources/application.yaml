@@ -98,4 +98,4 @@ kafka:
 graph-refresh:
   # 그래프 최신화 입력(refresh/{project}/{request}/input.json)을 올리는 private S3 bucket. 미디어 bucket 과 다르다.
   # graph-rag 가 같은 값을 입력 bucket 으로 쓰므로 둘은 한 ConfigMap 에서 받는다. 비어 있으면 최신화 요청은 503 이다.
-  bucket: ${GRAPHRAG_S3_BUCKET:}
+  bucket: ${GRAPH_REFRESH_BUCKET:}
