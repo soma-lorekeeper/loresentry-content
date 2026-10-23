@@ -1,4 +1,4 @@
-package com.loresentry.content.outbox;
+package com.loresentry.content.file;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -7,6 +7,8 @@ import java.util.UUID;
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.outbox.OutboxRecord;
+import com.loresentry.content.outbox.OutboxRepository;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;

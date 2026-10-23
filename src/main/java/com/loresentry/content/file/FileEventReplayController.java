@@ -1,4 +1,4 @@
-package com.loresentry.content.outbox;
+package com.loresentry.content.file;
 
 import java.util.List;
 import java.util.UUID;

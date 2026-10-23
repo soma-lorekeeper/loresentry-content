@@ -118,6 +118,7 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | 프로젝트 영구 삭제 `DELETE /projects/{p}` | ProjectDeleted 1개 | | | 5절 |
 | 회원 탈퇴 `auth.user.deleted.v1` 수신 | 프로젝트마다 ProjectDeleted | | | 5절 |
 | 샘플 프로젝트 생성 `POST /projects/sample` | 위 생성·저장 규칙대로 | | | 내부에서 문서 생성과 저장을 차례로 부른다 |
+| 재발행 `POST /internal/admin/file-events/replay` (운영자) | 활성 프로젝트의 활성 문서마다 | UPDATED | 전부 | 프로젝트 하나가 트랜잭션 하나다. 휴지통 문서는 없다 |
 
 **문서 저장의 changed_fields**는 저장 SQL이 실제로 바꾼 것으로 정한다(저장 전후를 따로 읽어 비교하지 않는다).
 

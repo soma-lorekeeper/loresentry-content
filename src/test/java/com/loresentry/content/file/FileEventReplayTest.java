@@ -1,4 +1,4 @@
-package com.loresentry.content.outbox;
+package com.loresentry.content.file;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
