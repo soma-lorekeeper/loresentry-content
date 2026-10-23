@@ -76,7 +76,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
 | `POST` | `/feedback` | Stores in-app feedback. `201` with `{id, created_at}`. At most 20 per user per hour. |
-| `POST` | `/projects/{id}/graph-refresh` | Starts a graph refresh with every active document changed or created since the last one. No body. `202` with `request_id` and the files sent, which stay locked until the run ends; `200` with `NO_CHANGES` when nothing changed; `409 REFRESH_IN_PROGRESS` while a refresh runs, `409 REFRESH_REVIEW_PENDING` while a result awaits review. Not relayed by the gateway yet. |
+| `POST` | `/projects/{id}/graph-refresh` | Starts a graph refresh with every active document changed or created since the last one. No body. `202` with `request_id` and the files sent, which stay locked until the run ends; `200` with `NO_CHANGES` when nothing changed; `409 REFRESH_IN_PROGRESS` while a refresh runs, `409 REFRESH_REVIEW_PENDING` while a result awaits review. |
 | `GET` | `/projects/{id}/graph-refresh` | The latest run, for polling: `status` (`GENERATING`, `READY`, `NO_CHANGE`, `FAILED`, `APPLIED`), times, `error`, `draft_counts`. `404 REFRESH_NOT_FOUND` before the first. |
 | `GET` | `/projects/{id}/graph-refresh/{rid}` | One run with its open review drafts: base (when the document was sent), left and right snapshots, `matched`, `draft_revision`. graph-rag's evidence is not returned. |
 | `PATCH` | `/projects/{id}/graph-refresh/{rid}/drafts/{did}` | Autosaves both sides of a draft, `{draft_revision, left_snapshot, right_snapshot}`. `409 REFRESH_DRAFT_CONFLICT` with `current` when another save came first. |
@@ -464,8 +464,6 @@ the two files drift apart in shape or the English one still contains Hangul.
 - User-created sections and general folders. **Decided against**: episode folders
   stay the only folder a user can create, so the frontend drops those menus.
 - Export to PDF, DOCX and HWP.
-- Relaying the graph-refresh endpoints through the gateway, and the review screen
-  in the frontend.
 - Discarding a refresh result. A `READY` run blocks new refreshes, and keeps its
   documents locked, until it is confirmed; to drop the proposals, make each draft's
   right side equal its left (for a new document, empty both) and confirm.
