@@ -43,8 +43,8 @@ public class GraphRefreshMessages {
     public PreparedInput input(UUID projectId, List<UUID> fileIds) {
         List<RefreshInput.Document> documents = repository.documents(projectId, fileIds);
         byte[] bytes = json.writeValueAsBytes(new RefreshInput(RefreshInput.SCHEMA_VERSION, documents));
-        List<SentFile> files = documents.stream()
-                .map(document -> new SentFile(document.id(), document.revisionNo()))
+        List<GraphRefreshRequested.File> files = documents.stream()
+                .map(document -> new GraphRefreshRequested.File(document.id(), document.revisionNo()))
                 .toList();
         return new PreparedInput(bytes, sha256Hex(bytes), files);
     }
@@ -60,9 +60,7 @@ public class GraphRefreshMessages {
      */
     public OutboxRecord requested(UUID projectId, UUID requestId, UUID userId, String bucket, String key,
             PreparedInput input) {
-        List<GraphRefreshRequested.File> files = input.files().stream()
-                .map(file -> new GraphRefreshRequested.File(file.fileId(), file.revisionNo()))
-                .toList();
+        List<GraphRefreshRequested.File> files = input.files();
         return new OutboxRecord(GRAPH_REFRESH_REQUESTED, requestId, projectId.toString(),
                 () -> new GraphRefreshRequested(projectId, requestId, userId, input.fingerprint(),
                         new GraphRefreshRequested.Input(bucket, key), files,
@@ -85,10 +83,6 @@ public class GraphRefreshMessages {
      * @param fingerprint {@code json} 의 sha256, 소문자 16진수
      * @param files       입력에 실린 문서와 그 revision. 최신화 기준선으로 기록한다
      */
-    public record PreparedInput(byte[] json, String fingerprint, List<SentFile> files) {
-    }
-
-    /** 입력에 실린 문서 하나. */
-    public record SentFile(UUID fileId, long revisionNo) {
+    public record PreparedInput(byte[] json, String fingerprint, List<GraphRefreshRequested.File> files) {
     }
 }

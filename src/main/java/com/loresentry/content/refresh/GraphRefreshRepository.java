@@ -3,7 +3,7 @@ package com.loresentry.content.refresh;
 import java.util.List;
 import java.util.UUID;
 
-import com.loresentry.content.event.GraphRefreshMessages.SentFile;
+import com.loresentry.content.event.GraphRefreshRequested;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -79,8 +79,8 @@ class GraphRefreshRepository {
     }
 
     /** 이 run 이 S3 입력에 실은 문서와 revision. 다음 요청의 기준선이 된다. */
-    void insertRunFiles(UUID runId, List<SentFile> files) {
-        for (SentFile file : files) {
+    void insertRunFiles(UUID runId, List<GraphRefreshRequested.File> files) {
+        for (GraphRefreshRequested.File file : files) {
             jdbcClient
                     .sql("insert into refresh_run_files (refresh_run_id, file_id, revision_no) "
                             + "values (:run, :file, :revision)")
