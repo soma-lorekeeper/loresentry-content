@@ -113,6 +113,36 @@ public final class RefreshResponses {
             @JsonProperty("right_snapshot") DraftSnapshot rightSnapshot) {
     }
 
+    /**
+     * 확정 결과. 작업본마다 무엇이 되었는지 알려 준다.
+     *
+     * @param created   만든 새 설정 문서
+     * @param updated   내용이나 관계가 바뀐 기존 문서
+     * @param unchanged 바뀐 것이 없던 작업본(제안을 모두 거절했거나 새 문서를 만들지 않기로 함)
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record Confirmed(
+            @JsonProperty("request_id") UUID requestId,
+            String status,
+            List<Created> created,
+            List<Updated> updated,
+            List<UUID> unchanged) {
+    }
+
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record Created(
+            @JsonProperty("draft_id") UUID draftId,
+            @JsonProperty("candidate_id") String candidateId,
+            @JsonProperty("file_id") UUID fileId) {
+    }
+
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record Updated(
+            @JsonProperty("draft_id") UUID draftId,
+            @JsonProperty("file_id") UUID fileId,
+            @JsonProperty("revision_no") long revisionNo) {
+    }
+
     /** 작업본 저장 요청. {@code draftRevision} 은 마지막으로 읽은 값이다. 새 문서 작업본은 한쪽이나 둘 다 null 일 수 있다. */
     public record DraftSave(
             @JsonProperty("draft_revision") Long draftRevision,

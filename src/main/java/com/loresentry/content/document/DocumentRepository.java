@@ -257,6 +257,64 @@ public class DocumentRepository {
                 .list();
     }
 
+    /** 확정 직전의 문서 상태. {@code userLocked} 는 사용자 잠금만이다. */
+    record ApplyRow(UUID id, long revisionNo, boolean userLocked, UUID refreshLockRunId, boolean trashed) {
+    }
+
+    /**
+     * 확정이 쓸 문서들을 잠그고 읽는다. id 순으로 잠가 동시 확정끼리 교착하지 않게 한다. {@code for no key update} 다 —
+     * {@code for update} 는 관계 행을 넣을 때 외래 키 검사가 잡는 key share 잠금과 부딪혀 저장과 교착할 수 있다.
+     */
+    List<ApplyRow> lockForApply(Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbcClient
+                .sql("""
+                        select id, revision_no, locked, refresh_lock_run_id, trashed_at
+                        from document where id in (:ids) order by id for no key update
+                        """)
+                .param("ids", ids)
+                .query((rows, index) -> new ApplyRow(rows.getObject("id", UUID.class), rows.getLong("revision_no"),
+                        rows.getBoolean("locked"), rows.getObject("refresh_lock_run_id", UUID.class),
+                        rows.getObject("trashed_at", OffsetDateTime.class) != null))
+                .list();
+    }
+
+    /**
+     * 관계 한 쌍을 만들거나 설명을 맞춘다. 이미 같은 설명이면 아무것도 하지 않는다. 규칙은 {@link #replaceRelations}
+     * 의 넣기와 같다(한 쌍 한 행, low 가 작은 id).
+     *
+     * @return 실제로 바뀐 쌍. 그대로면 비어 있다
+     */
+    Optional<RelationPair> upsertRelation(UUID one, UUID other, String description) {
+        return jdbcClient
+                .sql("""
+                        insert into document_relations (low_document_id, high_document_id, description)
+                        values (least(:one, :other), greatest(:one, :other), :description)
+                        on conflict (low_document_id, high_document_id)
+                        do update set description = excluded.description
+                        where document_relations.description is distinct from excluded.description
+                        returning low_document_id, high_document_id
+                        """)
+                .param("one", one).param("other", other).param("description", description)
+                .query(DocumentRepository::mapPair)
+                .optional();
+    }
+
+    /** 관계 한 쌍을 지운다. 없으면 비어 있다. */
+    Optional<RelationPair> deleteRelation(UUID one, UUID other) {
+        return jdbcClient
+                .sql("""
+                        delete from document_relations
+                        where low_document_id = least(:one, :other) and high_document_id = greatest(:one, :other)
+                        returning low_document_id, high_document_id
+                        """)
+                .param("one", one).param("other", other)
+                .query(DocumentRepository::mapPair)
+                .optional();
+    }
+
     /** 최신화 run 이 이 문서들을 잠근다. 편집 가능 여부는 사용자 잠금과 합쳐 본다(V16). */
     void lockForRefresh(UUID runId, Collection<UUID> ids) {
         if (ids.isEmpty()) {

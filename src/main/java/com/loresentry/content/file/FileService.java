@@ -17,6 +17,7 @@ import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -78,6 +79,26 @@ public class FileService {
                     EnumSet.allOf(Field.class)));
         }
         return created;
+    }
+
+    /**
+     * 그래프 최신화 확정이 새 설정 문서를 만든다. 자리는 그 분류 폴더의 맨 끝이고, 본문은 비어 있다(확정이 곧 채운다).
+     *
+     * <p>{@link #create} 와 달리 이벤트를 쓰지 않는다 — 확정은 여러 문서를 바꾸고 트랜잭션 끝에서 outbox 를 한 번만
+     * 쓴다({@code OutboxRepository#append} 의 규칙). 그래서 호출자의 트랜잭션 안에서만 돈다.
+     *
+     * @return 만든 문서의 id. 같은 자리에 같은 제목이 있으면 {@code FILE_TITLE_TAKEN}
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public UUID createSettingDocument(UUID projectId, String folderCode, String title) {
+        if ("MANUSCRIPT".equals(folderCode)) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_FILE_LOCATION);
+        }
+        String validTitle = validateTitle(title);
+        short folderId = folderIdOf(folderCode);
+        List<String> ranks = repository.siblingRanks(projectId, folderId, null, null);
+        String rank = Ranks.between(ranks.isEmpty() ? null : ranks.getLast(), null);
+        return duplicateAware(() -> repository.insertDocument(projectId, folderId, null, validTitle, rank)).id();
     }
 
     private FileRows.Document createDocument(UUID projectId, FileRequests.Create request, String title) {

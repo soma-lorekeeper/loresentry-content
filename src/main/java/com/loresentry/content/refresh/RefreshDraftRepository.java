@@ -214,6 +214,30 @@ class RefreshDraftRepository {
                 .list();
     }
 
+    /** 확정이 읽는 작업본 하나. origin 은 처음 뜬 left 다(관계 차이를 구하는 기준). */
+    record ConfirmDraft(UUID id, String kind, UUID targetDocumentId, String candidateId, String folderCode,
+            Long leftRevisionNo, DraftSnapshot origin, DraftSnapshot right, boolean matched) {
+    }
+
+    /** 이 run 의 열린 작업본 전부. 확정은 run 을 잠근 뒤 읽으므로 그 사이 저장이 끼어들지 않는다. */
+    List<ConfirmDraft> openForConfirm(UUID runId) {
+        return jdbcClient
+                .sql("""
+                        select id, kind, target_document_id, candidate_id, folder_code, left_source_revision_no,
+                               origin_snapshot::text as origin_json, right_snapshot::text as right_json, matched
+                        from refresh_document_drafts
+                        where refresh_run_id = :run and status = 'OPEN'
+                        order by kind, target_document_id, candidate_id
+                        """)
+                .param("run", runId)
+                .query((rows, index) -> new ConfirmDraft(rows.getObject("id", UUID.class), rows.getString("kind"),
+                        rows.getObject("target_document_id", UUID.class), rows.getString("candidate_id"),
+                        rows.getString("folder_code"), rows.getObject("left_source_revision_no", Long.class),
+                        snapshotOrNull(rows.getString("origin_json")), snapshotOrNull(rows.getString("right_json")),
+                        rows.getBoolean("matched")))
+                .list();
+    }
+
     /** 저장할 작업본의 종류와 대상. 이 run 의 열린 작업본이 아니면 비어 있다. */
     record DraftHead(UUID id, String kind, UUID targetDocumentId, String candidateId) {
     }

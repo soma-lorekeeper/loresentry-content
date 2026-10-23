@@ -2,7 +2,9 @@ package com.loresentry.content.document;
 
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Component;
@@ -85,6 +87,70 @@ public class RefreshDocuments {
     @Transactional(propagation = Propagation.MANDATORY)
     public Map<String, String> relationKeysByFolder() {
         return repository.relationKeysByFolder();
+    }
+
+    /** 확정 직전의 문서 상태. */
+    public record Locked(UUID id, long revisionNo, boolean userLocked, UUID refreshLockRunId, boolean trashed) {
+    }
+
+    /** 확정이 쓸 문서들을 id 순으로 잠그고 읽는다. 없는(영구 삭제된) 문서는 결과에 없다. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Map<UUID, Locked> lockForApply(Collection<UUID> ids) {
+        Map<UUID, Locked> locked = new LinkedHashMap<>();
+        for (DocumentRepository.ApplyRow row : repository.lockForApply(ids)) {
+            locked.put(row.id(), new Locked(row.id(), row.revisionNo(), row.userLocked(), row.refreshLockRunId(),
+                    row.trashed()));
+        }
+        return locked;
+    }
+
+    /** 확정이 실제로 바꾼 것. 이벤트의 바뀐 칸을 고르는 데 쓴다. */
+    public record Written(boolean titleChanged, boolean bodyChanged, boolean propertiesChanged) {
+    }
+
+    /**
+     * 문서의 제목·본문·속성을 쓴다. 문서 저장과 같은 규칙이다(본문 평문·글자 수를 다시 만들고, revision 을 올린다).
+     * 관계는 여기서 쓰지 않는다 — 확정은 관계를 쌍 단위로 더하고 뺀다({@link #putRelation}).
+     *
+     * <p>호출자가 문서를 잠그고 revision 을 확인한 뒤 부른다. 그래도 어긋나면 이미 다른 저장이 끼어든 것이므로 실패한다.
+     * 같은 자리에 같은 제목이 있으면 {@code DuplicateKeyException} 이 나간다.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Written write(UUID fileId, long expectedRevision, String title, JsonNode body,
+            List<DocumentSnapshot.TextProperty> properties) {
+        DocumentSnapshot snapshot = new DocumentSnapshot(title, body, null, properties, List.of());
+        DocumentRepository.Updated updated = repository
+                .updateIfRevisionMatches(fileId, expectedRevision, snapshot, BodyText.extract(body.get("doc")), null)
+                .orElseThrow(() -> new IllegalStateException("Locked document changed before the refresh wrote it"));
+        boolean propertiesChanged = !repository.properties(fileId).equals(properties);
+        repository.replaceProperties(fileId, properties);
+        return new Written(updated.titleChanged(), updated.bodyChanged(), propertiesChanged);
+    }
+
+    /**
+     * 관계 한 쌍을 만들거나 설명을 바꾼다.
+     *
+     * @return 바뀌었으면 그 관계를 가진 문서(low). 관계 이벤트는 그 문서의 것이다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Optional<UUID> putRelation(UUID one, UUID other, String description) {
+        return repository.upsertRelation(one, other, description).map(DocumentRepository.RelationPair::low);
+    }
+
+    /** 관계 한 쌍을 지운다. 지웠으면 그 관계를 가졌던 문서(low)를 돌려준다. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Optional<UUID> removeRelation(UUID one, UUID other) {
+        return repository.deleteRelation(one, other).map(DocumentRepository.RelationPair::low);
+    }
+
+    /**
+     * 확정이 바꾼 문서의 지금 상태를 AI_APPLY 버전으로 남긴다. 사용자 버전 목록에 보이고, 이름 붙인 버전처럼 만료가
+     * 없다 — "AI 제안을 반영한 시점"으로 되돌아올 수 있게 한다.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordAiApply(UUID projectId, UUID fileId) {
+        DocumentRepository.LiveRow row = repository.liveRows(projectId, List.of(fileId)).getFirst();
+        repository.insertVersion(fileId, row.revisionNo(), "AI_APPLY", null, row.snapshot(), null);
     }
 
     /** graph-rag 의 평문 본문을 에디터 본문으로 되돌린다. 규칙은 {@link BodyFromText}. */
