@@ -229,6 +229,6 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
         assertThat(text(dead, KafkaHeaders.DLT_ORIGINAL_TOPIC)).isEqualTo(GRAPH_REFRESH_COMPLETED);
         assertThat(text(dead, KafkaHeaders.DLT_EXCEPTION_FQCN)).isEqualTo(InvalidEventException.class.getName());
         assertThat(text(dead, KafkaHeaders.DLT_EXCEPTION_MESSAGE)).startsWith("unreadable payload: ");
-        verify(graphRefresh, never()).complete(any());
+        verify(graphRefresh, never()).complete(any(), any());
     }
 }

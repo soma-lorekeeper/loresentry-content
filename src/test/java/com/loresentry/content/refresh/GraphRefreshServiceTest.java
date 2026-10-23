@@ -15,8 +15,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * GraphRefreshCompleted 의 처리({@link GraphRefreshService#complete})는 부르는 쪽이 연 트랜잭션 안에서만 돈다. 처리
- * 기록 없이 처리만 되는 길이 막혀 있는지 확인한다. 처리 본문은 아직 비어 있어서, 여기서는 트랜잭션 규칙만 본다. 요청
- * 쪽은 {@code GraphRefreshRequestApiTest} 가 API 로 본다.
+ * 기록 없이 처리만 되는 길이 막혀 있는지 확인한다. 여기서는 트랜잭션 규칙만 본다 — 반영 내용은
+ * {@code GraphRefreshCompletionTest}, 요청 쪽은 {@code GraphRefreshRequestApiTest} 가 본다.
  */
 class GraphRefreshServiceTest extends ApiTestSupport {
 
@@ -35,13 +35,14 @@ class GraphRefreshServiceTest extends ApiTestSupport {
 
     @Test
     void refusesToRunWithoutATransaction() {
-        assertThatThrownBy(() -> service.complete(event()))
+        assertThatThrownBy(() -> service.complete(event(), new ResultFetch.NoResult()))
                 .isInstanceOf(IllegalTransactionStateException.class);
     }
 
     @Test
     void runsInsideTheCallersTransaction() {
-        assertThatCode(() -> transaction.executeWithoutResult(status -> service.complete(event())))
+        assertThatCode(() -> transaction.executeWithoutResult(
+                status -> service.complete(event(), new ResultFetch.NoResult())))
                 .doesNotThrowAnyException();
     }
 }

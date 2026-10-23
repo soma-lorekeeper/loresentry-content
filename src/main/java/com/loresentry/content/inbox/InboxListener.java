@@ -25,9 +25,9 @@ import org.springframework.stereotype.Component;
  * <p>처리하지 않는 종류의 메시지는 건너뛰고 처리 기록도 남기지 않는다. 계약에 맞지 않는 메시지는
  * {@link InvalidEventException} 이 이 메서드 밖으로 나가 spring-kafka 의 error handler 가 다룬다.
  *
- * <p>두 listener 는 설정(kafka.consumer.enabled.*)으로 따로 켜고 끈다. UserDeleted 는 기본으로 켜져 있다 — 회원
- * 탈퇴가 content 에 들어오는 유일한 길이다. GraphRefreshCompleted 는 기본이 꺼짐이다. 꺼져 있어도 listener 는
- * 등록되고 시작만 하지 않는다.
+ * <p>두 listener 는 설정(kafka.consumer.enabled.*)으로 따로 켜고 끈다. 둘 다 기본으로 켜져 있다 — UserDeleted 는
+ * 회원 탈퇴가 content 에 들어오는 유일한 길이고, GraphRefreshCompleted 가 꺼지면 최신화가 결과를 받지 못해 시간
+ * 제한까지 문서가 잠겨 있다. 꺼져 있어도 listener 는 등록되고 시작만 하지 않는다.
  *
  * <p>listener id, consumer group id, 처리 기록의 consumer_name 은 모두 kafka.consumer.groups.* 의 같은 값이다.
  * group id 는 적지 않아도 spring-kafka 가 listener id 를 쓰지만, 셋이 같다는 것을 드러내려고 직접 적는다.
@@ -89,9 +89,13 @@ class InboxListener {
             autoStartup = "${kafka.consumer.enabled.graph-refresh-completed}")
     void receiveGraphRefreshCompleted(ConsumerRecord<String, String> record) {
         // 처리하지 않는 종류면 빈 값이라 아무것도 하지 않는다. 계약에 맞지 않으면 여기서 예외가 나간다.
-        InboxMessages.graphRefreshCompleted(record).ifPresent(received ->
-                // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다.
-                inbox.runOnce(graphRefreshCompletedConsumer, received.eventId(),
-                        () -> graphRefresh.complete(received.event())));
+        InboxMessages.graphRefreshCompleted(record).ifPresent(received -> {
+            // 결과 파일(S3)은 트랜잭션을 열기 전에 읽는다. 읽는 동안 DB connection 을 잡지 않으려는 것이다. S3 일시
+            // 장애면 여기서 예외가 나가 다시 받는다. 이미 끝난 run 이면 S3 를 읽지 않는다.
+            var fetched = graphRefresh.fetchResult(received.event());
+            // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다.
+            inbox.runOnce(graphRefreshCompletedConsumer, received.eventId(),
+                    () -> graphRefresh.complete(received.event(), fetched));
+        });
     }
 }

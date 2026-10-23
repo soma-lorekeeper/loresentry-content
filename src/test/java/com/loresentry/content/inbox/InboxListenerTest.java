@@ -2,6 +2,8 @@ package com.loresentry.content.inbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -147,8 +149,11 @@ class InboxListenerTest extends KafkaTestSupport {
                 payload);
 
         awaitRecorded(GRAPH_REFRESH_COMPLETED_CONSUMER, eventId);
-        verify(graphRefresh).complete(new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
-                new Result("lore-refresh", resultKey), null, "v1"));
+        // 결과 파일을 먼저 가져오고(트랜잭션 밖), 그것을 처리 기록과 함께 반영한다.
+        GraphRefreshCompletedEvent expected = new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
+                new Result("lore-refresh", resultKey), null, "v1");
+        verify(graphRefresh).fetchResult(expected);
+        verify(graphRefresh).complete(eq(expected), any());
     }
 
     /** relay 가 같은 outbox 행을 다시 보낸 경우다. 두 번째 것은 Service 까지 가지 않고 한 줄만 남는다. */

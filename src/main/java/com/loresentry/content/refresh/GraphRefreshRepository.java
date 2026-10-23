@@ -1,5 +1,8 @@
 package com.loresentry.content.refresh;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -93,6 +96,107 @@ class GraphRefreshRepository {
                 .param("user", requestedBy)
                 .query(UUID.class)
                 .single();
+    }
+
+    /** run 한 줄의 식별과 상태. */
+    record RunRow(UUID id, UUID projectId, String status) {
+    }
+
+    /**
+     * 트랜잭션 없이 run 의 지금 상태를 본다. 완료 이벤트를 받았을 때 S3 를 읽을 가치가 있는지(아직 GENERATING 인지)
+     * 미리 가르는 데만 쓴다. 상태를 바꾸기 전에는 {@link #lockRun} 으로 다시 확인한다.
+     */
+    Optional<RunRow> peek(UUID runId) {
+        return jdbcClient.sql("select id, project_id, status from refresh_runs where id = :id")
+                .param("id", runId)
+                .query(GraphRefreshRepository::mapRun)
+                .optional();
+    }
+
+    /** run 행을 잠그고 읽는다. 완료 반영·시간 제한·확정이 같은 run 을 동시에 바꾸지 않게 한다. */
+    Optional<RunRow> lockRun(UUID runId) {
+        return jdbcClient.sql("select id, project_id, status from refresh_runs where id = :id for update")
+                .param("id", runId)
+                .query(GraphRefreshRepository::mapRun)
+                .optional();
+    }
+
+    /** 이 프로젝트의 가장 최근 run. 폴링 응답이 보여 준다. */
+    Optional<RunRow> latest(UUID projectId) {
+        return jdbcClient.sql("""
+                        select id, project_id, status from refresh_runs
+                        where project_id = :project order by started_at desc, id desc limit 1
+                        """)
+                .param("project", projectId)
+                .query(GraphRefreshRepository::mapRun)
+                .optional();
+    }
+
+    private static RunRow mapRun(ResultSet rows, int index) throws SQLException {
+        return new RunRow(rows.getObject("id", UUID.class), rows.getObject("project_id", UUID.class),
+                rows.getString("status"));
+    }
+
+    /** graph-rag 가 추출에 쓴 규칙 버전. 완료 이벤트가 알려 준다(실패여도 올 수 있다). */
+    void setPromptVersion(UUID runId, String promptVersion) {
+        jdbcClient.sql("update refresh_runs set prompt_version = :version where id = :id")
+                .param("version", promptVersion).param("id", runId).update();
+    }
+
+    /** 결과가 와서 검토할 작업본이 열렸다. */
+    void markReady(UUID runId) {
+        jdbcClient.sql("update refresh_runs set status = 'READY', ready_at = now() where id = :id")
+                .param("id", runId).update();
+    }
+
+    /**
+     * run 을 끝낸다(NO_CHANGE·FAILED·APPLIED). 실패면 기계가 읽는 코드와 사람이 읽는 설명을 남긴다.
+     *
+     * @param code    실패 코드. 실패가 아니면 null
+     * @param message 실패 설명. 실패가 아니면 null
+     */
+    void markEnded(UUID runId, String status, String code, String message) {
+        jdbcClient.sql("""
+                        update refresh_runs
+                        set status = :status, completed_at = now(), error_code = :code, error_message = :message
+                        where id = :id
+                        """)
+                .param("status", status).param("code", code).param("message", message).param("id", runId)
+                .update();
+    }
+
+    /**
+     * graph-rag 결과 파일 원본을 남긴다. 같은 run 의 결과는 하나다 — 이미 있으면(재처리) 처음 것을 둔다.
+     *
+     * @param json 결과 파일 그대로. jsonb 는 바이트를 정규화하므로 원본 해시를 따로 남긴다
+     */
+    void storeResult(UUID runId, String json, String sha256, String bucket, String key) {
+        jdbcClient.sql("""
+                        insert into refresh_results (refresh_run_id, payload, sha256, result_bucket, result_key)
+                        values (:run, :payload::jsonb, :sha256, :bucket, :key)
+                        on conflict (refresh_run_id) do nothing
+                        """)
+                .param("run", runId).param("payload", json).param("sha256", sha256)
+                .param("bucket", bucket).param("key", key)
+                .update();
+    }
+
+    /**
+     * 시간 제한을 넘긴 GENERATING run 들을 잠그고 고른다. 다른 pod 가 같은 run 을 처리 중이면 건너뛴다
+     * ({@code skip locked}) — 그 pod 가 끝낸다.
+     */
+    List<UUID> lockOverdue(Duration timeout, int limit) {
+        return jdbcClient.sql("""
+                        select id from refresh_runs
+                        where status = 'GENERATING' and started_at < now() - make_interval(secs => :seconds)
+                        order by started_at
+                        limit :limit
+                        for update skip locked
+                        """)
+                .param("seconds", (double) timeout.toSeconds())
+                .param("limit", limit)
+                .query(UUID.class)
+                .list();
     }
 
     /** 이 run 이 S3 입력에 실은 문서와 revision. 다음 요청의 기준선이 된다. */
