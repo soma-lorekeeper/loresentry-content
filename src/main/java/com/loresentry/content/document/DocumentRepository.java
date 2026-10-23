@@ -35,8 +35,8 @@ public class DocumentRepository {
         return new DocumentResponses.Content(
                 row.id(), row.projectId(), row.title(), row.folderCode(), row.episodeId(),
                 row.body(), row.legacyBodyMd(),
-                properties(row.id()), relations(row.id()), row.locked(), row.charCount(), row.revisionNo(),
-                row.updatedAt());
+                properties(row.id()), relations(row.id()), row.locked(), row.refreshLocked(), row.charCount(),
+                row.revisionNo(), row.updatedAt());
     }
 
     /**
@@ -45,9 +45,13 @@ public class DocumentRepository {
      * <p>{@code body} 와 {@code legacyBodyMd} 는 둘 중 하나만 채워진다. 아직 변환되지 않은 행은
      * {@code body_json} 이 비어 있고 Markdown 만 있다.
      */
+    /**
+     * {@code locked} 는 편집할 수 있는지(사용자 잠금 또는 최신화 잠금), {@code refreshLocked} 는 그중 최신화 잠금이
+     * 있는지다. 저장·복원은 {@code locked} 로 막고, 잠금 API 는 {@code refreshLocked} 면 거부한다.
+     */
     record Header(UUID id, UUID projectId, String title, String folderCode, UUID episodeId,
             JsonNode body, String legacyBodyMd,
-            boolean locked, int charCount, long revisionNo, OffsetDateTime updatedAt,
+            boolean locked, boolean refreshLocked, int charCount, long revisionNo, OffsetDateTime updatedAt,
             OffsetDateTime trashedAt, UUID lastSaveId) {
     }
 
@@ -55,7 +59,10 @@ public class DocumentRepository {
         return jdbcClient
                 .sql("""
                         select d.id, d.project_id, d.title, f.code as folder_code, d.episode_id,
-                               d.body_json, d.body_md, d.locked, d.char_count, d.revision_no, d.updated_at,
+                               d.body_json, d.body_md,
+                               (d.locked or d.refresh_lock_run_id is not null) as locked,
+                               d.refresh_lock_run_id is not null as refresh_locked,
+                               d.char_count, d.revision_no, d.updated_at,
                                d.trashed_at, d.last_save_id
                         from document d
                         join base_folders f on f.id = d.folder_id
@@ -73,6 +80,7 @@ public class DocumentRepository {
                         readBody(rows.getString("body_json")),
                         rows.getString("body_json") == null ? rows.getString("body_md") : null,
                         rows.getBoolean("locked"),
+                        rows.getBoolean("refresh_locked"),
                         rows.getInt("char_count"),
                         rows.getLong("revision_no"),
                         rows.getObject("updated_at", OffsetDateTime.class),

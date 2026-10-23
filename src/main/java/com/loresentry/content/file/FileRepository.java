@@ -22,9 +22,14 @@ public class FileRepository {
      * 문서 조회는 언제나 {@code projects}와 조인해 소유자를 확인한다. 서비스 계층에서 두 번
      * 질의해 비교하면 그 사이에 소유자가 바뀔 수 있고, 무엇보다 한 곳만 빠뜨려도 남의 문서가 보인다.
      */
+    // locked 는 편집할 수 있는지다. 사용자 잠금과 최신화 잠금(refresh_lock_run_id) 중 하나라도 걸려 있으면 잠김이다.
+    // 둘을 따로 두는 이유는 V16 주석에 있다. refresh_locked 는 화면이 "최신화 때문에 잠김"을 알리는 데 쓴다.
     private static final String DOCUMENT_SELECT = """
             select d.id, d.project_id, d.folder_id, f.code as folder_code, d.episode_id,
-                   d.title, d.rank, d.locked, d.char_count, d.revision_no, d.trashed_at, d.updated_at
+                   d.title, d.rank,
+                   (d.locked or d.refresh_lock_run_id is not null) as locked,
+                   d.refresh_lock_run_id is not null as refresh_locked,
+                   d.char_count, d.revision_no, d.trashed_at, d.updated_at
             from document d
             join base_folders f on f.id = d.folder_id
             join projects p on p.id = d.project_id
@@ -318,6 +323,7 @@ public class FileRepository {
                 rows.getString("title"),
                 rows.getString("rank"),
                 rows.getBoolean("locked"),
+                rows.getBoolean("refresh_locked"),
                 rows.getInt("char_count"),
                 rows.getLong("revision_no"),
                 rows.getObject("trashed_at", OffsetDateTime.class),

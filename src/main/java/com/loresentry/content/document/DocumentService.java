@@ -162,10 +162,18 @@ public class DocumentService {
         return saved;
     }
 
-    /** 잠금은 편집 화면의 상태라 이벤트 payload 에 없다. */
+    /**
+     * 잠금은 편집 화면의 상태라 이벤트 payload 에 없다.
+     *
+     * <p>그래프 최신화가 잠근 문서는 그 최신화가 끝날 때까지 잠그는 것도 푸는 것도 받지 않는다. 풀어 주면 검토 중인
+     * 작업본이 그 사이의 편집·이름 변경·삭제와 어긋나고, 검토 중에 사용자 잠금이 생기면 확정이 그 문서를 쓸 수 없다.
+     */
     @Transactional
     public DocumentResponses.Content setLocked(UUID ownerUserId, UUID fileId, boolean locked) {
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
+        if (header.refreshLocked()) {
+            throw new ContentFailure(ContentFailure.Reason.DOCUMENT_REFRESH_LOCKED);
+        }
         repository.setLocked(fileId, locked);
         activity.touch(header.projectId());
         return repository.find(ownerUserId, fileId).orElseThrow();

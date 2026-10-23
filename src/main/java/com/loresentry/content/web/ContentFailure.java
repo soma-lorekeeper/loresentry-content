@@ -1,5 +1,7 @@
 package com.loresentry.content.web;
 
+import java.util.Map;
+
 /**
  * 도메인 실패. HTTP 상태나 프레임워크 예외를 담지 않는다 — 그 매핑은 {@link ErrorResponses}가 한다.
  *
@@ -35,17 +37,41 @@ public class ContentFailure extends RuntimeException {
         INVALID_WITHDRAWAL_SURVEY,
         REFRESH_IN_PROGRESS,
         REFRESH_UNAVAILABLE,
+        DOCUMENT_REFRESH_LOCKED,
+        REFRESH_REVIEW_PENDING,
+        REFRESH_NOT_FOUND,
+        REFRESH_DRAFT_NOT_FOUND,
+        REFRESH_NOT_READY,
+        REFRESH_DRAFT_CONFLICT,
+        REFRESH_DRAFTS_UNMATCHED,
+        REFRESH_DOCUMENTS_CHANGED,
+        REFRESH_DRAFTS_INVALID,
         INTERNAL_ERROR
     }
 
     private final Reason reason;
 
+    /**
+     * 클라이언트가 다음 행동을 고르는 데 필요한 값(예: 맞추지 않은 작업본 id 목록). 응답 본문에 code·message 와
+     * 나란히 실린다. 사용자 데이터나 내부 구조를 담지 않는다.
+     */
+    private final Map<String, Object> details;
+
     public ContentFailure(Reason reason) {
+        this(reason, Map.of());
+    }
+
+    public ContentFailure(Reason reason, Map<String, Object> details) {
         super(reason.name());
         this.reason = reason;
+        this.details = Map.copyOf(details);
     }
 
     public Reason reason() {
         return reason;
+    }
+
+    public Map<String, Object> details() {
+        return details;
     }
 }

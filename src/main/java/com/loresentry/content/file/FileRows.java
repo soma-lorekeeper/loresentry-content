@@ -23,7 +23,10 @@ public final class FileRows {
             UUID episodeId,
             String title,
             String rank,
+            /** 편집할 수 없는가. 사용자 잠금이나 최신화 잠금 중 하나라도 있으면 true */
             boolean locked,
+            /** 진행 중인 그래프 최신화가 잠갔는가. 사용자가 풀 수 없다 */
+            boolean refreshLocked,
             int charCount,
             long revisionNo,
             OffsetDateTime trashedAt,

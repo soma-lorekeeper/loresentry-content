@@ -472,6 +472,48 @@ class DocumentApiTest extends ApiTestSupport {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * 그래프 최신화가 잠근 문서는 편집·이름 변경·휴지통이 막히고, 사용자가 잠그거나 풀 수도 없다. 최신화 잠금이
+     * 풀리면 사용자 잠금은 원래대로(여기서는 풀림) 남는다.
+     */
+    @Test
+    void aRefreshLockBlocksEditingAndCannotBeToggledByTheUser() throws Exception {
+        UUID run = jdbcClient.sql("insert into refresh_runs (project_id, requested_by, status) "
+                        + "values (:project, :owner, 'GENERATING') returning id")
+                .param("project", project).param("owner", owner).query(UUID.class).single();
+        jdbcClient.sql("update document set refresh_lock_run_id = :run where id = :id")
+                .param("run", run).param("id", character).update();
+
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.locked").value(true))
+                .andExpect(jsonPath("$.refresh_locked").value(true));
+        mockMvc.perform(as(get("/projects/" + project + "/files")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$..[?(@.id == '" + character + "')].refresh_locked").value(true));
+
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}}}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOCUMENT_LOCKED"));
+        mockMvc.perform(as(body(patch("/files/" + character), "{\"title\":\"새 이름\"}")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOCUMENT_LOCKED"));
+        mockMvc.perform(as(post("/files/" + character + "/trash")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOCUMENT_LOCKED"));
+        for (String locked : new String[] { "true", "false" }) {
+            mockMvc.perform(as(body(put("/files/" + character + "/lock"), "{\"locked\":" + locked + "}")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("DOCUMENT_REFRESH_LOCKED"));
+        }
+
+        jdbcClient.sql("update document set refresh_lock_run_id = null where id = :id")
+                .param("id", character).update();
+        mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(jsonPath("$.locked").value(false))
+                .andExpect(jsonPath("$.refresh_locked").value(false));
+    }
+
     @Test
     void savesAndListsNamedVersions() throws Exception {
         mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1회차\"}]}]}}}"))

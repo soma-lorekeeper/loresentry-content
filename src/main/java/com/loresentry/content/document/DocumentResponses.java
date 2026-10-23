@@ -25,6 +25,8 @@ public final class DocumentResponses {
             List<DocumentSnapshot.TextProperty> properties,
             List<DocumentSnapshot.Relation> relations,
             boolean locked,
+            /** 그래프 최신화가 잠갔다. 화면은 이것으로 "최신화 중이라 잠김"을 알리고 잠금 해제를 막는다 */
+            @JsonProperty("refresh_locked") boolean refreshLocked,
             @JsonProperty("char_count") int charCount,
             @JsonProperty("revision_no") long revisionNo,
             @JsonProperty("updated_at") OffsetDateTime updatedAt) {
