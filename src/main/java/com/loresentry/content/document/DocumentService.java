@@ -366,8 +366,10 @@ public class DocumentService {
      *
      * <p>모르는 노드·마크를 그대로 저장하면 다른 클라이언트가 열 수 없는 문서가 생긴다. 허용 목록
      * 밖이면 받지 않는다 — 조용히 지우면 사용자는 글이 사라진 것으로 본다.
+     *
+     * <p>그래프 최신화의 작업본도 같은 규칙으로 확인한다({@link RefreshDocuments}).
      */
-    private JsonNode validateBody(JsonNode body) {
+    JsonNode validateBody(JsonNode body) {
         if (body == null || !body.isObject()) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }

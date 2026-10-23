@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -151,6 +152,31 @@ public class DocumentRepository {
      * <p>속성 순서와 관계 규칙은 {@link #properties}·{@link #relations} 와 같다.
      */
     List<DocumentResponses.ContentItem> contents(UUID projectId, List<UUID> ids) {
+        Map<UUID, List<DocumentSnapshot.TextProperty>> properties = propertiesOf(ids);
+        Map<UUID, List<DocumentSnapshot.Relation>> relations = relationsOf(ids);
+
+        return jdbcClient
+                .sql("""
+                        select d.id, d.revision_no, f.code as folder_code, d.title,
+                               coalesce(d.body_text, '') as body_text
+                        from document d
+                        join base_folders f on f.id = d.folder_id
+                        where d.project_id = :project and d.id in (:ids) and d.trashed_at is null
+                        order by d.id
+                        """)
+                .param("project", projectId)
+                .param("ids", ids)
+                .query((rows, index) -> {
+                    UUID id = rows.getObject("id", UUID.class);
+                    return new DocumentResponses.ContentItem(id, rows.getLong("revision_no"),
+                            rows.getString("folder_code"), rows.getString("title"), rows.getString("body_text"),
+                            properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
+                })
+                .list();
+    }
+
+    /** 여러 문서의 속성을 한 쿼리로 읽는다. 문서별 순서는 {@link #properties} 와 같다. */
+    private Map<UUID, List<DocumentSnapshot.TextProperty>> propertiesOf(Collection<UUID> ids) {
         Map<UUID, List<DocumentSnapshot.TextProperty>> properties = new HashMap<>();
         jdbcClient
                 .sql("select document_id, property_key, text_value from document_properties "
@@ -161,7 +187,11 @@ public class DocumentRepository {
                             .add(new DocumentSnapshot.TextProperty(
                                     rows.getString("property_key"), rows.getString("text_value")));
                 });
+        return properties;
+    }
 
+    /** 여러 문서의 관계를 한 쿼리로 읽는다. 규칙(휴지통 대상 제외, 키는 대상 분류)은 {@link #relations} 와 같다. */
+    private Map<UUID, List<DocumentSnapshot.Relation>> relationsOf(Collection<UUID> ids) {
         Map<UUID, List<DocumentSnapshot.Relation>> relations = new HashMap<>();
         jdbcClient
                 .sql("""
@@ -185,25 +215,96 @@ public class DocumentRepository {
                             .add(new DocumentSnapshot.Relation(rows.getString("relation_key"),
                                     rows.getObject("target_document_id", UUID.class), rows.getString("description")));
                 });
+        return relations;
+    }
 
+    /**
+     * 최신화가 읽는 문서의 지금 상태. {@code userLocked} 는 사용자가 건 잠금만이다(최신화 잠금은 따로 본다).
+     * 휴지통 문서도 읽는다 — 최신화는 그 문서를 건너뛸지 스스로 정한다.
+     */
+    record LiveRow(UUID id, String folderCode, long revisionNo, boolean userLocked, UUID refreshLockRunId,
+            boolean trashed, DocumentSnapshot snapshot) {
+    }
+
+    /** 이 프로젝트의 문서 중 {@code ids} 에 있는 것을 읽는다(없는 id 는 빠진다). 문서·속성·관계를 각각 한 쿼리로 읽는다. */
+    List<LiveRow> liveRows(UUID projectId, Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, List<DocumentSnapshot.TextProperty>> properties = propertiesOf(ids);
+        Map<UUID, List<DocumentSnapshot.Relation>> relations = relationsOf(ids);
         return jdbcClient
                 .sql("""
-                        select d.id, d.revision_no, f.code as folder_code, d.title,
-                               coalesce(d.body_text, '') as body_text
+                        select d.id, f.code as folder_code, d.revision_no, d.title, d.body_json, d.body_md,
+                               d.locked, d.refresh_lock_run_id, d.trashed_at
                         from document d
                         join base_folders f on f.id = d.folder_id
-                        where d.project_id = :project and d.id in (:ids) and d.trashed_at is null
+                        where d.project_id = :project and d.id in (:ids)
                         order by d.id
                         """)
                 .param("project", projectId)
                 .param("ids", ids)
                 .query((rows, index) -> {
                     UUID id = rows.getObject("id", UUID.class);
-                    return new DocumentResponses.ContentItem(id, rows.getLong("revision_no"),
-                            rows.getString("folder_code"), rows.getString("title"), rows.getString("body_text"),
+                    String bodyJson = rows.getString("body_json");
+                    DocumentSnapshot snapshot = new DocumentSnapshot(rows.getString("title"), readBody(bodyJson),
+                            bodyJson == null ? rows.getString("body_md") : null,
                             properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
+                    return new LiveRow(id, rows.getString("folder_code"), rows.getLong("revision_no"),
+                            rows.getBoolean("locked"), rows.getObject("refresh_lock_run_id", UUID.class),
+                            rows.getObject("trashed_at", OffsetDateTime.class) != null, snapshot);
                 })
                 .list();
+    }
+
+    /** 최신화 run 이 이 문서들을 잠근다. 편집 가능 여부는 사용자 잠금과 합쳐 본다(V16). */
+    void lockForRefresh(UUID runId, Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        jdbcClient.sql("update document set refresh_lock_run_id = :run where id in (:ids)")
+                .param("run", runId).param("ids", ids).update();
+    }
+
+    /** 이 run 이 건 잠금만 푼다. 사용자 잠금은 그대로 남는다. */
+    void unlockRefresh(UUID runId) {
+        jdbcClient.sql("update document set refresh_lock_run_id = null where refresh_lock_run_id = :run")
+                .param("run", runId).update();
+    }
+
+    /** 최신화 기준 버전들의 스냅샷. 없는 id 는 빠진다. */
+    Map<UUID, DocumentSnapshot> refreshBases(Collection<UUID> versionIds) {
+        Map<UUID, DocumentSnapshot> snapshots = new HashMap<>();
+        if (versionIds.isEmpty()) {
+            return snapshots;
+        }
+        jdbcClient
+                .sql("select id, snapshot from document_versions where id in (:ids) and kind = 'REFRESH_BASE'")
+                .param("ids", versionIds)
+                .query(rows -> {
+                    snapshots.put(rows.getObject("id", UUID.class),
+                            json.readValue(rows.getString("snapshot"), DocumentSnapshot.class));
+                });
+        return snapshots;
+    }
+
+    /** 최신화 기준 버전을 지운다. 사용자 버전(AUTO·NAMED 등)은 kind 로 걸러 건드리지 않는다. */
+    void deleteRefreshBases(Collection<UUID> versionIds) {
+        if (versionIds.isEmpty()) {
+            return;
+        }
+        jdbcClient.sql("delete from document_versions where id in (:ids) and kind = 'REFRESH_BASE'")
+                .param("ids", versionIds).update();
+    }
+
+    /** 분류 코드 → 그 분류 문서를 가리키는 관계 키(V10). 관계 키는 대상 문서의 분류에서 나온다. */
+    Map<String, String> relationKeysByFolder() {
+        Map<String, String> keys = new HashMap<>();
+        jdbcClient.sql("select code, relation_key from base_folders")
+                .query(rows -> {
+                    keys.put(rows.getString("code"), rows.getString("relation_key"));
+                });
+        return keys;
     }
 
     /**
