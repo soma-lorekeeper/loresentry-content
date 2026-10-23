@@ -204,10 +204,10 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         assertThat(requestedEvents()).hasSize(1);
     }
 
-    /** S3 에 올리지 못하면 run 도 이벤트도 남지 않는다. */
+    /** S3 에 올리지 못하면 run 도 이벤트도, 기준 버전·작업본·잠금도 남지 않는다. */
     @Test
     void storageFailureLeavesNoTrace() throws Exception {
-        createDocument("MANUSCRIPT", "1화");
+        UUID chapter = createDocument("MANUSCRIPT", "1화");
         willThrow(SdkClientException.create("unreachable"))
                 .given(s3).putObject(any(PutObjectRequest.class), any(RequestBody.class));
 
@@ -217,6 +217,78 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
 
         assertThat(runCount()).isZero();
         assertThat(requestedEvents()).isEmpty();
+        assertThat(refreshBaseCount(chapter)).isZero();
+        mockMvc.perform(as(get("/files/" + chapter + "/content")))
+                .andExpect(jsonPath("$.locked").value(false));
+    }
+
+    /**
+     * 실은 문서마다 기준 버전과 left 만 채운 작업본이 남고, 그 문서들은 최신화가 끝날 때까지 잠긴다. 응답의 files 가
+     * 잠긴 문서 목록이다.
+     */
+    @Test
+    void requestKeepsABaseAndALeftDraftForEachSentDocumentAndLocksThem() throws Exception {
+        UUID chapter = createDocument("MANUSCRIPT", "1화");
+        UUID character = createDocument("CHARACTER", "서윤");
+        save(character, "서윤", "기록관의 막내", "[]",
+                "[{\"relation_key\":\"related_manuscript\",\"target_document_id\":\"" + chapter + "\"}]");
+        long characterRevision = revisionOf(character);
+
+        UUID run = requestRefresh();
+
+        List<Map<String, Object>> drafts = jdbcClient.sql("""
+                        select d.target_document_id, d.status, d.kind, d.left_source_revision_no,
+                               d.left_snapshot = d.origin_snapshot as origin_is_left, d.right_snapshot is null as no_right,
+                               d.matched, v.kind as base_kind, v.source_revision_no as base_revision
+                        from refresh_document_drafts d
+                        join document_versions v on v.id = d.base_version_id
+                        where d.refresh_run_id = :run order by d.target_document_id
+                        """)
+                .param("run", run)
+                .query((rows, index) -> Map.<String, Object>of(
+                        "target", rows.getObject("target_document_id", UUID.class),
+                        "status", rows.getString("status"), "kind", rows.getString("kind"),
+                        "left_revision", rows.getLong("left_source_revision_no"),
+                        "origin_is_left", rows.getBoolean("origin_is_left"),
+                        "no_right", rows.getBoolean("no_right"), "matched", rows.getBoolean("matched"),
+                        "base_kind", rows.getString("base_kind"), "base_revision", rows.getLong("base_revision")))
+                .list();
+        assertThat(drafts).hasSize(2);
+        for (Map<String, Object> draft : drafts) {
+            long revision = draft.get("target").equals(character) ? characterRevision : 0L;
+            assertThat(draft).containsEntry("status", "BASE_CAPTURED").containsEntry("kind", "EDIT")
+                    .containsEntry("left_revision", revision).containsEntry("origin_is_left", true)
+                    .containsEntry("no_right", true).containsEntry("matched", false)
+                    .containsEntry("base_kind", "REFRESH_BASE").containsEntry("base_revision", revision);
+        }
+        JsonNode left = json.readTree(jdbcClient.sql("select left_snapshot::text from refresh_document_drafts "
+                        + "where refresh_run_id = :run and target_document_id = :id")
+                .param("run", run).param("id", character).query(String.class).single());
+        assertThat(left.get("title").stringValue()).isEqualTo("서윤");
+        assertThat(left.get("relations")).isEqualTo(json.readTree("[{\"relation_key\":\"related_manuscript\","
+                + "\"target_document_id\":\"" + chapter + "\",\"target_candidate_id\":null,\"description\":\"\"}]"));
+
+        for (UUID sent : List.of(chapter, character)) {
+            mockMvc.perform(as(get("/files/" + sent + "/content")))
+                    .andExpect(jsonPath("$.locked").value(true))
+                    .andExpect(jsonPath("$.refresh_locked").value(true));
+        }
+        mockMvc.perform(as(get("/files/" + character + "/versions")))
+                .andExpect(jsonPath("$.versions[?(@.kind == 'REFRESH_BASE')]").isEmpty());
+    }
+
+    /** 검토를 기다리는 결과(READY)가 있으면 확정하기 전까지 새 최신화를 받지 않는다. */
+    @Test
+    void aResultAwaitingReviewRejectsAnotherRequest() throws Exception {
+        createDocument("MANUSCRIPT", "1화");
+        UUID first = requestRefresh();
+        jdbcClient.sql("update refresh_runs set status = 'READY' where id = :id").param("id", first).update();
+        createDocument("MANUSCRIPT", "2화");
+
+        mockMvc.perform(as(post("/projects/" + project + "/graph-refresh")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REFRESH_REVIEW_PENDING"));
+        assertThat(uploads).hasSize(1);
     }
 
     /** 남의 프로젝트와 휴지통 프로젝트는 없는 것으로 답한다. */
@@ -263,6 +335,11 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                     files.put(rows.getObject("file_id", UUID.class), rows.getLong("revision_no"));
                 });
         return files;
+    }
+
+    private long refreshBaseCount(UUID file) {
+        return jdbcClient.sql("select count(*) from document_versions where document_id = :id and kind = 'REFRESH_BASE'")
+                .param("id", file).query(Long.class).single();
     }
 
     private long runCount() {

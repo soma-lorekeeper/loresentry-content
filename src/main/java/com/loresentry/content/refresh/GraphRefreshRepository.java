@@ -1,6 +1,7 @@
 package com.loresentry.content.refresh;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.loresentry.content.event.GraphRefreshRequested;
@@ -58,6 +59,22 @@ class GraphRefreshRepository {
                 .param("project", projectId)
                 .query(UUID.class)
                 .list();
+    }
+
+    /**
+     * 새 요청을 막는 run 의 상태. 결과를 기다리는 run(GENERATING)과 검토를 기다리는 run(READY)이 있으면 새 요청을
+     * 받지 않는다. 어느 쪽인지에 따라 클라이언트에 알리는 이유가 다르다.
+     */
+    Optional<String> openRunStatus(UUID projectId) {
+        return jdbcClient
+                .sql("""
+                        select status from refresh_runs
+                        where project_id = :project and status in ('CAPTURING_BASE', 'GENERATING', 'READY')
+                        limit 1
+                        """)
+                .param("project", projectId)
+                .query(String.class)
+                .optional();
     }
 
     /**
