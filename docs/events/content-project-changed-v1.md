@@ -55,7 +55,7 @@ FileChanged는 바뀐 부분이 아니라 **그 문서의 발행 시점 상태 �
 | `file.folder_code` | string | `WORLDVIEW` `CHARACTER` `LOCATION` `MANUSCRIPT` `ORGANIZATION` `ITEM` `EVENT` |
 | `file.episode_id` | uuid \| null | `MANUSCRIPT`일 때만 값이 있을 수 있다 |
 | `file.state` | `ACTIVE` \| `TRASHED` | |
-| `file.revision_no` | long | 문서의 저장 번호. 본문 저장·버전 복원 때만 오르고 이름 변경·이동·휴지통에서는 그대로다. 이 본문이 어느 판본인지 보여 주는 값이고, 순서 비교는 `ce_sequence`로 한다(2.3) |
+| `file.revision_no` | long | 문서의 저장 번호. 본문 저장·버전 복원·그래프 최신화 확정 때만 오르고 이름 변경·이동·휴지통에서는 그대로다. 이 본문이 어느 판본인지 보여 주는 값이고, 순서 비교는 `ce_sequence`로 한다(2.3) |
 | `file.body_text` | string | 서식을 뺀 본문. 빈 문서는 `""` |
 | `file.properties` | `[{key, value}]` | 문서 속성 전체, 화면 순서. 설명(`description`)도 여기 있다 |
 | `relations` | array \| null | **이 문서가 low인 관계만**. DELETED일 때만 null |
@@ -120,6 +120,8 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | 회원 탈퇴 `auth.user.deleted.v1` 수신 | 프로젝트마다 ProjectDeleted | | | 5절 |
 | 샘플 프로젝트 생성 `POST /projects/sample` | 위 생성·저장 규칙대로 | | | 내부에서 문서 생성과 저장을 차례로 부른다 |
 | 재발행 `POST /internal/admin/file-events/replay` (운영자) | 활성 프로젝트의 활성 문서마다 | UPDATED | 전부 | 프로젝트 하나가 트랜잭션 하나다. 휴지통 문서는 없다 |
+| 그래프 최신화 요청 `POST /projects/{p}/graph-refresh`, 결과 반영, 작업본 저장 | 없음 | | | 문서를 잠그고 작업본만 만든다. 잠금은 payload에 없다 |
+| 그래프 최신화 확정 `POST /projects/{p}/graph-refresh/{r}/confirm` | 새 설정 문서마다 + 바뀐 문서마다 + 각 owner | 새 문서: CREATED / 그 밖: UPDATED | 새 문서: 전부 / 바뀐 문서: 아래 문서 저장 규칙 / owner: `RELATIONS` | 한 트랜잭션이다. 관계는 쌍 단위로 더하고 빼며, 새 문서와의 관계는 그 CREATED 스냅샷에 들어 있다 |
 
 **문서 저장의 changed_fields**는 저장 SQL이 실제로 바꾼 것으로 정한다(저장 전후를 따로 읽어 비교하지 않는다).
 

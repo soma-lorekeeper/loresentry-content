@@ -60,7 +60,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PATCH DELETE` | `/episodes/{id}` | Renames an episode; deleting one keeps its chapters. |
 | `GET` | `/files/{id}/content` | Title, body, text properties and relation chips. |
 | `PUT` | `/files/{id}/content` | Conditional save. Needs `If-Match`; `X-Save-Id` makes a retry idempotent. |
-| `PUT` | `/files/{id}/lock` | Locks or unlocks editing. |
+| `PUT` | `/files/{id}/lock` | Locks or unlocks editing. `409 DOCUMENT_REFRESH_LOCKED` while a graph refresh holds the document. |
 | `GET POST` | `/files/{id}/versions` | Lists versions with their snapshots; `POST` names one. |
 | `POST` | `/files/{id}/versions/{vid}/restore` | Restores as a **new** revision. Needs `If-Match`. |
 | `DELETE` | `/files/{id}/versions/{vid}` | Deletes a version. |
@@ -76,7 +76,11 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
 | `POST` | `/feedback` | Stores in-app feedback. `201` with `{id, created_at}`. At most 20 per user per hour. |
-| `POST` | `/projects/{id}/graph-refresh` | Starts a graph refresh with every active document changed or created since the last one. No body. `202` with `request_id` and the files sent; `200` with `NO_CHANGES` when nothing changed; `409 REFRESH_IN_PROGRESS` while a refresh runs. Not relayed by the gateway yet. |
+| `POST` | `/projects/{id}/graph-refresh` | Starts a graph refresh with every active document changed or created since the last one. No body. `202` with `request_id` and the files sent, which stay locked until the run ends; `200` with `NO_CHANGES` when nothing changed; `409 REFRESH_IN_PROGRESS` while a refresh runs, `409 REFRESH_REVIEW_PENDING` while a result awaits review. Not relayed by the gateway yet. |
+| `GET` | `/projects/{id}/graph-refresh` | The latest run, for polling: `status` (`GENERATING`, `READY`, `NO_CHANGE`, `FAILED`, `APPLIED`), times, `error`, `draft_counts`. `404 REFRESH_NOT_FOUND` before the first. |
+| `GET` | `/projects/{id}/graph-refresh/{rid}` | One run with its open review drafts: base (when the document was sent), left and right snapshots, `matched`, `draft_revision`. graph-rag's evidence is not returned. |
+| `PATCH` | `/projects/{id}/graph-refresh/{rid}/drafts/{did}` | Autosaves both sides of a draft, `{draft_revision, left_snapshot, right_snapshot}`. `409 REFRESH_DRAFT_CONFLICT` with `current` when another save came first. |
+| `POST` | `/projects/{id}/graph-refresh/{rid}/confirm` | Applies a `READY` run when every draft's two sides match, in one transaction. No body. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -151,8 +155,8 @@ never shown to a user.
 | --- | --- |
 | 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET`, `INVALID_UPLOAD_REQUEST`, `INVALID_MEMO`, `INVALID_FEEDBACK` |
 | 401 | `USER_CONTEXT_REQUIRED` |
-| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `MEMO_NOT_FOUND`, `NOT_FOUND` (no such path) |
-| 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
+| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `MEMO_NOT_FOUND`, `REFRESH_NOT_FOUND`, `REFRESH_DRAFT_NOT_FOUND`, `NOT_FOUND` (no such path) |
+| 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED`, `DOCUMENT_REFRESH_LOCKED`, `REFRESH_REVIEW_PENDING`, `REFRESH_NOT_READY`, `REFRESH_DRAFT_CONFLICT`, `REFRESH_DRAFTS_UNMATCHED`, `REFRESH_DOCUMENTS_CHANGED`, `REFRESH_DRAFTS_INVALID` |
 | 429 | `FEEDBACK_RATE_LIMITED` (`next_action: RETRY_LATER`) |
 | 500 | `INTERNAL_ERROR` |
 
@@ -161,6 +165,13 @@ A conditional save that loses the race answers `409` with `current` (the documen
 as it now stands) and `base` (the snapshot of the revision the client held, or
 `null` when no version kept it), so the client can attempt a three-way merge
 without a second request that could race again.
+
+The graph-refresh conflicts carry the same kind of detail: `REFRESH_DRAFT_CONFLICT`
+has `current` (the draft as saved elsewhere), `REFRESH_DRAFTS_UNMATCHED` the
+`drafts` still unresolved, `REFRESH_DOCUMENTS_CHANGED` the `documents` that moved
+under their drafts, and `REFRESH_DRAFTS_INVALID` the `problems` that keep the
+agreed drafts from being applied (`RELATION_CONFLICT`, `REJECTED_CANDIDATE`,
+`INVALID_RELATION_TARGET`, `BODY_REQUIRED`).
 
 The full specification, including what was deliberately left out and why, is in
 the `docs` repository (`CONTENT_PROJECT_API.md`).
@@ -233,7 +244,9 @@ Flyway runs on startup and applies `src/main/resources/db/migration` to the
 `content` database. `V2` seeds the seven global base folders. `V4` adds the
 per-location title index, `V5` the save-id column, `V6` the `image` table, `V7`
 memos, favorites and workspace state, `V11` the `feedback` table, and `V16`
-the `refresh_run_files` table.
+the `refresh_run_files` table together with what graph-refresh completion needs:
+`refresh_results`, `NO_CHANGE` and `error_code` on runs, review-shaped drafts and
+the per-run document lock.
 `V3` widens
 `projects.name` to 255 characters, adds the unique index behind the
 duplicate-name rule, and puts `ON DELETE CASCADE` on the three foreign keys
@@ -248,9 +261,10 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `document_properties` | Text properties such as description and alias |
 | `document_relations` | Relation chips, one row per pair - relations have no direction; the source data for the graph and timeline |
 | `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE` |
-| `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING` run per project |
+| `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING`/`READY` run per project |
 | `refresh_run_files` | The documents and revisions each run sent; the next refresh compares against the highest revision per document in runs that did not fail |
-| `refresh_document_drafts` | Per-document refresh work: base version, left and right snapshots, draft revision |
+| `refresh_results` | graph-rag's whole result file for a run, kept as JSONB with the sha256 of its bytes |
+| `refresh_document_drafts` | Per-document review work: `EDIT` (an existing document: base version, origin, left and right) or `NEW` (a proposed settings document); `matched` when both sides agree |
 | `outbox_events` | Real document changes waiting to be published to Kafka |
 | `image` | Uploaded user images. `PENDING` until `HeadObject` confirms the upload |
 | `memo` | Project and file memos in one table, kept apart by `scope` |
@@ -262,8 +276,11 @@ Rules the database enforces:
 
 - A document with an `episode_id` must be in the manuscript folder, and the
   episode must belong to the same project.
-- `OPEN`, `APPLIED` and `STALE` drafts must carry both snapshots and the left
-  revision.
+- An `EDIT` draft always carries its left side, origin and left revision, and its
+  right side once `OPEN`. A `NEW` draft has no document or base and never targets
+  the manuscript folder.
+- A document is locked while either its own `locked` or `refresh_lock_run_id` is
+  set; ending a run clears only that run's lock.
 - `rank` columns use the `C` collation so fractional-index strings sort bytewise.
 - A project name is unique per owner, case-insensitively, **among active
   projects only** — a trashed project frees its name, and restoring it is what
@@ -447,9 +464,11 @@ the two files drift apart in shape or the English one still contains Hangul.
 - User-created sections and general folders. **Decided against**: episode folders
   stay the only folder a user can create, so the frontend drops those menus.
 - Export to PDF, DOCX and HWP.
-- Handling `GraphRefreshCompleted` and a timeout for refresh runs. Until then a
-  run stays `GENERATING` and its project cannot start another refresh.
-- User approval and application of generated refresh proposals.
+- Relaying the graph-refresh endpoints through the gateway, and the review screen
+  in the frontend.
+- Discarding a refresh result. A `READY` run blocks new refreshes, and keeps its
+  documents locked, until it is confirmed; to drop the proposals, make each draft's
+  right side equal its left (for a new document, empty both) and confirm.
 - Production refresh needs the private bucket, passed as both
   `GRAPH_REFRESH_REQUEST_BUCKET` and `GRAPH_REFRESH_COMPLETED_BUCKET` with its region
   in `GRAPH_REFRESH_REGION`, created with
@@ -472,11 +491,14 @@ documents go again. In one `REPEATABLE READ` transaction it records the run as
 `refresh-input-v2` object to `refresh/{project}/{request}/input.json` in
 `GRAPH_REFRESH_REQUEST_BUCKET`, and appends `GraphRefreshRequested` with the object's
 location and sha256, the files, and the latest `FileChanged` id of every document
-in the project (`required_events`). graph-rag chooses the model and prompt. Without
-a bucket, or when S3 fails, the answer is `503 REFRESH_UNAVAILABLE` and nothing is
-recorded. Only `event/GraphRefreshMessages` knows the event and input shapes.
-graph-rag has to accept `refresh-input-v2` and an event without `model_settings`
-before this ships.
+in the project (`required_events`). graph-rag chooses the model and prompt. In the
+same transaction it keeps a `REFRESH_BASE` version and a draft holding only the
+left side for every document it sends, and locks those documents for the run, so
+editing, renaming, moving, trashing and the lock endpoint are refused until the run
+ends. Without a bucket, or when S3 fails, the answer is `503 REFRESH_UNAVAILABLE`
+and nothing is recorded. Only `event/GraphRefreshMessages` knows the event and
+input shapes. graph-rag has to read the input under `location`
+(loresentry-graph-rag#4) before this ships.
 
 The bucket `loresentry-refresh-prod-<account>` is created by
 [`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), run from a workstation like
@@ -487,8 +509,26 @@ kept apart from the media policy so rerunning `setup-media.sh` does not drop it.
 graph-rag's role and Pod Identity come from `deploy/setup-refresh.sh` in
 `loresentry-graph-rag`, run after this one.
 
-`KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED=true` starts the completion listener,
-but its handler does nothing yet.
+The completion listener (`KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED`) is on by
+default. For each `GraphRefreshCompleted` it first reads the result file, outside any
+transaction and only while the run is still `GENERATING`: the bucket must be
+`GRAPH_REFRESH_COMPLETED_BUCKET`, the object at most 16 MiB and equal to its `sha256`
+metadata, and the file `refresh-result-v3` for this request. Then, in the inbox
+transaction, it keeps the raw file in `refresh_results`. A `PROPOSED` result fills
+the right side of each proposed document's draft (graph-rag's plain text becomes an
+editor body, keeping every unchanged block), opens drafts, and locks, for documents
+graph-rag read on its own and for proposed settings documents, puts each proposed
+relation into both of its documents' drafts, and marks the run `READY`. A failed or
+unusable result, `NO_CHANGE`, or nothing usable ends the run and releases its drafts,
+`REFRESH_BASE` versions and locks. A run with no completion after
+`GRAPH_REFRESH_TIMEOUT` (1h) ends as `FAILED` with `TIMED_OUT`, and a late result is
+ignored.
+
+Confirming writes everything in one transaction: new settings documents first (at
+the end of their folder), then the changed titles, bodies and properties, then the
+relations, added and removed pair by pair against each draft's origin so relations
+made elsewhere during the review survive. Each written document gets an `AI_APPLY`
+version, the run ends as `APPLIED`, and `FileChanged` is appended once.
 
 Deployment infrastructure and the two-service test commands are maintained in the sibling
 GraphRAG repository's deploy/README.md and tests/fullstack/README.md.
