@@ -148,8 +148,9 @@ class MigrationTest {
                     "insert into refresh_runs (project_id, requested_by, status, prompt_version) "
                             + "values ('" + project + "', uuidv7(), 'GENERATING', 'v1') returning id").getFirst();
             statement.execute("insert into refresh_document_drafts "
-                    + "(refresh_run_id, target_document_id, base_version_id) "
-                    + "values ('" + run + "', '" + character + "', '" + version + "')");
+                    + "(refresh_run_id, target_document_id, base_version_id, "
+                    + "left_source_revision_no, left_snapshot, origin_snapshot) "
+                    + "values ('" + run + "', '" + character + "', '" + version + "', 0, '{}', '{}')");
 
             statement.execute("delete from projects where id = '" + project + "'");
 
@@ -270,8 +271,8 @@ class MigrationTest {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             assertThat(column(statement,
                     "select table_name from information_schema.tables where table_schema = 'public'"))
-                    .contains("refresh_run_files")
-                    .doesNotContain("projection_heads", "refresh_results");
+                    .contains("refresh_run_files", "refresh_results")
+                    .doesNotContain("projection_heads");
             assertThat(column(statement,
                     "select column_name from information_schema.columns where table_name = 'refresh_runs'"))
                     .doesNotContain("input_fingerprint", "result_bucket", "result_key");
@@ -289,6 +290,87 @@ class MigrationTest {
 
             assertThat(column(statement, "select count(*)::text from refresh_run_files "
                     + "where refresh_run_id = '" + run + "'")).containsExactly("0");
+        }
+    }
+
+    /**
+     * 검토를 기다리는 결과(READY)도 새 요청을 막고, 결과가 없는 성공(NO_CHANGE)은 막지 않는다. 문서의 최신화 잠금은
+     * run 이 지워지면 함께 풀린다.
+     */
+    @Test
+    void blocksNewRefreshesWhileAResultAwaitsReview() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'Reviewed') returning id")
+                    .getFirst();
+            String ready = column(statement,
+                    "insert into refresh_runs (project_id, requested_by, status) "
+                            + "values ('" + project + "', uuidv7(), 'READY') returning id").getFirst();
+
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into refresh_runs (project_id, requested_by, status) "
+                            + "values ('" + project + "', uuidv7(), 'GENERATING')"))
+                    .hasMessageContaining("uq_refresh_runs_one_in_progress");
+
+            statement.execute("insert into refresh_runs (project_id, requested_by, status) "
+                    + "values ('" + project + "', uuidv7(), 'NO_CHANGE')");
+
+            String document = column(statement,
+                    "insert into document (project_id, folder_id, title, rank, refresh_lock_run_id) "
+                            + "values ('" + project + "', 2, 'locked', 'a0', '" + ready + "') returning id")
+                    .getFirst();
+            statement.execute("delete from refresh_runs where id = '" + ready + "'");
+
+            assertThat(column(statement, "select coalesce(refresh_lock_run_id::text, 'none') from document "
+                    + "where id = '" + document + "'")).containsExactly("none");
+        }
+    }
+
+    /**
+     * 기존 문서 작업본(EDIT)은 대상 문서와 left 를 갖고, 새 문서 작업본(NEW)은 대상 없이 제안 이름과 분류를 갖는다.
+     * 두 작업본이 같은지(matched)는 DB 가 계산한다.
+     */
+    @Test
+    void keepsEditAndNewDraftsInShapeAndComputesWhetherTheyMatch() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'Drafted') returning id")
+                    .getFirst();
+            String run = column(statement,
+                    "insert into refresh_runs (project_id, requested_by, status) "
+                            + "values ('" + project + "', uuidv7(), 'GENERATING') returning id").getFirst();
+            String document = column(statement,
+                    "insert into document (project_id, folder_id, title, rank) "
+                            + "values ('" + project + "', 2, 'hero', 'a0') returning id").getFirst();
+
+            String edit = column(statement,
+                    "insert into refresh_document_drafts (refresh_run_id, target_document_id, "
+                            + "left_source_revision_no, left_snapshot, origin_snapshot) "
+                            + "values ('" + run + "', '" + document + "', 0, '{\"t\":1}', '{\"t\":1}') "
+                            + "returning id").getFirst();
+            assertThat(column(statement, "select matched::text from refresh_document_drafts "
+                    + "where id = '" + edit + "'")).containsExactly("false");
+
+            statement.execute("update refresh_document_drafts set status = 'OPEN', right_snapshot = '{\"t\":1}' "
+                    + "where id = '" + edit + "'");
+            assertThat(column(statement, "select matched::text from refresh_document_drafts "
+                    + "where id = '" + edit + "'")).containsExactly("true");
+
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into refresh_document_drafts (refresh_run_id, target_document_id) "
+                            + "values ('" + run + "', '" + document + "')"))
+                    .hasMessageContaining("ck_refresh_document_drafts_snapshots");
+
+            statement.execute("insert into refresh_document_drafts (refresh_run_id, kind, candidate_id, "
+                    + "folder_code, status) values ('" + run + "', 'NEW', 'new:CHARACTER:a', 'CHARACTER', 'OPEN')");
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into refresh_document_drafts (refresh_run_id, kind, candidate_id, folder_code, status) "
+                            + "values ('" + run + "', 'NEW', 'new:MANUSCRIPT:a', 'MANUSCRIPT', 'OPEN')"))
+                    .hasMessageContaining("ck_refresh_document_drafts_kind");
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into refresh_document_drafts (refresh_run_id, kind, candidate_id, folder_code, status) "
+                            + "values ('" + run + "', 'NEW', 'new:CHARACTER:a', 'CHARACTER', 'OPEN')"))
+                    .hasMessageContaining("uq_refresh_document_drafts_run_candidate");
         }
     }
 }

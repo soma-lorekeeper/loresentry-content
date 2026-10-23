@@ -150,7 +150,7 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         UUID saved = createDocument("MANUSCRIPT", "1화");
         createDocument("CHARACTER", "그대로인 인물");
         UUID first = requestRefresh();
-        finish(first, "READY");
+        finish(first, "APPLIED");
 
         save(saved, "1화", "고친 본문", "[]", "[]");
         UUID created = createDocument("LOCATION", "새 장소");
@@ -194,7 +194,7 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                         "{\"request_id\":null,\"status\":\"NO_CHANGES\",\"files\":[]}")));
 
         createDocument("MANUSCRIPT", "1화");
-        finish(requestRefresh(), "READY");
+        finish(requestRefresh(), "APPLIED");
         mockMvc.perform(as(post("/projects/" + project + "/graph-refresh")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("NO_CHANGES"));
@@ -244,10 +244,15 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         return UUID.fromString(read(result).get("request_id").stringValue());
     }
 
-    /** 완료 처리가 아직 없으므로 graph-rag 의 결과를 받은 것처럼 상태만 바꾼다. */
+    /**
+     * graph-rag 결과와 확정을 거치지 않고 run 이 끝난 것처럼 만든다. 끝난 run 은 문서 잠금을 풀므로 그것도 같이 푼다.
+     * 요청 흐름만 보는 테스트라 작업본과 기준 버전은 남겨 둔다.
+     */
     private void finish(UUID run, String status) {
         jdbcClient.sql("update refresh_runs set status = :status where id = :id")
                 .param("status", status).param("id", run).update();
+        jdbcClient.sql("update document set refresh_lock_run_id = null where refresh_lock_run_id = :id")
+                .param("id", run).update();
     }
 
     private Map<UUID, Long> sentFiles(UUID run) {
