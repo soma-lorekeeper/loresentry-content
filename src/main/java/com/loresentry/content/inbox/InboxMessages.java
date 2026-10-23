@@ -6,8 +6,8 @@ import java.time.format.DateTimeParseException;
 import java.util.Optional;
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent;
 import com.loresentry.content.user.UserDeletedEvent;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;

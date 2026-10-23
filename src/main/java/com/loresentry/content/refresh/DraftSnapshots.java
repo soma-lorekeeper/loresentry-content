@@ -15,13 +15,13 @@ import com.loresentry.content.document.DocumentSnapshot;
  * 한다: 관계는 대상마다 하나(설명이 적힌 쪽을 남긴다 — 문서 저장과 같은 규칙), {@code (relation_key, 대상)} 순서,
  * 설명이 없으면 빈 문자열. 제목·본문·속성은 받은 그대로 둔다(속성 순서는 사용자가 정한 것이다).
  */
-final class DraftSnapshots {
+public final class DraftSnapshots {
 
     private DraftSnapshots() {
     }
 
     /** 문서의 지금 상태를 작업본 모양으로. 관계 대상은 모두 기존 문서다. */
-    static DraftSnapshot of(DocumentSnapshot document) {
+    public static DraftSnapshot of(DocumentSnapshot document) {
         List<DraftSnapshot.Relation> relations = new ArrayList<>();
         for (DocumentSnapshot.Relation relation : document.relations()) {
             relations.add(new DraftSnapshot.Relation(relation.relationKey(), relation.targetDocumentId(), null,
@@ -32,7 +32,7 @@ final class DraftSnapshots {
     }
 
     /** 관계를 바꾼 같은 스냅샷. 관계는 정규형으로 맞춘다. */
-    static DraftSnapshot withRelations(DraftSnapshot snapshot, List<DraftSnapshot.Relation> relations) {
+    public static DraftSnapshot withRelations(DraftSnapshot snapshot, List<DraftSnapshot.Relation> relations) {
         return new DraftSnapshot(snapshot.title(), snapshot.body(), snapshot.legacyBodyMd(),
                 snapshot.properties() == null ? List.of() : snapshot.properties(), canonicalRelations(relations));
     }

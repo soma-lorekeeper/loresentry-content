@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.confirm;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
+import com.loresentry.content.refresh.RefreshScenario;
 
 /**
  * 검토를 마친 최신화의 확정. 원고와 유나를 실어 요청하고, 유나 본문 수정과 새 아이템 "은색 검"(유나와 관계)을 제안받은

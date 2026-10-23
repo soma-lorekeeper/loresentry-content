@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.request;
 
 import java.time.Duration;
 import java.util.UUID;

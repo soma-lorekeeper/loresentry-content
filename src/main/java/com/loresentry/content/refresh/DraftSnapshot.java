@@ -40,7 +40,7 @@ public record DraftSnapshot(
             String description) {
 
         /** 대상을 하나의 문자열로. 정렬·중복 제거·관계 쌍 비교의 열쇠다. */
-        String targetKey() {
+        public String targetKey() {
             return targetDocumentId != null ? targetDocumentId.toString() : targetCandidateId;
         }
     }

@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.confirm;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -19,6 +19,10 @@ import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.project.ProjectActivity;
 import com.loresentry.content.web.ContentFailure;
+import com.loresentry.content.refresh.DraftSnapshot;
+import com.loresentry.content.refresh.GraphRefreshRepository;
+import com.loresentry.content.refresh.RefreshCleanup;
+import com.loresentry.content.refresh.RefreshDraftRepository;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -74,7 +78,7 @@ public class RefreshConfirmService {
     }
 
     @Transactional
-    public RefreshResponses.Confirmed confirm(UUID userId, UUID projectId, UUID runId) {
+    public ConfirmResponses.Confirmed confirm(UUID userId, UUID projectId, UUID runId) {
         if (!runs.ownsActiveProject(userId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }
@@ -109,14 +113,14 @@ public class RefreshConfirmService {
 
         // 1. 새 설정 문서. 임시 이름 순으로 만들어 결과가 매번 같게 한다.
         Map<String, UUID> createdIds = new LinkedHashMap<>();
-        List<RefreshResponses.Created> created = new ArrayList<>();
+        List<ConfirmResponses.Created> created = new ArrayList<>();
         for (RefreshDraftRepository.ConfirmDraft draft : accepted.stream()
                 .sorted((a, b) -> a.candidateId().compareTo(b.candidateId())).toList()) {
             DraftSnapshot right = draft.right();
             UUID fileId = files.createSettingDocument(projectId, draft.folderCode(), right.title());
             writeOrTitleTaken(fileId, 0, right);
             createdIds.put(draft.candidateId(), fileId);
-            created.add(new RefreshResponses.Created(draft.id(), draft.candidateId(), fileId));
+            created.add(new ConfirmResponses.Created(draft.id(), draft.candidateId(), fileId));
         }
 
         // 2. 기존 문서의 제목·본문·속성. 바뀐 칸은 이벤트에 싣는다.
@@ -183,20 +187,20 @@ public class RefreshConfirmService {
         }
         outbox.append(events.toArray(OutboxRecord[]::new));
 
-        List<RefreshResponses.Updated> updated = new ArrayList<>();
+        List<ConfirmResponses.Updated> updated = new ArrayList<>();
         List<UUID> unchanged = new ArrayList<>();
         for (RefreshDraftRepository.ConfirmDraft draft : edits) {
             UUID fileId = draft.targetDocumentId();
             if (written.contains(fileId) || relationTouched.contains(fileId) || updatedFiles.contains(fileId)) {
                 long revision = locked.get(fileId).revisionNo() + (written.contains(fileId) ? 1 : 0);
-                updated.add(new RefreshResponses.Updated(draft.id(), fileId, revision));
+                updated.add(new ConfirmResponses.Updated(draft.id(), fileId, revision));
             } else {
                 unchanged.add(draft.id());
             }
         }
         open.stream().filter(draft -> "NEW".equals(draft.kind()) && draft.right() == null)
                 .forEach(draft -> unchanged.add(draft.id()));
-        return new RefreshResponses.Confirmed(runId, "APPLIED", created, updated, unchanged);
+        return new ConfirmResponses.Confirmed(runId, "APPLIED", created, updated, unchanged);
     }
 
     /**

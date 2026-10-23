@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.completion;
 
 import java.time.Duration;
 import java.util.List;
@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.loresentry.content.refresh.GraphRefreshRepository;
+import com.loresentry.content.refresh.RefreshCleanup;
 
 /**
  * 결과가 오지 않는 최신화를 실패로 돌린다.

@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.confirm;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import com.loresentry.content.refresh.DraftSnapshot;
 
 /**
  * 확정할 때 관계를 무엇을 더하고 뺄지 정한다.

@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.confirm;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import com.loresentry.content.refresh.DraftSnapshot;
 
 /** 확정은 작업본마다 처음 뜬 관계와 합의한 관계의 차이만 쌍 단위로 적용한다. */
 class RelationDeltaTest {

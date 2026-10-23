@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.completion;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -9,6 +9,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.document.RefreshDocuments;
+import com.loresentry.content.refresh.DraftSnapshot;
+import com.loresentry.content.refresh.DraftSnapshots;
+import com.loresentry.content.refresh.RefreshDraftRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 /**
- * graph-rag 의 제안(결과 파일)으로 검토 작업본을 연다. 완료 반영({@link GraphRefreshService#complete})이 run 을 잠근
+ * graph-rag 의 제안(결과 파일)으로 검토 작업본을 연다. 완료 반영({@link GraphRefreshCompletionService#complete})이 run 을 잠근
  * 트랜잭션 안에서 부른다.
  *
  * <p>작업본은 문서마다 하나다. left 는 지금 문서, right 는 left 에 제안을 더한 것이다.

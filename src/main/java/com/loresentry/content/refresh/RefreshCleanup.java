@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>결과 원본({@code refresh_results})과 확정이 남긴 AI_APPLY 버전은 남긴다.
  */
 @Component
-class RefreshCleanup {
+public class RefreshCleanup {
 
     private final RefreshDraftRepository drafts;
 
@@ -33,7 +33,7 @@ class RefreshCleanup {
 
     /** 부르는 쪽이 run 상태를 바꾸는 트랜잭션 안에서 부른다. 상태 변경과 정리는 함께 확정되거나 함께 되돌려진다. */
     @Transactional(propagation = Propagation.MANDATORY)
-    void release(UUID runId) {
+    public void release(UUID runId) {
         documents.deleteRefreshBases(drafts.deleteByRun(runId));
         documents.unlock(runId);
     }

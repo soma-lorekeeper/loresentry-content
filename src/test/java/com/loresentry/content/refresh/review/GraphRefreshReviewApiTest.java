@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.review;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
+import com.loresentry.content.refresh.RefreshScenario;
 
 /**
  * 결과를 기다리는 동안의 폴링, READY 가 된 뒤의 검토 화면 조회, 작업본 자동 저장. 검토할 run 은 원고와 유나를 실어

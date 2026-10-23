@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.review;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -11,6 +11,10 @@ import java.util.UUID;
 import com.loresentry.content.document.DocumentSnapshot;
 import com.loresentry.content.document.RefreshDocuments;
 import com.loresentry.content.web.ContentFailure;
+import com.loresentry.content.refresh.DraftSnapshot;
+import com.loresentry.content.refresh.DraftSnapshots;
+import com.loresentry.content.refresh.GraphRefreshRepository;
+import com.loresentry.content.refresh.RefreshDraftRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 최신화 조회(폴링·검토)와 작업본 자동 저장.
  *
  * <p>화면은 요청 뒤 {@link #latest} 를 몇 초마다 읽다가 READY 가 되면 {@link #detail} 로 작업본을 연다. 사용자가 양쪽을
- * 고칠 때마다 {@link #saveDraft} 로 저장한다(설계 §7.5). 모든 작업본이 맞춰지면 확정한다({@link RefreshConfirmService}).
+ * 고칠 때마다 {@link #saveDraft} 로 저장한다(설계 §7.5). 모든 작업본이 맞춰지면 확정한다(confirm 패키지).
  */
 @Service
 public class RefreshReviewService {

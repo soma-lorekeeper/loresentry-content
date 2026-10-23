@@ -14,7 +14,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshService;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
 import com.loresentry.content.support.KafkaTestSupport;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.user.UserDeletedService;
@@ -67,7 +67,7 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
     UserDeletedService userDeleted;
 
     @MockitoBean
-    GraphRefreshService graphRefresh;
+    GraphRefreshCompletionService graphRefresh;
 
     /** 운영의 간격 대신 쓸 것. 아래 같은 이름의 static 메서드가 만든다. */
     @TestBean(name = "inboxBackOff")

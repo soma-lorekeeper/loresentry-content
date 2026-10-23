@@ -14,13 +14,13 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
-import com.loresentry.content.refresh.GraphRefreshService;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
 import com.loresentry.content.support.KafkaTestSupport;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.user.UserDeletedService;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
@@ -69,7 +69,7 @@ class InboxListenerTest extends KafkaTestSupport {
     UserDeletedService userDeleted;
 
     @MockitoBean
-    GraphRefreshService graphRefresh;
+    GraphRefreshCompletionService graphRefresh;
 
     /** 앱 안의 listener 들을 id 로 찾는 곳. */
     @Autowired

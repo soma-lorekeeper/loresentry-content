@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.completion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,8 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
 import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +36,7 @@ class GraphRefreshTimeoutTest extends ApiTestSupport {
     private RefreshTimeout timeout;
 
     @Autowired
-    private GraphRefreshService service;
+    private GraphRefreshCompletionService service;
 
     private UUID project;
 

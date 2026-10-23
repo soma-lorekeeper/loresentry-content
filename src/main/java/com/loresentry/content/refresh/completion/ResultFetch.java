@@ -1,9 +1,9 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.completion;
 
 /**
- * 완료 이벤트를 받고 DB 트랜잭션을 열기 전에 결과 파일을 가져온 결과({@link GraphRefreshService#fetchResult}).
+ * 완료 이벤트를 받고 DB 트랜잭션을 열기 전에 결과 파일을 가져온 결과({@link GraphRefreshCompletionService#fetchResult}).
  *
- * <p>S3 를 읽는 동안 DB connection 을 잡지 않으려고 가져오기와 반영({@link GraphRefreshService#complete})을 나눈다.
+ * <p>S3 를 읽는 동안 DB connection 을 잡지 않으려고 가져오기와 반영({@link GraphRefreshCompletionService#complete})을 나눈다.
  * 가져오기는 무엇을 반영할지 정할 재료만 만들고, 상태는 바꾸지 않는다.
  */
 public sealed interface ResultFetch {

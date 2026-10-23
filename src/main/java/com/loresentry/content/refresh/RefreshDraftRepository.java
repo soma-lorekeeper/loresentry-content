@@ -26,7 +26,7 @@ import tools.jackson.databind.json.JsonMapper;
  * </ol>
  */
 @Repository
-class RefreshDraftRepository {
+public class RefreshDraftRepository {
 
     private final JdbcClient jdbcClient;
 
@@ -40,7 +40,7 @@ class RefreshDraftRepository {
      * 요청 때 실은 문서의 작업본. left 와 그 원본(origin)은 실은 그 상태이고, 기준 버전이 같은 상태를 보관한다.
      * right 는 결과가 와야 생긴다.
      */
-    void insertBaseDraft(UUID runId, UUID documentId, UUID baseVersionId, long revisionNo, DraftSnapshot left) {
+    public void insertBaseDraft(UUID runId, UUID documentId, UUID baseVersionId, long revisionNo, DraftSnapshot left) {
         String leftJson = json.writeValueAsString(left);
         jdbcClient
                 .sql("""
@@ -59,11 +59,11 @@ class RefreshDraftRepository {
     }
 
     /** 요청 때 만든, 아직 결과를 받지 않은 작업본 하나. */
-    record BaseDraft(UUID id, UUID targetDocumentId, UUID baseVersionId, long leftRevisionNo, DraftSnapshot left) {
+    public record BaseDraft(UUID id, UUID targetDocumentId, UUID baseVersionId, long leftRevisionNo, DraftSnapshot left) {
     }
 
     /** 이 run 이 요청 때 만든 작업본들(BASE_CAPTURED). 대상 문서로 찾는다. */
-    Map<UUID, BaseDraft> baseDrafts(UUID runId) {
+    public Map<UUID, BaseDraft> baseDrafts(UUID runId) {
         Map<UUID, BaseDraft> drafts = new LinkedHashMap<>();
         jdbcClient
                 .sql("""
@@ -83,7 +83,7 @@ class RefreshDraftRepository {
     }
 
     /** 요청 때 만든 작업본에 제안(right)을 채워 검토를 연다. */
-    void open(UUID draftId, DraftSnapshot right, boolean baseMismatch) {
+    public void open(UUID draftId, DraftSnapshot right, boolean baseMismatch) {
         jdbcClient
                 .sql("""
                         update refresh_document_drafts
@@ -102,7 +102,7 @@ class RefreshDraftRepository {
      *
      * @param baseMismatch graph-rag 가 본 revision 이 지금 revision 과 다르다
      */
-    void insertOpenEdit(UUID runId, UUID documentId, long leftRevisionNo, DraftSnapshot left, DraftSnapshot right,
+    public void insertOpenEdit(UUID runId, UUID documentId, long leftRevisionNo, DraftSnapshot left, DraftSnapshot right,
             boolean baseMismatch) {
         String leftJson = json.writeValueAsString(left);
         jdbcClient
@@ -123,7 +123,7 @@ class RefreshDraftRepository {
     }
 
     /** 새 설정 문서 제안의 작업본. 아직 문서가 없으므로 left 는 비어 있다. 사용자가 받아들이면 left 를 right 와 같게 한다. */
-    void insertNew(UUID runId, String candidateId, String folderCode, DraftSnapshot right) {
+    public void insertNew(UUID runId, String candidateId, String folderCode, DraftSnapshot right) {
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
@@ -138,7 +138,7 @@ class RefreshDraftRepository {
     }
 
     /** 결과에 제안이 없어 열리지 않은 작업본을 지우고, 그 작업본들의 기준 버전 id 를 돌려준다. */
-    List<UUID> deleteUnopened(UUID runId) {
+    public List<UUID> deleteUnopened(UUID runId) {
         return baseVersionIds(jdbcClient
                 .sql("""
                         delete from refresh_document_drafts
@@ -160,7 +160,7 @@ class RefreshDraftRepository {
     }
 
     /** 열린 작업본 수, 그중 맞춘 수, 그중 새 문서 제안 수. */
-    RefreshResponses.Counts counts(UUID runId) {
+    public DraftCounts counts(UUID runId) {
         return jdbcClient
                 .sql("""
                         select count(*) as total,
@@ -170,7 +170,7 @@ class RefreshDraftRepository {
                         where refresh_run_id = :run and status = 'OPEN'
                         """)
                 .param("run", runId)
-                .query((rows, index) -> new RefreshResponses.Counts(rows.getLong("total"), rows.getLong("matched"),
+                .query((rows, index) -> new DraftCounts(rows.getLong("total"), rows.getLong("matched"),
                         rows.getLong("created")))
                 .single();
     }
@@ -179,14 +179,14 @@ class RefreshDraftRepository {
      * 열린 작업본 하나와 화면에 필요한 주변 정보(대상 문서의 지금 제목·분류·revision, 기준 버전의 revision).
      * 대상 문서 칸은 새 문서 작업본이면 비어 있다.
      */
-    record OpenDraft(UUID id, String kind, long draftRevision, boolean matched, OffsetDateTime updatedAt,
+    public record OpenDraft(UUID id, String kind, long draftRevision, boolean matched, OffsetDateTime updatedAt,
             UUID targetDocumentId, String documentTitle, String documentFolder, Long documentRevision,
             String candidateId, String folderCode, UUID baseVersionId, Long baseRevisionNo, boolean baseMismatch,
             Long leftRevisionNo, DraftSnapshot left, DraftSnapshot right) {
     }
 
     /** 열린 작업본들. 기존 문서 먼저, 분류 순서와 제목 순이고, 새 문서 제안은 뒤에 임시 이름 순으로 온다. */
-    List<OpenDraft> openDrafts(UUID runId) {
+    public List<OpenDraft> openDrafts(UUID runId) {
         return jdbcClient
                 .sql("""
                         select r.id, r.kind, r.draft_revision, r.matched, r.updated_at, r.target_document_id,
@@ -215,12 +215,12 @@ class RefreshDraftRepository {
     }
 
     /** 확정이 읽는 작업본 하나. origin 은 처음 뜬 left 다(관계 차이를 구하는 기준). */
-    record ConfirmDraft(UUID id, String kind, UUID targetDocumentId, String candidateId, String folderCode,
+    public record ConfirmDraft(UUID id, String kind, UUID targetDocumentId, String candidateId, String folderCode,
             Long leftRevisionNo, DraftSnapshot origin, DraftSnapshot right, boolean matched) {
     }
 
     /** 이 run 의 열린 작업본 전부. 확정은 run 을 잠근 뒤 읽으므로 그 사이 저장이 끼어들지 않는다. */
-    List<ConfirmDraft> openForConfirm(UUID runId) {
+    public List<ConfirmDraft> openForConfirm(UUID runId) {
         return jdbcClient
                 .sql("""
                         select id, kind, target_document_id, candidate_id, folder_code, left_source_revision_no,
@@ -239,10 +239,10 @@ class RefreshDraftRepository {
     }
 
     /** 저장할 작업본의 종류와 대상. 이 run 의 열린 작업본이 아니면 비어 있다. */
-    record DraftHead(UUID id, String kind, UUID targetDocumentId, String candidateId) {
+    public record DraftHead(UUID id, String kind, UUID targetDocumentId, String candidateId) {
     }
 
-    Optional<DraftHead> findOpen(UUID runId, UUID draftId) {
+    public Optional<DraftHead> findOpen(UUID runId, UUID draftId) {
         return jdbcClient
                 .sql("""
                         select id, kind, target_document_id, candidate_id from refresh_document_drafts
@@ -255,7 +255,7 @@ class RefreshDraftRepository {
     }
 
     /** 이 run 의 새 설정 문서 제안: 임시 이름 → 분류. 작업본의 관계가 아직 없는 문서를 가리킬 때 확인한다. */
-    Map<String, String> candidateFolders(UUID runId) {
+    public Map<String, String> candidateFolders(UUID runId) {
         Map<String, String> folders = new LinkedHashMap<>();
         jdbcClient
                 .sql("select candidate_id, folder_code from refresh_document_drafts "
@@ -268,7 +268,7 @@ class RefreshDraftRepository {
     }
 
     /** 작업본의 지금 모습. 자동 저장이 충돌했을 때 클라이언트에 돌려준다. */
-    record Current(long draftRevision, boolean matched, OffsetDateTime updatedAt, DraftSnapshot left,
+    public record Current(long draftRevision, boolean matched, OffsetDateTime updatedAt, DraftSnapshot left,
             DraftSnapshot right) {
     }
 
@@ -276,7 +276,7 @@ class RefreshDraftRepository {
      * 두 쪽을 저장한다. 읽은 뒤 다른 탭·기기가 먼저 저장했으면({@code draft_revision} 이 다르면) 저장하지 않고 비어 있다
      * (설계 §7.5). 저장하면 번호가 하나 오르고, matched 는 DB 가 다시 계산한다.
      */
-    Optional<Current> save(UUID draftId, long expectedRevision, DraftSnapshot left, DraftSnapshot right) {
+    public Optional<Current> save(UUID draftId, long expectedRevision, DraftSnapshot left, DraftSnapshot right) {
         return jdbcClient
                 .sql("""
                         update refresh_document_drafts
@@ -294,7 +294,7 @@ class RefreshDraftRepository {
                 .optional();
     }
 
-    Current current(UUID draftId) {
+    public Current current(UUID draftId) {
         return jdbcClient
                 .sql("""
                         select draft_revision, matched, updated_at, left_snapshot::text as left_json,

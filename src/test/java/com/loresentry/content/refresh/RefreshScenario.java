@@ -14,9 +14,12 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
 import com.loresentry.content.support.ApiTestSupport;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
+import com.loresentry.content.refresh.completion.ResultFetch;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,15 +44,15 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 @TestPropertySource(properties = {
         "graph-refresh.request-bucket=" + RefreshScenario.BUCKET,
         "graph-refresh.completed-bucket=" + RefreshScenario.BUCKET })
-abstract class RefreshScenario extends ApiTestSupport {
+public abstract class RefreshScenario extends ApiTestSupport {
 
-    static final String BUCKET = "refresh-scenario-bucket";
+    protected static final String BUCKET = "refresh-scenario-bucket";
 
     @MockitoBean(name = "refreshS3Client")
     protected S3Client s3;
 
     @Autowired
-    protected GraphRefreshService service;
+    protected GraphRefreshCompletionService service;
 
     @Autowired
     protected TransactionTemplate transaction;
@@ -57,7 +60,7 @@ abstract class RefreshScenario extends ApiTestSupport {
     protected UUID project;
 
     @BeforeEach
-    void createProjectAndAcceptUploads() throws Exception {
+    protected void createProjectAndAcceptUploads() throws Exception {
         willAnswer(invocation -> PutObjectResponse.builder().build())
                 .given(s3).putObject(any(PutObjectRequest.class), any(RequestBody.class));
         project = idOf(mockMvc.perform(as(body(post("/projects"), "{\"name\":\"검토와 확정\"}"))).andReturn());

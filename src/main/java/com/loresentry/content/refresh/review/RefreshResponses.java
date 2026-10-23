@@ -1,4 +1,4 @@
-package com.loresentry.content.refresh;
+package com.loresentry.content.refresh.review;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -7,6 +7,8 @@ import java.util.UUID;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.loresentry.content.document.DocumentSnapshot;
+import com.loresentry.content.refresh.DraftCounts;
+import com.loresentry.content.refresh.DraftSnapshot;
 
 /** 최신화 조회·검토 API 의 응답 모양. */
 public final class RefreshResponses {
@@ -29,20 +31,11 @@ public final class RefreshResponses {
             @JsonProperty("ready_at") OffsetDateTime readyAt,
             @JsonProperty("completed_at") OffsetDateTime completedAt,
             Error error,
-            @JsonProperty("draft_counts") Counts draftCounts) {
+            @JsonProperty("draft_counts") DraftCounts draftCounts) {
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Error(String code, String message) {
-    }
-
-    /**
-     * @param total   열린 작업본 수
-     * @param matched 두 쪽을 맞춘 작업본 수. total 과 같아야 확정할 수 있다
-     * @param created 그중 새 설정 문서 제안 수
-     */
-    @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Counts(long total, long matched, @JsonProperty("new") long created) {
     }
 
     /** 검토 화면이 읽는 run 과 그 작업본 전부. */
@@ -54,7 +47,7 @@ public final class RefreshResponses {
             @JsonProperty("ready_at") OffsetDateTime readyAt,
             @JsonProperty("completed_at") OffsetDateTime completedAt,
             Error error,
-            @JsonProperty("draft_counts") Counts draftCounts,
+            @JsonProperty("draft_counts") DraftCounts draftCounts,
             List<Draft> drafts) {
     }
 
@@ -111,36 +104,6 @@ public final class RefreshResponses {
             @JsonProperty("updated_at") OffsetDateTime updatedAt,
             @JsonProperty("left_snapshot") DraftSnapshot leftSnapshot,
             @JsonProperty("right_snapshot") DraftSnapshot rightSnapshot) {
-    }
-
-    /**
-     * 확정 결과. 작업본마다 무엇이 되었는지 알려 준다.
-     *
-     * @param created   만든 새 설정 문서
-     * @param updated   내용이나 관계가 바뀐 기존 문서
-     * @param unchanged 바뀐 것이 없던 작업본(제안을 모두 거절했거나 새 문서를 만들지 않기로 함)
-     */
-    @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Confirmed(
-            @JsonProperty("request_id") UUID requestId,
-            String status,
-            List<Created> created,
-            List<Updated> updated,
-            List<UUID> unchanged) {
-    }
-
-    @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Created(
-            @JsonProperty("draft_id") UUID draftId,
-            @JsonProperty("candidate_id") String candidateId,
-            @JsonProperty("file_id") UUID fileId) {
-    }
-
-    @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record Updated(
-            @JsonProperty("draft_id") UUID draftId,
-            @JsonProperty("file_id") UUID fileId,
-            @JsonProperty("revision_no") long revisionNo) {
     }
 
     /** 작업본 저장 요청. {@code draftRevision} 은 마지막으로 읽은 값이다. 새 문서 작업본은 한쪽이나 둘 다 null 일 수 있다. */
