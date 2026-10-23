@@ -447,8 +447,9 @@ the two files drift apart in shape or the English one still contains Hangul.
 - Handling `GraphRefreshCompleted` and a timeout for refresh runs. Until then a
   run stays `GENERATING` and its project cannot start another refresh.
 - User approval and application of generated refresh proposals.
-- Production refresh needs the private bucket (`GRAPHRAG_S3_BUCKET`) and Pod
-  Identity grants.
+- Production refresh needs the private bucket (`GRAPHRAG_S3_BUCKET`), created with
+  content's access by [`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), and
+  graph-rag's role from `deploy/setup-refresh.sh` in `loresentry-graph-rag`.
 
 ## Kafka business integration
 
@@ -471,6 +472,15 @@ a bucket, or when S3 fails, the answer is `503 REFRESH_UNAVAILABLE` and nothing 
 recorded. Only `event/GraphRefreshMessages` knows the event and input shapes.
 graph-rag has to accept `refresh-input-v2` and an event without `model_settings`
 before this ships.
+
+The bucket `loresentry-refresh-prod-<account>` is created by
+[`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), run from a workstation like
+`setup-media.sh`: public access blocked, SSE-S3, `refresh/` objects expire after three
+days. The same script attaches `lore-sentry-content-refresh-policy` (Put, Get and
+Delete under `refresh/`, plus ListBucket on that prefix) to `lore-sentry-content-role`,
+kept apart from the media policy so rerunning `setup-media.sh` does not drop it.
+graph-rag's role and Pod Identity come from `deploy/setup-refresh.sh` in
+`loresentry-graph-rag`, run after this one.
 
 `KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED=true` starts the completion listener,
 but its handler does nothing yet.
