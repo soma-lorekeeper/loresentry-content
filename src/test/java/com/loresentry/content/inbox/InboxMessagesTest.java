@@ -10,11 +10,11 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.ErrorDetail;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.ErrorDetail;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
 import com.loresentry.content.user.UserDeletedEvent;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;

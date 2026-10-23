@@ -25,6 +25,8 @@ public final class DocumentResponses {
             List<DocumentSnapshot.TextProperty> properties,
             List<DocumentSnapshot.Relation> relations,
             boolean locked,
+            /** 그래프 최신화가 잠갔다. 화면은 이것으로 "최신화 중이라 잠김"을 알리고 잠금 해제를 막는다 */
+            @JsonProperty("refresh_locked") boolean refreshLocked,
             @JsonProperty("char_count") int charCount,
             @JsonProperty("revision_no") long revisionNo,
             @JsonProperty("updated_at") OffsetDateTime updatedAt) {
@@ -32,6 +34,35 @@ public final class DocumentResponses {
         public DocumentSnapshot snapshot() {
             return new DocumentSnapshot(title, body, legacyBodyMd, properties, relations);
         }
+    }
+
+    /**
+     * 여러 문서의 내용을 한 번에 읽은 결과. 다른 서비스가 그래프 탐색 등으로 고른 문서를 읽을 때 쓴다.
+     *
+     * @param missing 요청했지만 열 수 없는 문서 — 휴지통에 있거나, 없거나, 다른 프로젝트의 것. 단건 조회가
+     *                {@code FILE_NOT_FOUND} 로 답하는 경우와 같다
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record Contents(
+            @JsonProperty("project_id") UUID projectId,
+            List<ContentItem> documents,
+            List<UUID> missing) {
+    }
+
+    /**
+     * 분석용 문서 하나. 편집 화면이 쓰는 서식 JSON·잠금·글자 수·수정 시각은 없고 평문({@code body_text})만 있다.
+     *
+     * @param bodyText 서버가 본문에서 뽑은 평문. 저장한 적이 없는 문서는 빈 문자열이다
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record ContentItem(
+            UUID id,
+            @JsonProperty("revision_no") long revisionNo,
+            @JsonProperty("folder_code") String folderCode,
+            String title,
+            @JsonProperty("body_text") String bodyText,
+            List<DocumentSnapshot.TextProperty> properties,
+            List<DocumentSnapshot.Relation> relations) {
     }
 
     /** 버전 목록. 스냅샷을 함께 싣는다 — 비교 화면이 목록을 받은 뒤 다시 요청하지 않도록. */

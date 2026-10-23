@@ -22,9 +22,14 @@ public class FileRepository {
      * 문서 조회는 언제나 {@code projects}와 조인해 소유자를 확인한다. 서비스 계층에서 두 번
      * 질의해 비교하면 그 사이에 소유자가 바뀔 수 있고, 무엇보다 한 곳만 빠뜨려도 남의 문서가 보인다.
      */
+    // locked 는 편집할 수 있는지다. 사용자 잠금과 최신화 잠금(refresh_lock_run_id) 중 하나라도 걸려 있으면 잠김이다.
+    // 둘을 따로 두는 이유는 V16 주석에 있다. refresh_locked 는 화면이 "최신화 때문에 잠김"을 알리는 데 쓴다.
     private static final String DOCUMENT_SELECT = """
             select d.id, d.project_id, d.folder_id, f.code as folder_code, d.episode_id,
-                   d.title, d.rank, d.locked, d.char_count, d.revision_no, d.trashed_at, d.updated_at
+                   d.title, d.rank,
+                   (d.locked or d.refresh_lock_run_id is not null) as locked,
+                   d.refresh_lock_run_id is not null as refresh_locked,
+                   d.char_count, d.revision_no, d.trashed_at, d.updated_at
             from document d
             join base_folders f on f.id = d.folder_id
             join projects p on p.id = d.project_id
@@ -217,28 +222,32 @@ public class FileRepository {
                 .single();
     }
 
-    FileRows.Document moveDocument(UUID fileId, short folderId, UUID episodeId, String rank) {
-        jdbcClient
+    FileRows.Placed moveDocument(UUID fileId, short folderId, UUID episodeId, String rank) {
+        boolean locationChanged = jdbcClient
                 .sql("""
                         update document
                         set folder_id = :folder, episode_id = :episode, rank = :rank, updated_at = now()
                         where id = :id
+                        returning old.folder_id is distinct from new.folder_id
+                               or old.episode_id is distinct from new.episode_id
                         """)
                 .param("id", fileId).param("folder", folderId)
                 .param("episode", episodeId).param("rank", rank)
-                .update();
-        return requireDocument(fileId);
+                .query(Boolean.class)
+                .single();
+        return new FileRows.Placed(requireDocument(fileId), locationChanged);
     }
 
-    void trashDocument(UUID fileId) {
-        jdbcClient.sql("update document set trashed_at = now(), updated_at = now()"
+    /** @return 이 호출이 휴지통으로 보냈나. 이미 휴지통에 있었으면 false 다. */
+    boolean trashDocument(UUID fileId) {
+        return jdbcClient.sql("update document set trashed_at = now(), updated_at = now()"
                         + " where id = :id and trashed_at is null")
-                .param("id", fileId).update();
+                .param("id", fileId).update() == 1;
     }
 
     /** 원래 있던 에피소드가 사라졌으면 원고 폴더 최상위로 돌린다(요구사항 §4.2). */
-    FileRows.Document restoreDocument(UUID fileId, boolean dropEpisode, String rank) {
-        jdbcClient
+    FileRows.Placed restoreDocument(UUID fileId, boolean dropEpisode, String rank) {
+        boolean locationChanged = jdbcClient
                 .sql("""
                         update document
                         set trashed_at = null,
@@ -246,21 +255,49 @@ public class FileRepository {
                             rank = :rank,
                             updated_at = now()
                         where id = :id
+                        returning old.episode_id is distinct from new.episode_id
                         """)
                 .param("id", fileId).param("dropEpisode", dropEpisode).param("rank", rank)
-                .update();
-        return requireDocument(fileId);
+                .query(Boolean.class)
+                .single();
+        return new FileRows.Placed(requireDocument(fileId), locationChanged);
+    }
+
+    /**
+     * 영구 삭제 전에 문서 행을 잠근다. 이 lock 은 다른 문서가 이 문서로 새 관계를 거는 것(외래 키 확인)을 막는다.
+     * 잠그지 않으면 이웃을 읽은 뒤 생긴 관계가 삭제에 휩쓸려 사라지는데, 그 관계를 가진 문서의 이벤트는 나가지 않는다.
+     */
+    void lockForDelete(UUID fileId) {
+        jdbcClient.sql("select id from document where id = :id for update")
+                .param("id", fileId).query(UUID.class).optional();
+    }
+
+    /** 이 문서가 high 인 관계의 low 문서들. 그 관계는 low 문서가 가지므로, 이 문서가 사라지면 그 문서들이 바뀐다. */
+    List<UUID> relationOwnersOf(UUID fileId) {
+        return jdbcClient
+                .sql("select low_document_id from document_relations where high_document_id = :id"
+                        + " order by low_document_id")
+                .param("id", fileId)
+                .query(UUID.class)
+                .list();
     }
 
     void deleteDocument(UUID fileId) {
         jdbcClient.sql("delete from document where id = :id").param("id", fileId).update();
     }
 
-    /** 에피소드만 지운다. 안의 회차는 원고 폴더로 돌아간다(와이어프레임 166). */
-    void deleteEpisode(UUID episodeId) {
-        jdbcClient.sql("update document set episode_id = null, updated_at = now() where episode_id = :id")
-                .param("id", episodeId).update();
+    /**
+     * 에피소드만 지운다. 안의 회차는 원고 폴더로 돌아간다(와이어프레임 166).
+     *
+     * @return 원고 폴더로 돌아간 문서들(휴지통 문서 포함). update 문이 실제로 바꾼 행이다
+     */
+    List<UUID> deleteEpisode(UUID episodeId) {
+        List<UUID> moved = jdbcClient
+                .sql("update document set episode_id = null, updated_at = now() where episode_id = :id"
+                        + " returning id")
+                .param("id", episodeId).query(UUID.class).list();
         jdbcClient.sql("delete from episode_folders where id = :id").param("id", episodeId).update();
+        return moved;
     }
 
     boolean episodeStillExists(UUID episodeId) {
@@ -286,6 +323,7 @@ public class FileRepository {
                 rows.getString("title"),
                 rows.getString("rank"),
                 rows.getBoolean("locked"),
+                rows.getBoolean("refresh_locked"),
                 rows.getInt("char_count"),
                 rows.getLong("revision_no"),
                 rows.getObject("trashed_at", OffsetDateTime.class),

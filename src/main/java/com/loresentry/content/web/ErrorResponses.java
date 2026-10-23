@@ -46,6 +46,29 @@ public final class ErrorResponses {
             case INVALID_FEEDBACK -> new Contract(400, "Invalid feedback.", "NONE");
             case FEEDBACK_RATE_LIMITED -> new Contract(429, "Too much feedback in the last hour.", "RETRY_LATER");
             case INVALID_WITHDRAWAL_SURVEY -> new Contract(400, "Invalid withdrawal survey.", "NONE");
+            // 프로젝트마다 진행 중인 최신화는 하나다. 끝나면 다시 요청할 수 있다.
+            case REFRESH_IN_PROGRESS -> new Contract(409, "A graph refresh is already running.", "RETRY_LATER");
+            // 최신화 입력을 S3 에 올리지 못했다(설정이 없거나 S3 장애). 아무것도 기록하지 않았다.
+            case REFRESH_UNAVAILABLE -> new Contract(503, "Graph refresh is unavailable.", "RETRY_LATER");
+            // 최신화가 잠근 문서는 그 최신화가 끝나야(확정·실패·시간 초과) 풀린다. 사용자가 잠그거나 풀 수 없다.
+            case DOCUMENT_REFRESH_LOCKED -> new Contract(409, "Document is locked by a graph refresh.", "NONE");
+            // 검토를 기다리는 결과가 있다. 확정해야 다음 최신화를 할 수 있다.
+            case REFRESH_REVIEW_PENDING ->
+                    new Contract(409, "A graph refresh result is waiting for review.", "NONE");
+            case REFRESH_NOT_FOUND -> new Contract(404, "Graph refresh was not found.", "NONE");
+            case REFRESH_DRAFT_NOT_FOUND -> new Contract(404, "Refresh draft was not found.", "NONE");
+            // 결과가 아직 없거나(GENERATING) 이미 끝났다. 작업본을 고치거나 확정할 수 없다.
+            case REFRESH_NOT_READY -> new Contract(409, "Graph refresh is not open for review.", "NONE");
+            // 다른 탭·기기가 먼저 작업본을 저장했다. 응답의 current 로 다시 맞춘다.
+            case REFRESH_DRAFT_CONFLICT -> new Contract(409, "Refresh draft was saved elsewhere.", "NONE");
+            // 두 쪽(left·right)을 아직 맞추지 않은 작업본이 있다. 응답의 drafts 가 그 목록이다.
+            case REFRESH_DRAFTS_UNMATCHED ->
+                    new Contract(409, "Some refresh drafts are not resolved yet.", "NONE");
+            // 확정하려는 문서가 작업본을 뜬 뒤 바뀌었거나 열 수 없다. 응답의 documents 가 그 목록이다.
+            case REFRESH_DOCUMENTS_CHANGED ->
+                    new Contract(409, "Documents changed since the drafts were made.", "NONE");
+            // 합의한 작업본을 그대로 반영할 수 없다(제목 중복, 쓸 수 없는 관계 대상 등). 응답의 problems 가 그 목록이다.
+            case REFRESH_DRAFTS_INVALID -> new Contract(409, "Some refresh drafts cannot be applied.", "NONE");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }
@@ -59,6 +82,10 @@ public final class ErrorResponses {
         body.put("code", reason.name());
         body.put("message", contract.message());
         body.put("next_action", contract.nextAction());
+        // 실패가 실어 온 상세 값(예: 맞추지 않은 작업본 목록)을 나란히 싣는다. 기본 세 칸은 덮어쓰지 않는다.
+        if (content != null) {
+            content.details().forEach(body::putIfAbsent);
+        }
 
         if (reason == ContentFailure.Reason.INTERNAL_ERROR) {
             logSafe(failure);

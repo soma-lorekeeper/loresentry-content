@@ -2,6 +2,8 @@ package com.loresentry.content.inbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -12,13 +14,13 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
-import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
-import com.loresentry.content.refresh.GraphRefreshCompletedService;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
 import com.loresentry.content.support.KafkaTestSupport;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.user.UserDeletedService;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
@@ -67,7 +69,7 @@ class InboxListenerTest extends KafkaTestSupport {
     UserDeletedService userDeleted;
 
     @MockitoBean
-    GraphRefreshCompletedService graphRefreshCompleted;
+    GraphRefreshCompletionService graphRefresh;
 
     /** 앱 안의 listener 들을 id 로 찾는 곳. */
     @Autowired
@@ -147,8 +149,11 @@ class InboxListenerTest extends KafkaTestSupport {
                 payload);
 
         awaitRecorded(GRAPH_REFRESH_COMPLETED_CONSUMER, eventId);
-        verify(graphRefreshCompleted).handle(new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
-                new Result("lore-refresh", resultKey), null, "v1"));
+        // 결과 파일을 먼저 가져오고(트랜잭션 밖), 그것을 처리 기록과 함께 반영한다.
+        GraphRefreshCompletedEvent expected = new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
+                new Result("lore-refresh", resultKey), null, "v1");
+        verify(graphRefresh).fetchResult(expected);
+        verify(graphRefresh).complete(eq(expected), any());
     }
 
     /** relay 가 같은 outbox 행을 다시 보낸 경우다. 두 번째 것은 Service 까지 가지 않고 한 줄만 남는다. */

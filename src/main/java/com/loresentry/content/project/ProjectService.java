@@ -3,8 +3,8 @@ package com.loresentry.content.project;
 import java.util.List;
 import java.util.UUID;
 
-import com.loresentry.content.outbox.ContentEvents;
-import com.loresentry.content.refresh.RefreshObjects;
+import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.outbox.OutboxRepository;
 
 import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.web.ContentFailure;
@@ -21,19 +21,20 @@ public class ProjectService {
 
     static final int DESCRIPTION_MAX = 500;
 
-    private final ContentEvents events;
-
-    private final RefreshObjects refreshObjects;
-
     private final ProjectRepository repository;
 
     private final MediaCleanup mediaCleanup;
 
-    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup, ContentEvents events, RefreshObjects refreshObjects) {
-        this.refreshObjects = refreshObjects;
-        this.events = events;
+    private final OutboxRepository outbox;
+
+    private final ProjectChangedMessages messages;
+
+    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup, OutboxRepository outbox,
+            ProjectChangedMessages messages) {
         this.repository = repository;
         this.mediaCleanup = mediaCleanup;
+        this.outbox = outbox;
+        this.messages = messages;
     }
 
     @Transactional(readOnly = true)
@@ -58,7 +59,6 @@ public class ProjectService {
 
     @Transactional
     public Project create(UUID ownerUserId, CreateProjectRequest request) {
-        events.lock(ownerUserId);
         String name = validateName(request.name());
         String description = validateDescription(request.description());
 
@@ -67,7 +67,6 @@ public class ProjectService {
 
     @Transactional
     public Project update(UUID ownerUserId, UUID projectId, UpdateProjectRequest request) {
-        events.lock(ownerUserId);
         if (request.name() == null && request.description() == null) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
@@ -88,14 +87,12 @@ public class ProjectService {
     /** 이미 휴지통에 있으면 아무것도 하지 않는다. 재시도가 {@code trashed_at}을 밀지 않아야 한다. */
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID projectId) {
-        events.lock(ownerUserId);
         require(ownerUserId, projectId);
         repository.markTrashed(projectId);
     }
 
     @Transactional
     public Project restore(UUID ownerUserId, UUID projectId) {
-        events.lock(ownerUserId);
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             return project;
@@ -110,19 +107,19 @@ public class ProjectService {
      * 영구 삭제의 진입점은 휴지통뿐이다(와이어프레임 111–122). 서버도 같은 규칙을 강제한다.
      *
      * <p>이미지 행은 CASCADE 로 사라지지만 S3 객체는 남는다. 커밋 뒤에 따로 지운다(이용약관 제7조).
+     *
+     * <p>문서별 DELETED 는 내지 않는다. ProjectDeleted 하나가 그 프로젝트 전체의 tombstone 이다.
      */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID projectId) {
-        events.lock(ownerUserId);
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_TRASHED);
         }
         List<String> imageKeys = repository.imageKeys(projectId);
-        events.projectDeleted(projectId, "PROJECT_DELETED");
         repository.delete(projectId);
-        refreshObjects.deleteProjectAfterCommit(projectId);
         mediaCleanup.deleteAfterCommit(imageKeys);
+        outbox.append(messages.projectDeleted(projectId, "PROJECT_DELETED"));
     }
 
     private Project require(UUID ownerUserId, UUID projectId) {

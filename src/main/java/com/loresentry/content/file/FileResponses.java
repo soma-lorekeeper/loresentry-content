@@ -48,6 +48,8 @@ public final class FileResponses {
             @JsonProperty("episode_id") UUID episodeId,
             String rank,
             boolean locked,
+            /** 그래프 최신화가 잠갔다. 화면은 이것으로 "최신화 중이라 잠김"을 알리고 잠금 해제를 막는다 */
+            @JsonProperty("refresh_locked") boolean refreshLocked,
             @JsonProperty("char_count") int charCount,
             @JsonProperty("revision_no") long revisionNo,
             @JsonProperty("trashed_at") OffsetDateTime trashedAt,
@@ -55,7 +57,8 @@ public final class FileResponses {
 
         public static Document from(FileRows.Document row) {
             return new Document(row.id(), row.title(), row.folderCode(), row.episodeId(), row.rank(),
-                    row.locked(), row.charCount(), row.revisionNo(), row.trashedAt(), row.updatedAt());
+                    row.locked(), row.refreshLocked(), row.charCount(), row.revisionNo(), row.trashedAt(),
+                    row.updatedAt());
         }
     }
 

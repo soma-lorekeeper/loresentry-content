@@ -60,7 +60,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PATCH DELETE` | `/episodes/{id}` | Renames an episode; deleting one keeps its chapters. |
 | `GET` | `/files/{id}/content` | Title, body, text properties and relation chips. |
 | `PUT` | `/files/{id}/content` | Conditional save. Needs `If-Match`; `X-Save-Id` makes a retry idempotent. |
-| `PUT` | `/files/{id}/lock` | Locks or unlocks editing. |
+| `PUT` | `/files/{id}/lock` | Locks or unlocks editing. `409 DOCUMENT_REFRESH_LOCKED` while a graph refresh holds the document. |
 | `GET POST` | `/files/{id}/versions` | Lists versions with their snapshots; `POST` names one. |
 | `POST` | `/files/{id}/versions/{vid}/restore` | Restores as a **new** revision. Needs `If-Match`. |
 | `DELETE` | `/files/{id}/versions/{vid}` | Deletes a version. |
@@ -76,7 +76,11 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PUT DELETE` | `/projects/{id}/favorites/{fid}` | Stars or unstars; both return the whole list. |
 | `GET PUT` | `/projects/{id}/workspace-state` | The layout to restore, stored as opaque JSON. |
 | `POST` | `/feedback` | Stores in-app feedback. `201` with `{id, created_at}`. At most 20 per user per hour. |
-| `DELETE` | `/users/me/data` | Account withdrawal: deletes every project of the caller, active and trashed, with everything under it, their feedback, then their S3 images. `204`, also when nothing is left. |
+| `POST` | `/projects/{id}/graph-refresh` | Starts a graph refresh with every active document changed or created since the last one. No body. `202` with `request_id` and the files sent, which stay locked until the run ends; `200` with `NO_CHANGES` when nothing changed; `409 REFRESH_IN_PROGRESS` while a refresh runs, `409 REFRESH_REVIEW_PENDING` while a result awaits review. |
+| `GET` | `/projects/{id}/graph-refresh` | The latest run, for polling: `status` (`GENERATING`, `READY`, `NO_CHANGE`, `FAILED`, `APPLIED`), times, `error`, `draft_counts`. `404 REFRESH_NOT_FOUND` before the first. |
+| `GET` | `/projects/{id}/graph-refresh/{rid}` | One run with its open review drafts: base (when the document was sent), left and right snapshots, `matched`, `draft_revision`. graph-rag's evidence is not returned. |
+| `PATCH` | `/projects/{id}/graph-refresh/{rid}/drafts/{did}` | Autosaves both sides of a draft, `{draft_revision, left_snapshot, right_snapshot}`. `409 REFRESH_DRAFT_CONFLICT` with `current` when another save came first. |
+| `POST` | `/projects/{id}/graph-refresh/{rid}/confirm` | Applies a `READY` run when every draft's two sides match, in one transaction. No body. |
 
 The gateway exposes this service publicly at `GET /content`, which calls `/` here
 and returns the payload nested under `upstream`. **The project endpoints are not
@@ -98,6 +102,7 @@ trash, and send `Cache-Control: no-store`.
 | `GET` | `/internal/projects/{id}/chat-map` | The AI chat's map: the snapshot without bodies, in the same order and with the same properties and relations. Every manuscript, setting document and memo carries `chars`, what reading it adds to `size`. |
 | `POST` | `/internal/projects/{id}/chat-documents` | `{"document_ids": [...], "memo_ids": [...]}`, at most 100 ids. The chosen items in the snapshot's shape (manuscript `ordinal` counts the whole project) and `missing` for ids that are not active in this project. |
 | `POST` | `/internal/admin/file-events/replay?after=&limit=` | Writes `FileChanged(UPDATED)` again for every active document, one project per transaction, `limit` projects (default 20) after `after`. Returns `{projects, documents, last}`. For backfilling consumers such as the AI chat summarizer; not routed by the gateway. |
+| `GET` | `/projects/{id}/files/content?ids=` | Up to 100 documents of one project as plain text, for services such as `loresentry-graph-rag` that pick documents first: `{project_id, documents: [{id, revision_no, folder_code, title, body_text, properties, relations}], missing: [...]}`. Repeat `ids` for each document; a repeated id counts once. No ids, more than 100 distinct ids, or an id that is not a UUID is `400 INVALID_REQUEST`. Read in one read-only `REPEATABLE READ` transaction. Ids that are trashed, unknown or in another project come back in `missing` instead of failing the call. Keeps the public path shape and does not send `no-store`. |
 
 `size` counts Unicode code points in the titles and bodies of the included
 documents, their included properties, relation descriptions, and memo titles and
@@ -150,8 +155,8 @@ never shown to a user.
 | --- | --- |
 | 400 | `INVALID_REQUEST`, `INVALID_PROJECT_NAME`, `INVALID_PROJECT_DESCRIPTION`, `INVALID_FILE_TITLE`, `INVALID_FILE_LOCATION`, `INVALID_RELATION_TARGET`, `INVALID_UPLOAD_REQUEST`, `INVALID_MEMO`, `INVALID_FEEDBACK` |
 | 401 | `USER_CONTEXT_REQUIRED` |
-| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `MEMO_NOT_FOUND`, `NOT_FOUND` (no such path) |
-| 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED` |
+| 404 | `PROJECT_NOT_FOUND`, `FILE_NOT_FOUND`, `VERSION_NOT_FOUND`, `IMAGE_NOT_FOUND`, `MEMO_NOT_FOUND`, `REFRESH_NOT_FOUND`, `REFRESH_DRAFT_NOT_FOUND`, `NOT_FOUND` (no such path) |
+| 409 | `PROJECT_NAME_TAKEN`, `PROJECT_NOT_TRASHED`, `DOCUMENT_REFRESH_LOCKED`, `REFRESH_REVIEW_PENDING`, `REFRESH_NOT_READY`, `REFRESH_DRAFT_CONFLICT`, `REFRESH_DRAFTS_UNMATCHED`, `REFRESH_DOCUMENTS_CHANGED`, `REFRESH_DRAFTS_INVALID` |
 | 429 | `FEEDBACK_RATE_LIMITED` (`next_action: RETRY_LATER`) |
 | 500 | `INTERNAL_ERROR` |
 
@@ -160,6 +165,13 @@ A conditional save that loses the race answers `409` with `current` (the documen
 as it now stands) and `base` (the snapshot of the revision the client held, or
 `null` when no version kept it), so the client can attempt a three-way merge
 without a second request that could race again.
+
+The graph-refresh conflicts carry the same kind of detail: `REFRESH_DRAFT_CONFLICT`
+has `current` (the draft as saved elsewhere), `REFRESH_DRAFTS_UNMATCHED` the
+`drafts` still unresolved, `REFRESH_DOCUMENTS_CHANGED` the `documents` that moved
+under their drafts, and `REFRESH_DRAFTS_INVALID` the `problems` that keep the
+agreed drafts from being applied (`RELATION_CONFLICT`, `REJECTED_CANDIDATE`,
+`INVALID_RELATION_TARGET`, `BODY_REQUIRED`).
 
 The full specification, including what was deliberately left out and why, is in
 the `docs` repository (`CONTENT_PROJECT_API.md`).
@@ -215,7 +227,7 @@ external-form links. The body is `{"category":"BUG|IDEA|OTHER","message":"...",
 "page":"/projects/"|null,"client":"<user agent>"|null}`. The message is trimmed
 and must be 1 to 2000 characters, otherwise `400 INVALID_FEEDBACK`. `page` and
 `client` are optional and cut to 200 and 300 characters. A 21st message within
-an hour answers `429 FEEDBACK_RATE_LIMITED`. Withdrawal deletes the user's rows.
+an hour answers `429 FEEDBACK_RATE_LIMITED`. Rows are kept when the user withdraws.
 
 There is no read endpoint. Operators read it from the `content` database:
 
@@ -231,7 +243,10 @@ LIMIT 50;
 Flyway runs on startup and applies `src/main/resources/db/migration` to the
 `content` database. `V2` seeds the seven global base folders. `V4` adds the
 per-location title index, `V5` the save-id column, `V6` the `image` table, `V7`
-memos, favorites and workspace state, and `V11` the `feedback` table.
+memos, favorites and workspace state, `V11` the `feedback` table, and `V16`
+the `refresh_run_files` table together with what graph-refresh completion needs:
+`refresh_results`, `NO_CHANGE` and `error_code` on runs, review-shaped drafts and
+the per-run document lock.
 `V3` widens
 `projects.name` to 255 characters, adds the unique index behind the
 duplicate-name rule, and puts `ON DELETE CASCADE` on the three foreign keys
@@ -246,8 +261,10 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `document_properties` | Text properties such as description and alias |
 | `document_relations` | Relation chips, one row per pair - relations have no direction; the source data for the graph and timeline |
 | `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE` |
-| `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING` run per project |
-| `refresh_document_drafts` | Per-document refresh work: base version, left and right snapshots, draft revision |
+| `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING`/`READY` run per project |
+| `refresh_run_files` | The documents and revisions each run sent; the next refresh compares against the highest revision per document in runs that did not fail |
+| `refresh_results` | graph-rag's whole result file for a run, kept as JSONB with the sha256 of its bytes |
+| `refresh_document_drafts` | Per-document review work: `EDIT` (an existing document: base version, origin, left and right) or `NEW` (a proposed settings document); `matched` when both sides agree |
 | `outbox_events` | Real document changes waiting to be published to Kafka |
 | `image` | Uploaded user images. `PENDING` until `HeadObject` confirms the upload |
 | `memo` | Project and file memos in one table, kept apart by `scope` |
@@ -259,8 +276,11 @@ Rules the database enforces:
 
 - A document with an `episode_id` must be in the manuscript folder, and the
   episode must belong to the same project.
-- `OPEN`, `APPLIED` and `STALE` drafts must carry both snapshots and the left
-  revision.
+- An `EDIT` draft always carries its left side, origin and left revision, and its
+  right side once `OPEN`. A `NEW` draft has no document or base and never targets
+  the manuscript folder.
+- A document is locked while either its own `locked` or `refresh_lock_run_id` is
+  set; ending a run clears only that run's lock.
 - `rank` columns use the `C` collation so fractional-index strings sort bytewise.
 - A project name is unique per owner, case-insensitively, **among active
   projects only** — a trashed project frees its name, and restoring it is what
@@ -395,13 +415,16 @@ offering one as the last file would be a dead link.
 
 ## Deleting data
 
-`DELETE /users/me/data` is the content step of account withdrawal. The gateway
-calls it before the authentication service deletes the account, so it must be
-safe to repeat: a second call finds nothing and still answers `204`. One
-transaction collects every `image.s3_key` of the caller's projects, deletes the
-caller's `workspace_state` rows and then the projects; the foreign-key cascades
-remove documents, properties, relations, versions, episodes, images, memos,
-favorites and refresh runs.
+Account withdrawal reaches content only as a `UserDeleted` event on
+`auth.user.deleted.v1`, which the authentication service publishes after it
+deletes the account; there is no HTTP endpoint for it. `UserDeletedService`
+handles it in the inbox transaction: it collects every `image.s3_key` of the
+user's projects, deletes the user's `workspace_state` rows and then the projects;
+the foreign-key cascades remove documents, properties, relations, versions,
+episodes, images, memos, favorites and refresh runs. Feedback is kept. In the
+same transaction it appends one `ProjectDeleted` (`OWNER_DELETED`) per deleted
+project to the outbox. It is safe to repeat: the inbox skips a redelivered
+event, and another event for the same user finds nothing and writes nothing.
 
 S3 objects are deleted only **after the commit**, for both the purge and a
 single permanent project delete. Deleting first would leave broken images if the
@@ -441,32 +464,69 @@ the two files drift apart in shape or the English one still contains Hangul.
 - User-created sections and general folders. **Decided against**: episode folders
   stay the only folder a user can create, so the frontend drops those menus.
 - Export to PDF, DOCX and HWP.
-- User approval and application of generated refresh proposals; the Kafka request/completion flow is implemented.
-
-- Production refresh activation needs the private artifact bucket, Pod Identity grants, and enabled flags.
+- Discarding a refresh result. A `READY` run blocks new refreshes, and keeps its
+  documents locked, until it is confirmed; to drop the proposals, make each draft's
+  right side equal its left (for a new document, empty both) and confirm.
+- Production refresh needs the private bucket, passed as both
+  `GRAPH_REFRESH_REQUEST_BUCKET` and `GRAPH_REFRESH_COMPLETED_BUCKET` with its region
+  in `GRAPH_REFRESH_REGION`, created with
+  content's access by [`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), and
+  graph-rag's role from `deploy/setup-refresh.sh` in `loresentry-graph-rag`.
 
 ## Kafka business integration
 
 Domain changes now write FileChanged/ProjectDeleted snapshots to Outbox in the same transaction.
-ContentEvents serializes writes per owner before taking snapshots. Document saves publish both old
-and current relation neighbors. The existing relay publishes the immutable rows.
-V15 adds projection_heads and stored refresh-result-v3 candidates.
+`OutboxRepository.append` locks each event's aggregate (one document) and only then builds the snapshot, so
+events of one document are ordered; a relation travels only in its low document's event. Payloads
+and the per-action rules are in [docs/events/content-project-changed-v1.md](docs/events/content-project-changed-v1.md).
+The existing relay publishes the immutable rows.
 
-With GRAPH_REFRESH_ENABLED=true, POST /projects/{projectId}/graph-refresh accepts
-{"files":["document UUID"]} and returns 202 with request_id. GET on that path plus /{requestId}
-returns status and candidate JSON. The request checks project ownership, at most 20 documents,
-and at most 5,000 Unicode code points per active body. It stores exact S3 input bytes first,
-then commits the request and its Outbox event with checksum, user context, model profile, and
-required projection event IDs. Missing projection heads for existing documents are seeded.
+`POST /projects/{projectId}/graph-refresh` takes no body. Content picks every active
+document, in any folder, whose `revision_no` is above what earlier refreshes sent, or
+that was never sent. Runs that `FAILED` or were `CANCELLED` do not count, so their
+documents go again. In one `REPEATABLE READ` transaction it records the run as
+`GENERATING` and the files it sends (`refresh_run_files`), uploads a
+`refresh-input-v2` object to `refresh/{project}/{request}/input.json` in
+`GRAPH_REFRESH_REQUEST_BUCKET`, and appends `GraphRefreshRequested` with the object's
+location and sha256, the files, and the latest `FileChanged` id of every document
+in the project (`required_events`). graph-rag chooses the model and prompt. In the
+same transaction it keeps a `REFRESH_BASE` version and a draft holding only the
+left side for every document it sends, and locks those documents for the run, so
+editing, renaming, moving, trashing and the lock endpoint are refused until the run
+ends. Without a bucket, or when S3 fails, the answer is `503 REFRESH_UNAVAILABLE`
+and nothing is recorded. Only `event/GraphRefreshMessages` knows the event and
+input shapes. graph-rag has to read the input under `location`
+(loresentry-graph-rag#4) before this ships.
 
-KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED=true enables completion consumption.
-The handler verifies request/project/fingerprint/result outcome and stores candidates plus
-READY/FAILED in the Inbox transaction. Repeated request completions do not duplicate candidates.
-Proposals are never automatically applied. S3 reads are bounded to 15 seconds; include this cost
-when changing poll batches. Incomplete runs expire after one hour. Project/user deletion cleans
-private artifacts after commit; late orphan completions also clean their result. Cleanup failures
-fall back to the bucket lifecycle. GRAPH_REFRESH_ENABLED defaults to false and requires
-GRAPHRAG_S3_BUCKET; the media bucket is not used.
+The bucket `loresentry-refresh-prod-<account>` is created by
+[`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), run from a workstation like
+`setup-media.sh`: public access blocked, SSE-S3, `refresh/` objects expire after three
+days. The same script attaches `lore-sentry-content-refresh-policy` (Put, Get and
+Delete under `refresh/`, plus ListBucket on that prefix) to `lore-sentry-content-role`,
+kept apart from the media policy so rerunning `setup-media.sh` does not drop it.
+graph-rag's role and Pod Identity come from `deploy/setup-refresh.sh` in
+`loresentry-graph-rag`, run after this one.
+
+The completion listener (`KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED`) is on by
+default. For each `GraphRefreshCompleted` it first reads the result file, outside any
+transaction and only while the run is still `GENERATING`: the bucket must be
+`GRAPH_REFRESH_COMPLETED_BUCKET`, the object at most 16 MiB and equal to its `sha256`
+metadata, and the file `refresh-result-v3` for this request. Then, in the inbox
+transaction, it keeps the raw file in `refresh_results`. A `PROPOSED` result fills
+the right side of each proposed document's draft (graph-rag's plain text becomes an
+editor body, keeping every unchanged block), opens drafts, and locks, for documents
+graph-rag read on its own and for proposed settings documents, puts each proposed
+relation into both of its documents' drafts, and marks the run `READY`. A failed or
+unusable result, `NO_CHANGE`, or nothing usable ends the run and releases its drafts,
+`REFRESH_BASE` versions and locks. A run with no completion after
+`GRAPH_REFRESH_TIMEOUT` (1h) ends as `FAILED` with `TIMED_OUT`, and a late result is
+ignored.
+
+Confirming writes everything in one transaction: new settings documents first (at
+the end of their folder), then the changed titles, bodies and properties, then the
+relations, added and removed pair by pair against each draft's origin so relations
+made elsewhere during the review survive. Each written document gets an `AI_APPLY`
+version, the run ends as `APPLIED`, and `FileChanged` is appended once.
 
 Deployment infrastructure and the two-service test commands are maintained in the sibling
 GraphRAG repository's deploy/README.md and tests/fullstack/README.md.

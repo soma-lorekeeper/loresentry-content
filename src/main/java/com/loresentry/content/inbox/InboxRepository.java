@@ -67,7 +67,6 @@ class InboxRepository {
      * @param cutoff 이 시각보다 먼저 처리된 기록을 지운다
      * @return 지운 행의 수
      */
-    @Transactional
     int deleteProcessedBefore(OffsetDateTime cutoff) {
         return jdbcClient.sql("delete from inbox_events where processed_at < :cutoff")
                 .param("cutoff", cutoff)

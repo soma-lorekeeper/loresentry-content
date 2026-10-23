@@ -1,5 +1,6 @@
 package com.loresentry.content.document;
 
+import java.util.List;
 import java.util.UUID;
 
 import com.loresentry.content.web.ContentFailure;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -32,6 +34,18 @@ public class DocumentController {
     @GetMapping("/files/{fileId}/content")
     public DocumentResponses.Content get(@CurrentUser UUID userId, @PathVariable UUID fileId) {
         return documents.get(userId, fileId);
+    }
+
+    /**
+     * 한 프로젝트의 문서 여러 개를 분석용 평문으로 읽는다({@code ?ids=…&ids=…}). graph-rag 처럼 그래프 탐색으로
+     * 문서를 먼저 고른 서비스가 쓴다. gateway 는 이 경로를 중계하지 않는다.
+     */
+    @GetMapping("/projects/{projectId}/files/content")
+    public DocumentResponses.Contents contents(
+            @CurrentUser UUID userId,
+            @PathVariable UUID projectId,
+            @RequestParam("ids") List<String> ids) {
+        return documents.contents(userId, projectId, ids);
     }
 
     /**

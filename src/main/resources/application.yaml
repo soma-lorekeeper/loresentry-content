@@ -84,18 +84,31 @@ kafka:
       graph-refresh-completed: content.graph-refresh-completed
       user-deleted: content.user-deleted
     enabled:
-      # listener 를 돌릴지. 처리 로직이 들어오는 commit 에서 true 로 바꾼다.
-      # 그전에 켜면 받은 이벤트를 처리한 것으로 기록만 하고 아무것도 하지 않는다. 꺼 둔 동안의 메시지는 topic 에 남는다.
-      graph-refresh-completed: ${KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED:false}
-      user-deleted: ${KAFKA_CONSUMER_USER_DELETED_ENABLED:false}
+      # listener 를 돌릴지. 꺼 둔 동안의 메시지는 topic 에 남는다.
+      # 끄면 최신화 결과를 받지 못해 run 은 시간 제한(graph-refresh.timeout)으로 실패하고, 그때까지 문서가 잠겨 있다.
+      graph-refresh-completed: ${KAFKA_CONSUMER_GRAPH_REFRESH_COMPLETED_ENABLED:true}
+      # 회원 탈퇴가 content 에 들어오는 유일한 길이라 기본으로 켠다. 끄면 탈퇴한 사용자의 데이터가 지워지지 않고 남는다.
+      user-deleted: ${KAFKA_CONSUMER_USER_DELETED_ENABLED:true}
   producer:
     relay:
       # relay 를 돌릴지. false 면 이벤트가 outbox 에 쌓이기만 하고 Kafka 로 나가지 않는다.
       # 급히 멈춰야 할 때 Deployment 에 KAFKA_PRODUCER_RELAY_ENABLED=false 를 넣으면 재배포 없이 끌 수 있다.
       enabled: ${KAFKA_PRODUCER_RELAY_ENABLED:true}
 
-# Private S3 bucket and request API; completion listener remains separately controlled.
 graph-refresh:
-  enabled: ${GRAPH_REFRESH_ENABLED:false}
-  bucket: ${GRAPHRAG_S3_BUCKET:}
-  model: ${GRAPH_REFRESH_MODEL:gpt-6-luna}
+  # 그래프 최신화 입력(refresh/{project}/{request}/input.json)을 올리는 private S3 bucket. 미디어 bucket 과 다르다.
+  # graph-rag 가 같은 env 로 입력 bucket 을 받으므로 둘은 한 ConfigMap 에서 받는다. 비어 있으면 최신화 요청은 503 이다.
+  request-bucket: ${GRAPH_REFRESH_REQUEST_BUCKET:}
+  # graph-rag 가 최신화 결과(refresh/{project}/{request}/result.json)를 쓰는 bucket. GraphRefreshCompleted 가 가리키는
+  # 결과를 읽기 전에 이 bucket 인지 확인한다(비어 있으면 확인하지 않는다). 운영에서는 요청 bucket 과 같은 bucket 이다.
+  completed-bucket: ${GRAPH_REFRESH_COMPLETED_BUCKET:}
+  # 위 두 bucket 이 있는 리전. 최신화 전용 S3 client(RefreshConfig)가 쓰며, 미디어 리전(MEDIA_REGION)과 따로 둔다.
+  region: ${GRAPH_REFRESH_REGION:ap-northeast-2}
+  # 결과 파일 크기 한도(바이트). graph-rag 의 객체 한도(16MiB)와 같다. 넘으면 run 은 RESULT_TOO_LARGE 로 실패한다.
+  result-max-bytes: 16777216
+  # 결과가 오지 않는 run 을 실패로 돌리는 시간. graph-rag 가 실패를 알리지 못하고 끝나는 경우(DLQ)가 있어서다.
+  # 그동안 run 의 문서가 잠겨 있으므로 너무 길게 두지 않는다.
+  timeout: ${GRAPH_REFRESH_TIMEOUT:1h}
+  # 시간 제한을 확인하는 간격과, 확인 작업을 돌릴지(테스트는 끈다).
+  timeout-check-interval: ${GRAPH_REFRESH_TIMEOUT_CHECK_INTERVAL:1m}
+  timeout-check-enabled: ${GRAPH_REFRESH_TIMEOUT_CHECK_ENABLED:true}
