@@ -166,9 +166,6 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | 이동이 순서만 바꿈 | UPDATED | 없음 |
 | 순서 보장 단위 | 사용자(owner advisory lock) | 문서(aggregate advisory lock) |
 
-**아직 이전 형식을 내는 곳:**
-- refresh의 `GraphRefreshRequests`가 부르는 `ContentEvents.seedMissing`은 이전 형식의 FileChanged를 낸다. prod에서는 `GRAPH_REFRESH_ENABLED`가 꺼져 있어 실행되지 않는다. 다음 커밋에서 이 문서의 형식으로 옮긴다.
-
 ## 7. graph-rag가 바꿔야 할 것
 
 **배포는 graph-rag가 먼저다.** content가 먼저 나가면, 지금의 graph-rag는 high 문서의 이벤트(관계 없음)를 받을 때 그 문서에 닿은 edge를 모두 지운다(`bothE`). 그러면 owner의 관계가 사라진다.

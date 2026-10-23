@@ -15,7 +15,7 @@ import java.util.UUID;
 import com.loresentry.content.refresh.GraphRefreshCompletedEvent;
 import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Outcome;
 import com.loresentry.content.refresh.GraphRefreshCompletedEvent.Result;
-import com.loresentry.content.refresh.GraphRefreshCompletedService;
+import com.loresentry.content.refresh.GraphRefreshService;
 import com.loresentry.content.support.KafkaTestSupport;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.user.UserDeletedService;
@@ -67,7 +67,7 @@ class InboxListenerTest extends KafkaTestSupport {
     UserDeletedService userDeleted;
 
     @MockitoBean
-    GraphRefreshCompletedService graphRefreshCompleted;
+    GraphRefreshService graphRefresh;
 
     /** 앱 안의 listener 들을 id 로 찾는 곳. */
     @Autowired
@@ -147,7 +147,7 @@ class InboxListenerTest extends KafkaTestSupport {
                 payload);
 
         awaitRecorded(GRAPH_REFRESH_COMPLETED_CONSUMER, eventId);
-        verify(graphRefreshCompleted).handle(new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
+        verify(graphRefresh).complete(new GraphRefreshCompletedEvent(requestId, projectId, Outcome.SUCCEEDED,
                 new Result("lore-refresh", resultKey), null, "v1"));
     }
 

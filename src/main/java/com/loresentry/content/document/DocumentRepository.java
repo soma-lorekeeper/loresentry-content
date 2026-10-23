@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,6 +122,79 @@ public class DocumentRepository {
                         rows.getString("relation_key"),
                         rows.getObject("target_document_id", UUID.class),
                         rows.getString("description")))
+                .list();
+    }
+
+    /** 휴지통에 있는 프로젝트의 문서는 읽지 않는다. 남의 프로젝트와 같이 없는 것으로 답한다. */
+    boolean ownsActiveProject(UUID ownerUserId, UUID projectId) {
+        return jdbcClient
+                .sql("select 1 from projects where id = :id and owner_user_id = :owner and trashed_at is null")
+                .param("id", projectId)
+                .param("owner", ownerUserId)
+                .query(Integer.class)
+                .optional()
+                .isPresent();
+    }
+
+    /**
+     * 이 프로젝트의 활성 문서 중 {@code ids} 에 있는 것을 id 순으로 읽는다. 휴지통이거나 없는 id 는 결과에 없다.
+     * 문서마다 따로 묻지 않고 문서·속성·관계를 각각 한 쿼리로 읽는다.
+     *
+     * <p>속성 순서와 관계 규칙은 {@link #properties}·{@link #relations} 와 같다.
+     */
+    List<DocumentResponses.ContentItem> contents(UUID projectId, List<UUID> ids) {
+        Map<UUID, List<DocumentSnapshot.TextProperty>> properties = new HashMap<>();
+        jdbcClient
+                .sql("select document_id, property_key, text_value from document_properties "
+                        + "where document_id in (:ids) order by document_id, position, property_key")
+                .param("ids", ids)
+                .query(rows -> {
+                    properties.computeIfAbsent(rows.getObject("document_id", UUID.class), id -> new ArrayList<>())
+                            .add(new DocumentSnapshot.TextProperty(
+                                    rows.getString("property_key"), rows.getString("text_value")));
+                });
+
+        Map<UUID, List<DocumentSnapshot.Relation>> relations = new HashMap<>();
+        jdbcClient
+                .sql("""
+                        select r.self_id, f.relation_key, other.id as target_document_id, r.description
+                        from (
+                            -- 한 쌍이 한 행이라, 두 끝 모두 이 문서가 될 수 있다. 양쪽에서 본 모양으로 펼친다.
+                            select id, low_document_id as self_id, high_document_id as other_id, description
+                            from document_relations where low_document_id in (:ids)
+                            union all
+                            select id, high_document_id, low_document_id, description
+                            from document_relations where high_document_id in (:ids)
+                        ) r
+                        join document other on other.id = r.other_id
+                        join base_folders f on f.id = other.folder_id
+                        where other.trashed_at is null
+                        order by r.self_id, f.relation_key, r.id
+                        """)
+                .param("ids", ids)
+                .query(rows -> {
+                    relations.computeIfAbsent(rows.getObject("self_id", UUID.class), id -> new ArrayList<>())
+                            .add(new DocumentSnapshot.Relation(rows.getString("relation_key"),
+                                    rows.getObject("target_document_id", UUID.class), rows.getString("description")));
+                });
+
+        return jdbcClient
+                .sql("""
+                        select d.id, d.revision_no, f.code as folder_code, d.title,
+                               coalesce(d.body_text, '') as body_text
+                        from document d
+                        join base_folders f on f.id = d.folder_id
+                        where d.project_id = :project and d.id in (:ids) and d.trashed_at is null
+                        order by d.id
+                        """)
+                .param("project", projectId)
+                .param("ids", ids)
+                .query((rows, index) -> {
+                    UUID id = rows.getObject("id", UUID.class);
+                    return new DocumentResponses.ContentItem(id, rows.getLong("revision_no"),
+                            rows.getString("folder_code"), rows.getString("title"), rows.getString("body_text"),
+                            properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
+                })
                 .list();
     }
 

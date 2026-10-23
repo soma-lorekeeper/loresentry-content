@@ -95,8 +95,7 @@ kafka:
       # 급히 멈춰야 할 때 Deployment 에 KAFKA_PRODUCER_RELAY_ENABLED=false 를 넣으면 재배포 없이 끌 수 있다.
       enabled: ${KAFKA_PRODUCER_RELAY_ENABLED:true}
 
-# Private S3 bucket and request API; completion listener remains separately controlled.
 graph-refresh:
-  enabled: ${GRAPH_REFRESH_ENABLED:false}
+  # 그래프 최신화 입력(refresh/{project}/{request}/input.json)을 올리는 private S3 bucket. 미디어 bucket 과 다르다.
+  # graph-rag 가 같은 값을 입력 bucket 으로 쓰므로 둘은 한 ConfigMap 에서 받는다. 비어 있으면 최신화 요청은 503 이다.
   bucket: ${GRAPHRAG_S3_BUCKET:}
-  model: ${GRAPH_REFRESH_MODEL:gpt-6-luna}

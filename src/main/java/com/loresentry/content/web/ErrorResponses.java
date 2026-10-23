@@ -46,6 +46,10 @@ public final class ErrorResponses {
             case INVALID_FEEDBACK -> new Contract(400, "Invalid feedback.", "NONE");
             case FEEDBACK_RATE_LIMITED -> new Contract(429, "Too much feedback in the last hour.", "RETRY_LATER");
             case INVALID_WITHDRAWAL_SURVEY -> new Contract(400, "Invalid withdrawal survey.", "NONE");
+            // 프로젝트마다 진행 중인 최신화는 하나다. 끝나면 다시 요청할 수 있다.
+            case REFRESH_IN_PROGRESS -> new Contract(409, "A graph refresh is already running.", "RETRY_LATER");
+            // 최신화 입력을 S3 에 올리지 못했다(설정이 없거나 S3 장애). 아무것도 기록하지 않았다.
+            case REFRESH_UNAVAILABLE -> new Contract(503, "Graph refresh is unavailable.", "RETRY_LATER");
             case INTERNAL_ERROR -> new Contract(500, "An internal error occurred.", "NONE");
         };
     }

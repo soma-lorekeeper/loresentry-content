@@ -260,4 +260,35 @@ class MigrationTest {
                     .hasMessageContaining("uq_refresh_runs_one_in_progress");
         }
     }
+
+    /**
+     * 최신화 요청마다 실은 문서와 revision 이 남고, run 이 지워지면 함께 지워진다. 요청 때는 추출 규칙 버전을
+     * 모르므로 prompt_version 없이도 run 을 기록할 수 있어야 한다.
+     */
+    @Test
+    void recordsTheFilesOfEachRefreshRunUntilTheRunIsGone() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            assertThat(column(statement,
+                    "select table_name from information_schema.tables where table_schema = 'public'"))
+                    .contains("refresh_run_files")
+                    .doesNotContain("projection_heads", "refresh_results");
+            assertThat(column(statement,
+                    "select column_name from information_schema.columns where table_name = 'refresh_runs'"))
+                    .doesNotContain("input_fingerprint", "result_bucket", "result_key");
+
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'Refreshed') returning id")
+                    .getFirst();
+            String run = column(statement,
+                    "insert into refresh_runs (project_id, requested_by, status) "
+                            + "values ('" + project + "', uuidv7(), 'GENERATING') returning id").getFirst();
+            statement.execute("insert into refresh_run_files (refresh_run_id, file_id, revision_no) "
+                    + "values ('" + run + "', uuidv7(), 3)");
+
+            statement.execute("delete from refresh_runs where id = '" + run + "'");
+
+            assertThat(column(statement, "select count(*)::text from refresh_run_files "
+                    + "where refresh_run_id = '" + run + "'")).containsExactly("0");
+        }
+    }
 }

@@ -23,7 +23,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProjectChangedMessages {
 
-    private static final String FILE_CHANGED = "FileChanged";
+    /** 같은 패키지의 {@link GraphRefreshEventRepository} 도 outbox 에서 이 종류의 최신 이벤트를 찾을 때 쓴다. */
+    static final String FILE_CHANGED = "FileChanged";
 
     private static final String PROJECT_DELETED = "ProjectDeleted";
 

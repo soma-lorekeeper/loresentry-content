@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p><b>이벤트를 넣는 쪽</b>은 도메인 변경 트랜잭션이다. {@link #append(OutboxRecord...)} 하나만 부르고, 패키지 밖에서
  * 부를 수 있는 것도 이 메서드뿐이다. 이벤트의 종류도 payload 의 모양도 모른다 — 받은 {@link OutboxRecord} 를 같은
- * 방법으로 쓴다. 아직 옮기지 않은 ContentEvents(그래프 최신화·회원 탈퇴)와 GraphRefreshRequests 는 직접 넣는다.
+ * 방법으로 쓴다.
  *
  * <p><b>넣은 행을 보내는 쪽</b>은 relay 다. relay 의 한 회차는 아래 메서드를 이 순서로 부른다.
  *

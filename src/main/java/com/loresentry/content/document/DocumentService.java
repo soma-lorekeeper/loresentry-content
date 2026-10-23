@@ -22,6 +22,7 @@ import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -44,6 +45,12 @@ public class DocumentService {
 
     static final int TITLE_MAX = 255;
 
+    /**
+     * 한 번에 읽을 수 있는 문서 수. graph-rag 는 한 번의 최신화에서 많아야 40개를 가져가고, 그래프 탐색으로 더 많이
+     * 고르는 클라이언트를 위해 여유를 둔다. 100개여도 GET URL(id 하나에 약 41자)이 Tomcat 기본 한도 8KB 의 절반쯤이다.
+     */
+    static final int CONTENTS_MAX = 100;
+
     private final DocumentRepository repository;
 
     private final ProjectActivity activity;
@@ -65,6 +72,38 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public DocumentResponses.Content get(UUID ownerUserId, UUID fileId) {
         return repository.contentOf(requireHeader(ownerUserId, fileId));
+    }
+
+    /**
+     * 한 프로젝트의 문서 여러 개를 한 번에 읽는다. 열 수 없는 문서는 실패시키지 않고 {@code missing} 으로 알린다 —
+     * 하나가 휴지통에 들어갔다고 나머지까지 읽지 못하면 안 된다.
+     *
+     * <p>{@code REPEATABLE_READ} 라 돌려주는 문서들은 모두 같은 시점의 상태다.
+     *
+     * @param ids 문서 id 문자열. 1~{@value #CONTENTS_MAX}개이며 중복은 하나로 친다
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public DocumentResponses.Contents contents(UUID ownerUserId, UUID projectId, List<String> ids) {
+        // 쿼리 파라미터는 경로 변수와 달리 형식 오류를 잘못된 요청(400)으로 답하려고 문자열로 받아 여기서 바꾼다.
+        Set<UUID> wanted = new LinkedHashSet<>();
+        for (String id : ids) {
+            try {
+                wanted.add(UUID.fromString(id.trim()));
+            } catch (IllegalArgumentException invalid) {
+                throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+            }
+        }
+        if (wanted.isEmpty() || wanted.size() > CONTENTS_MAX) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        if (!repository.ownsActiveProject(ownerUserId, projectId)) {
+            throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
+        }
+
+        List<DocumentResponses.ContentItem> documents = repository.contents(projectId, List.copyOf(wanted));
+        Set<UUID> found = documents.stream().map(DocumentResponses.ContentItem::id).collect(Collectors.toSet());
+        List<UUID> missing = wanted.stream().filter(id -> !found.contains(id)).toList();
+        return new DocumentResponses.Contents(projectId, documents, missing);
     }
 
     /**

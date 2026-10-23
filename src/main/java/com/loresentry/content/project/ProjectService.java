@@ -5,7 +5,6 @@ import java.util.UUID;
 
 import com.loresentry.content.event.ProjectChangedMessages;
 import com.loresentry.content.outbox.OutboxRepository;
-import com.loresentry.content.refresh.RefreshObjects;
 
 import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.web.ContentFailure;
@@ -22,8 +21,6 @@ public class ProjectService {
 
     static final int DESCRIPTION_MAX = 500;
 
-    private final RefreshObjects refreshObjects;
-
     private final ProjectRepository repository;
 
     private final MediaCleanup mediaCleanup;
@@ -32,9 +29,8 @@ public class ProjectService {
 
     private final ProjectChangedMessages messages;
 
-    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup, RefreshObjects refreshObjects,
-            OutboxRepository outbox, ProjectChangedMessages messages) {
-        this.refreshObjects = refreshObjects;
+    public ProjectService(ProjectRepository repository, MediaCleanup mediaCleanup, OutboxRepository outbox,
+            ProjectChangedMessages messages) {
         this.repository = repository;
         this.mediaCleanup = mediaCleanup;
         this.outbox = outbox;
@@ -122,7 +118,6 @@ public class ProjectService {
         }
         List<String> imageKeys = repository.imageKeys(projectId);
         repository.delete(projectId);
-        refreshObjects.deleteProjectAfterCommit(projectId);
         mediaCleanup.deleteAfterCommit(imageKeys);
         outbox.append(messages.projectDeleted(projectId, "PROJECT_DELETED"));
     }

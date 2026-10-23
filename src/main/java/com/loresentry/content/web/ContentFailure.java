@@ -33,6 +33,8 @@ public class ContentFailure extends RuntimeException {
         INVALID_FEEDBACK,
         FEEDBACK_RATE_LIMITED,
         INVALID_WITHDRAWAL_SURVEY,
+        REFRESH_IN_PROGRESS,
+        REFRESH_UNAVAILABLE,
         INTERNAL_ERROR
     }
 

@@ -1,6 +1,6 @@
 package com.loresentry.content.inbox;
 
-import com.loresentry.content.refresh.GraphRefreshCompletedService;
+import com.loresentry.content.refresh.GraphRefreshService;
 import com.loresentry.content.user.UserDeletedService;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -44,8 +44,8 @@ class InboxListener {
     /** UserDeleted 를 처리하는 곳. */
     private final UserDeletedService userDeleted;
 
-    /** GraphRefreshCompleted 를 처리하는 곳. */
-    private final GraphRefreshCompletedService graphRefreshCompleted;
+    /** GraphRefreshCompleted 를 처리하는 곳({@link GraphRefreshService#complete}). */
+    private final GraphRefreshService graphRefresh;
 
     /** UserDeleted 의 처리 기록에 적는 처리기 이름. 이 listener 의 group id 와 같은 값이다. */
     private final String userDeletedConsumer;
@@ -56,12 +56,12 @@ class InboxListener {
     /** 생성자가 하나뿐이라 Spring 이 bean 과 설정값을 찾아 넣어 준다. */
     InboxListener(InboxTransaction inbox,
                   UserDeletedService userDeleted,
-                  GraphRefreshCompletedService graphRefreshCompleted,
+                  GraphRefreshService graphRefresh,
                   @Value("${kafka.consumer.groups.user-deleted}") String userDeletedConsumer,
                   @Value("${kafka.consumer.groups.graph-refresh-completed}") String graphRefreshCompletedConsumer) {
         this.inbox = inbox;
         this.userDeleted = userDeleted;
-        this.graphRefreshCompleted = graphRefreshCompleted;
+        this.graphRefresh = graphRefresh;
         this.userDeletedConsumer = userDeletedConsumer;
         this.graphRefreshCompletedConsumer = graphRefreshCompletedConsumer;
     }
@@ -92,6 +92,6 @@ class InboxListener {
         InboxMessages.graphRefreshCompleted(record).ifPresent(received ->
                 // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다.
                 inbox.runOnce(graphRefreshCompletedConsumer, received.eventId(),
-                        () -> graphRefreshCompleted.handle(received.event())));
+                        () -> graphRefresh.complete(received.event())));
     }
 }
