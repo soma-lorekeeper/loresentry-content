@@ -1,9 +1,13 @@
 package com.loresentry.content.refresh;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -153,6 +157,139 @@ class RefreshDraftRepository {
                 .param("run", runId)
                 .query((rows, index) -> rows.getObject("base_version_id", UUID.class))
                 .list());
+    }
+
+    /** 열린 작업본 수, 그중 맞춘 수, 그중 새 문서 제안 수. */
+    RefreshResponses.Counts counts(UUID runId) {
+        return jdbcClient
+                .sql("""
+                        select count(*) as total,
+                               count(*) filter (where matched) as matched,
+                               count(*) filter (where kind = 'NEW') as created
+                        from refresh_document_drafts
+                        where refresh_run_id = :run and status = 'OPEN'
+                        """)
+                .param("run", runId)
+                .query((rows, index) -> new RefreshResponses.Counts(rows.getLong("total"), rows.getLong("matched"),
+                        rows.getLong("created")))
+                .single();
+    }
+
+    /**
+     * 열린 작업본 하나와 화면에 필요한 주변 정보(대상 문서의 지금 제목·분류·revision, 기준 버전의 revision).
+     * 대상 문서 칸은 새 문서 작업본이면 비어 있다.
+     */
+    record OpenDraft(UUID id, String kind, long draftRevision, boolean matched, OffsetDateTime updatedAt,
+            UUID targetDocumentId, String documentTitle, String documentFolder, Long documentRevision,
+            String candidateId, String folderCode, UUID baseVersionId, Long baseRevisionNo, boolean baseMismatch,
+            Long leftRevisionNo, DraftSnapshot left, DraftSnapshot right) {
+    }
+
+    /** 열린 작업본들. 기존 문서 먼저, 분류 순서와 제목 순이고, 새 문서 제안은 뒤에 임시 이름 순으로 온다. */
+    List<OpenDraft> openDrafts(UUID runId) {
+        return jdbcClient
+                .sql("""
+                        select r.id, r.kind, r.draft_revision, r.matched, r.updated_at, r.target_document_id,
+                               d.title as document_title, f.code as document_folder, d.revision_no as document_revision,
+                               r.candidate_id, r.folder_code, r.base_version_id, v.source_revision_no as base_revision,
+                               r.base_mismatch, r.left_source_revision_no, r.left_snapshot::text as left_json,
+                               r.right_snapshot::text as right_json
+                        from refresh_document_drafts r
+                        left join document d on d.id = r.target_document_id
+                        left join base_folders f on f.id = d.folder_id
+                        left join document_versions v on v.id = r.base_version_id
+                        where r.refresh_run_id = :run and r.status = 'OPEN'
+                        order by (r.kind = 'NEW'), f.position nulls last, d.title, r.candidate_id
+                        """)
+                .param("run", runId)
+                .query((rows, index) -> new OpenDraft(rows.getObject("id", UUID.class), rows.getString("kind"),
+                        rows.getLong("draft_revision"), rows.getBoolean("matched"),
+                        rows.getObject("updated_at", OffsetDateTime.class),
+                        rows.getObject("target_document_id", UUID.class), rows.getString("document_title"),
+                        rows.getString("document_folder"), rows.getObject("document_revision", Long.class),
+                        rows.getString("candidate_id"), rows.getString("folder_code"),
+                        rows.getObject("base_version_id", UUID.class), rows.getObject("base_revision", Long.class),
+                        rows.getBoolean("base_mismatch"), rows.getObject("left_source_revision_no", Long.class),
+                        snapshotOrNull(rows.getString("left_json")), snapshotOrNull(rows.getString("right_json"))))
+                .list();
+    }
+
+    /** 저장할 작업본의 종류와 대상. 이 run 의 열린 작업본이 아니면 비어 있다. */
+    record DraftHead(UUID id, String kind, UUID targetDocumentId, String candidateId) {
+    }
+
+    Optional<DraftHead> findOpen(UUID runId, UUID draftId) {
+        return jdbcClient
+                .sql("""
+                        select id, kind, target_document_id, candidate_id from refresh_document_drafts
+                        where id = :id and refresh_run_id = :run and status = 'OPEN'
+                        """)
+                .param("id", draftId).param("run", runId)
+                .query((rows, index) -> new DraftHead(rows.getObject("id", UUID.class), rows.getString("kind"),
+                        rows.getObject("target_document_id", UUID.class), rows.getString("candidate_id")))
+                .optional();
+    }
+
+    /** 이 run 의 새 설정 문서 제안: 임시 이름 → 분류. 작업본의 관계가 아직 없는 문서를 가리킬 때 확인한다. */
+    Map<String, String> candidateFolders(UUID runId) {
+        Map<String, String> folders = new LinkedHashMap<>();
+        jdbcClient
+                .sql("select candidate_id, folder_code from refresh_document_drafts "
+                        + "where refresh_run_id = :run and kind = 'NEW' order by candidate_id")
+                .param("run", runId)
+                .query(rows -> {
+                    folders.put(rows.getString("candidate_id"), rows.getString("folder_code"));
+                });
+        return folders;
+    }
+
+    /** 작업본의 지금 모습. 자동 저장이 충돌했을 때 클라이언트에 돌려준다. */
+    record Current(long draftRevision, boolean matched, OffsetDateTime updatedAt, DraftSnapshot left,
+            DraftSnapshot right) {
+    }
+
+    /**
+     * 두 쪽을 저장한다. 읽은 뒤 다른 탭·기기가 먼저 저장했으면({@code draft_revision} 이 다르면) 저장하지 않고 비어 있다
+     * (설계 §7.5). 저장하면 번호가 하나 오르고, matched 는 DB 가 다시 계산한다.
+     */
+    Optional<Current> save(UUID draftId, long expectedRevision, DraftSnapshot left, DraftSnapshot right) {
+        return jdbcClient
+                .sql("""
+                        update refresh_document_drafts
+                        set left_snapshot = :left::jsonb, right_snapshot = :right::jsonb,
+                            draft_revision = draft_revision + 1, updated_at = now()
+                        where id = :id and draft_revision = :expected
+                        returning draft_revision, matched, updated_at, left_snapshot::text as left_json,
+                                  right_snapshot::text as right_json
+                        """)
+                .param("id", draftId)
+                .param("expected", expectedRevision)
+                .param("left", left == null ? null : json.writeValueAsString(left))
+                .param("right", right == null ? null : json.writeValueAsString(right))
+                .query(this::mapCurrent)
+                .optional();
+    }
+
+    Current current(UUID draftId) {
+        return jdbcClient
+                .sql("""
+                        select draft_revision, matched, updated_at, left_snapshot::text as left_json,
+                               right_snapshot::text as right_json
+                        from refresh_document_drafts where id = :id
+                        """)
+                .param("id", draftId)
+                .query(this::mapCurrent)
+                .single();
+    }
+
+    private Current mapCurrent(ResultSet rows, int index) throws SQLException {
+        return new Current(rows.getLong("draft_revision"), rows.getBoolean("matched"),
+                rows.getObject("updated_at", OffsetDateTime.class), snapshotOrNull(rows.getString("left_json")),
+                snapshotOrNull(rows.getString("right_json")));
+    }
+
+    private DraftSnapshot snapshotOrNull(String text) {
+        return text == null ? null : json.readValue(text, DraftSnapshot.class);
     }
 
     /** 기준 버전이 없는 작업본(이웃 문서·새 문서)은 null 을 돌려주므로 뺀다. */

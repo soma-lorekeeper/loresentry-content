@@ -3,6 +3,7 @@ package com.loresentry.content.refresh;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -121,14 +122,46 @@ class GraphRefreshRepository {
                 .optional();
     }
 
+    /** 조회 API 가 보여 주는 run 의 상태와 시각, 실패 원인. */
+    record RunInfo(UUID id, String status, OffsetDateTime startedAt, OffsetDateTime readyAt,
+            OffsetDateTime completedAt, String errorCode, String errorMessage) {
+    }
+
+    private static final String RUN_INFO = """
+            select id, status, started_at, ready_at, completed_at, error_code, error_message from refresh_runs
+            """;
+
     /** 이 프로젝트의 가장 최근 run. 폴링 응답이 보여 준다. */
-    Optional<RunRow> latest(UUID projectId) {
-        return jdbcClient.sql("""
-                        select id, project_id, status from refresh_runs
-                        where project_id = :project order by started_at desc, id desc limit 1
-                        """)
+    Optional<RunInfo> latestInfo(UUID projectId) {
+        return jdbcClient.sql(RUN_INFO + " where project_id = :project order by started_at desc, id desc limit 1")
                 .param("project", projectId)
-                .query(GraphRefreshRepository::mapRun)
+                .query(GraphRefreshRepository::mapInfo)
+                .optional();
+    }
+
+    /** 이 프로젝트의 run 하나. 다른 프로젝트의 run 이면 비어 있다. */
+    Optional<RunInfo> findInfo(UUID projectId, UUID runId) {
+        return jdbcClient.sql(RUN_INFO + " where id = :id and project_id = :project")
+                .param("id", runId).param("project", projectId)
+                .query(GraphRefreshRepository::mapInfo)
+                .optional();
+    }
+
+    private static RunInfo mapInfo(ResultSet rows, int index) throws SQLException {
+        return new RunInfo(rows.getObject("id", UUID.class), rows.getString("status"),
+                rows.getObject("started_at", OffsetDateTime.class), rows.getObject("ready_at", OffsetDateTime.class),
+                rows.getObject("completed_at", OffsetDateTime.class), rows.getString("error_code"),
+                rows.getString("error_message"));
+    }
+
+    /**
+     * 작업본을 저장하는 동안 run 이 끝나지(확정되지) 않게 공유 잠금을 걸고 상태를 읽는다. 확정은 run 을 배타 잠금하므로
+     * 저장과 확정이 엇갈리지 않는다. 다른 프로젝트의 run 이면 비어 있다.
+     */
+    Optional<String> statusForShare(UUID projectId, UUID runId) {
+        return jdbcClient.sql("select status from refresh_runs where id = :id and project_id = :project for share")
+                .param("id", runId).param("project", projectId)
+                .query(String.class)
                 .optional();
     }
 
