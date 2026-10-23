@@ -34,12 +34,19 @@ public record FileChanged(
         ACTIVE, TRASHED
     }
 
-    /** 문서의 내용·위치·상태. 정렬 순서(rank)·잠금·서식 JSON 은 편집 화면용이라 싣지 않는다. */
+    /**
+     * 문서의 내용·위치·상태. 정렬 순서(rank)·잠금·서식 JSON 은 편집 화면용이라 싣지 않는다.
+     *
+     * @param revisionNo 문서의 저장 번호. 본문 저장과 버전 복원 때만 오르고 이름 변경·이동·휴지통에서는 그대로다.
+     *                   이 스냅샷이 어느 판본의 본문인지 보여 주는 값이라, 이벤트 순서는 이것이 아니라
+     *                   header {@code ce_sequence} 로 비교한다
+     */
     public record File(
             String title,
             @JsonProperty("folder_code") String folderCode,
             @JsonProperty("episode_id") UUID episodeId,
             State state,
+            @JsonProperty("revision_no") long revisionNo,
             @JsonProperty("body_text") String bodyText,
             List<Property> properties) {
     }

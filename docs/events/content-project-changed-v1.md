@@ -55,6 +55,7 @@ FileChanged는 바뀐 부분이 아니라 **그 문서의 발행 시점 상태 �
 | `file.folder_code` | string | `WORLDVIEW` `CHARACTER` `LOCATION` `MANUSCRIPT` `ORGANIZATION` `ITEM` `EVENT` |
 | `file.episode_id` | uuid \| null | `MANUSCRIPT`일 때만 값이 있을 수 있다 |
 | `file.state` | `ACTIVE` \| `TRASHED` | |
+| `file.revision_no` | long | 문서의 저장 번호. 본문 저장·버전 복원 때만 오르고 이름 변경·이동·휴지통에서는 그대로다. 이 본문이 어느 판본인지 보여 주는 값이고, 순서 비교는 `ce_sequence`로 한다(2.3) |
 | `file.body_text` | string | 서식을 뺀 본문. 빈 문서는 `""` |
 | `file.properties` | `[{key, value}]` | 문서 속성 전체, 화면 순서. 설명(`description`)도 여기 있다 |
 | `relations` | array \| null | **이 문서가 low인 관계만**. DELETED일 때만 null |
@@ -159,7 +160,7 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
 | 영구 삭제 시 | 이웃 전부 UPDATED | X가 high인 관계의 owner만 |
 | `file.description` | 첫 `description` 속성 | 없음. `file.properties` 전체 |
 | `file.episode_id`, `file.state` | 없음 | 있음 |
-| `revision_no` | 있음 | 없음 |
+| `revision_no` | 최상위 | `file.revision_no` |
 | TRASHED | `file`·`relations` null | 전체 스냅샷, `state=TRASHED` |
 | UPDATED인데 휴지통 문서 | `change_type`이 TRASHED로 바뀜 | `change_type`은 동작 그대로, 상태는 `file.state` |
 | `changed_fields` | 항상 `[TITLE,BODY,FOLDER,RELATIONS]` | 실제로 바뀐 것 |
@@ -185,3 +186,13 @@ DELETED는 `file`, `relations`가 null이고 `changed_fields`는 `[]`다.
   - 설명은 `file.properties`에서 key가 `description`인 첫 값을 쓴다.
 - `docs/implementation/KAFKA_TRANSPORT.md`의 "관계 양쪽 문서", "사용자별 advisory lock", "휴지통은 file/relations=null" 문장을 고친다.
 - 테스트 `tests/integration/test_ordered_projection.py::test_latest_file_snapshot_and_relation_fences`를 다시 쓴다(high 쪽이 관계를 보내고, 문서 사이 fence를 기대함).
+
+## 8. ai-chat summarizer가 바꿔야 할 것
+
+ai-chat의 요약 스케줄러(`app/summarizer`)도 이 topic을 받는다. 이 형식만 처리하고 이전 형식은 건너뛴다.
+
+**배포는 content가 먼저고, ai-chat이 바로 뒤따른다.** 지금의 summarizer는 최상위 `revision_no`가 없으면 멈춘다. offset을 commit하지 않고 멈추므로, 새 summarizer가 그 자리부터 다시 읽는다.
+
+- 같은 문서의 순서는 `ce_sequence`로 비교한다(2.3). 이름 변경·이동은 `revision_no`를 올리지 않으므로 순서 비교에 쓸 수 없다.
+- `file.state`가 `TRASHED`면 `change_type`과 상관없이 요약을 지운다. DELETED도 지운다.
+- 요약이 어느 판본의 본문에서 나왔는지는 `file.revision_no`로 기록한다.

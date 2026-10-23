@@ -52,7 +52,7 @@ class ProjectChangedEventsTest extends ApiTestSupport {
                 {"project_id":"%s","file_id":"%s","change_type":"CREATED",
                  "changed_fields":%s,
                  "file":{"title":"유중혁","folder_code":"CHARACTER","episode_id":null,"state":"ACTIVE",
-                         "body_text":"","properties":[]},
+                         "revision_no":0,"body_text":"","properties":[]},
                  "relations":[]}
                 """.formatted(project, file, ALL_FIELDS)));
     }
@@ -67,6 +67,8 @@ class ProjectChangedEventsTest extends ApiTestSupport {
         assertThat(renamed.get("change_type").asString()).isEqualTo("UPDATED");
         assertThat(renamed.get("changed_fields")).isEqualTo(json.readTree("[\"TITLE\"]"));
         assertThat(renamed.at("/file/title").asString()).isEqualTo("김독자");
+        // 이름 변경은 저장이 아니라 revision 이 그대로다.
+        assertThat(renamed.at("/file/revision_no").asLong()).isZero();
     }
 
     /** 순서(rank)는 싣지 않으므로, 같은 자리 안에서 순서만 바꾼 이동은 스냅샷을 바꾸지 않는다. */
@@ -138,10 +140,14 @@ class ProjectChangedEventsTest extends ApiTestSupport {
         assertThat(first.get("changed_fields")).isEqualTo(json.readTree("[\"BODY\",\"PROPERTIES\"]"));
         assertThat(first.at("/file/body_text").asString()).isEqualTo("회귀를 반복한다.");
         assertThat(first.at("/file/properties")).isEqualTo(json.readTree(described));
+        // revision 은 최상위가 아니라 스냅샷(file)에 있고, 저장할 때마다 오른다.
         assertThat(first.has("revision_no")).isFalse();
+        assertThat(first.at("/file/revision_no").asLong()).isEqualTo(1);
 
         save(file, "유중혁(3회차)", "회귀를 반복한다.", described, "[]");
-        assertThat(lastOf(file).payload().get("changed_fields")).isEqualTo(json.readTree("[\"TITLE\"]"));
+        JsonNode second = lastOf(file).payload();
+        assertThat(second.get("changed_fields")).isEqualTo(json.readTree("[\"TITLE\"]"));
+        assertThat(second.at("/file/revision_no").asLong()).isEqualTo(2);
 
         int before = eventsOf(file).size();
         save(file, "유중혁(3회차)", "회귀를 반복한다.", described, "[]");

@@ -43,7 +43,7 @@ class ProjectChangedRepository {
         return jdbcClient
                 .sql("""
                         select d.title, f.code as folder_code, d.episode_id,
-                               d.trashed_at is not null as trashed, d.body_text
+                               d.trashed_at is not null as trashed, d.revision_no, d.body_text
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.id = :id
@@ -54,6 +54,7 @@ class ProjectChangedRepository {
                         rows.getString("folder_code"),
                         rows.getObject("episode_id", UUID.class),
                         rows.getBoolean("trashed") ? State.TRASHED : State.ACTIVE,
+                        rows.getLong("revision_no"),
                         rows.getString("body_text"),
                         properties))
                 .optional();
