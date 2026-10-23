@@ -448,7 +448,8 @@ the two files drift apart in shape or the English one still contains Hangul.
   run stays `GENERATING` and its project cannot start another refresh.
 - User approval and application of generated refresh proposals.
 - Production refresh needs the private bucket, passed as both
-  `GRAPH_REFRESH_REQUEST_BUCKET` and `GRAPH_REFRESH_COMPLETED_BUCKET`, created with
+  `GRAPH_REFRESH_REQUEST_BUCKET` and `GRAPH_REFRESH_COMPLETED_BUCKET` with its region
+  in `GRAPH_REFRESH_REGION`, created with
   content's access by [`docs/aws/setup-refresh.sh`](docs/aws/setup-refresh.sh), and
   graph-rag's role from `deploy/setup-refresh.sh` in `loresentry-graph-rag`.
 

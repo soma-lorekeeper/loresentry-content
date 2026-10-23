@@ -42,7 +42,8 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
 
     static final String BUCKET = "refresh-test-bucket";
 
-    @MockitoBean
+    /** 최신화 전용 client(RefreshConfig 의 refreshS3Client)만 흉내 낸다. 미디어 client 는 그대로다. */
+    @MockitoBean(name = "refreshS3Client")
     private S3Client s3;
 
     private UUID project;

@@ -102,3 +102,5 @@ graph-refresh:
   # graph-rag 가 최신화 결과(refresh/{project}/{request}/result.json)를 쓰는 bucket. GraphRefreshCompleted 를 처리할 때
   # 결과를 여기서 읽는다. 완료 처리 로직이 들어오는 commit 에서 읽기 시작한다. 운영에서는 요청 bucket 과 같은 bucket 이다.
   completed-bucket: ${GRAPH_REFRESH_COMPLETED_BUCKET:}
+  # 위 두 bucket 이 있는 리전. 최신화 전용 S3 client(RefreshConfig)가 쓰며, 미디어 리전(MEDIA_REGION)과 따로 둔다.
+  region: ${GRAPH_REFRESH_REGION:ap-northeast-2}

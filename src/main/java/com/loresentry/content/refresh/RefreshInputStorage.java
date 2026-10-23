@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import com.loresentry.content.web.ContentFailure;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
@@ -28,7 +29,9 @@ class RefreshInputStorage {
 
     private final String bucket;
 
-    RefreshInputStorage(S3Client s3, @Value("${graph-refresh.request-bucket:}") String bucket) {
+    /** {@code s3} 는 최신화 bucket 리전으로 만든 전용 client 다(RefreshConfig). */
+    RefreshInputStorage(@Qualifier("refreshS3Client") S3Client s3,
+                        @Value("${graph-refresh.request-bucket:}") String bucket) {
         this.s3 = s3;
         this.bucket = bucket;
     }
