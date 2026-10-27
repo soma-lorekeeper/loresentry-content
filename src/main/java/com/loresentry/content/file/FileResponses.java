@@ -3,6 +3,7 @@ package com.loresentry.content.file;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -52,13 +53,17 @@ public final class FileResponses {
             @JsonProperty("refresh_locked") boolean refreshLocked,
             @JsonProperty("char_count") int charCount,
             @JsonProperty("revision_no") long revisionNo,
+            /** 대표 이미지 주소. 없으면 null */
+            @JsonProperty("image_url") String imageUrl,
             @JsonProperty("trashed_at") OffsetDateTime trashedAt,
             @JsonProperty("updated_at") OffsetDateTime updatedAt) {
 
-        public static Document from(FileRows.Document row) {
+        /** @param publicUrl S3 키를 공개 주소로 바꾼다. 주소의 앞부분은 설정이라 행에 두지 않는다 */
+        public static Document from(FileRows.Document row, UnaryOperator<String> publicUrl) {
             return new Document(row.id(), row.title(), row.folderCode(), row.episodeId(), row.rank(),
-                    row.locked(), row.refreshLocked(), row.charCount(), row.revisionNo(), row.trashedAt(),
-                    row.updatedAt());
+                    row.locked(), row.refreshLocked(), row.charCount(), row.revisionNo(),
+                    row.imageKey() == null ? null : publicUrl.apply(row.imageKey()),
+                    row.trashedAt(), row.updatedAt());
         }
     }
 
@@ -80,11 +85,11 @@ public final class FileResponses {
     }
 
     static Tree tree(List<FileRows.BaseFolder> folders, List<FileRows.Episode> episodes,
-            List<FileRows.Document> documents) {
+            List<FileRows.Document> documents, UnaryOperator<String> publicUrl) {
         return new Tree(
                 folders.stream().map(Folder::from).toList(),
                 episodes.stream().map(Episode::from).toList(),
-                documents.stream().map(Document::from).toList());
+                documents.stream().map(document -> Document.from(document, publicUrl)).toList());
     }
 
     static TrashList trash(List<FileRows.TrashEntry> entries) {
