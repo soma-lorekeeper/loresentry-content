@@ -3,6 +3,7 @@ package com.loresentry.content.file;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -10,6 +11,8 @@ import java.util.function.Supplier;
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.media.MediaCleanup;
+import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.project.ProjectActivity;
@@ -40,19 +43,25 @@ public class FileService {
 
     private final ProjectChangedMessages messages;
 
+    private final MediaStorageService storage;
+
+    private final MediaCleanup mediaCleanup;
+
     public FileService(FileRepository repository, ProjectActivity activity, OutboxRepository outbox,
-            ProjectChangedMessages messages) {
+            ProjectChangedMessages messages, MediaStorageService storage, MediaCleanup mediaCleanup) {
         this.repository = repository;
         this.activity = activity;
         this.outbox = outbox;
         this.messages = messages;
+        this.storage = storage;
+        this.mediaCleanup = mediaCleanup;
     }
 
     @Transactional(readOnly = true)
     public FileResponses.Tree tree(UUID ownerUserId, UUID projectId) {
         requireProject(ownerUserId, projectId);
         return FileResponses.tree(repository.baseFolders(), repository.episodes(projectId),
-                repository.activeDocuments(projectId));
+                repository.activeDocuments(projectId), storage::publicUrl);
     }
 
     @Transactional(readOnly = true)
@@ -68,7 +77,7 @@ public class FileService {
         String kind = request.kind() == null ? "" : request.kind();
 
         Object created = switch (kind) {
-            case "document" -> FileResponses.Document.from(createDocument(projectId, request, title));
+            case "document" -> document(createDocument(projectId, request, title));
             case "episode" -> createEpisode(ownerUserId, projectId, title);
             default -> throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         };
@@ -125,7 +134,7 @@ public class FileService {
         requireEditable(document);
         String title = validateTitle(request.title());
 
-        FileResponses.Document renamed = FileResponses.Document.from(
+        FileResponses.Document renamed = document(
                 duplicateAware(() -> repository.renameDocument(fileId, title)));
         activity.touch(document.projectId());
         outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.UPDATED,
@@ -168,7 +177,7 @@ public class FileService {
             outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.UPDATED,
                     Set.of(Field.FOLDER)));
         }
-        return FileResponses.Document.from(moved.document());
+        return document(moved.document());
     }
 
     private String rankFor(UUID projectId, short folderId, UUID episodeId, UUID beforeFileId,
@@ -207,7 +216,7 @@ public class FileService {
     public FileResponses.Document restore(UUID ownerUserId, UUID fileId) {
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
-            return FileResponses.Document.from(document);
+            return document(document);
         }
 
         // 원래 있던 에피소드가 사라졌으면 원고 폴더 최상위로 돌린다(요구사항 §4.2).
@@ -225,7 +234,7 @@ public class FileService {
                 ? EnumSet.of(Field.STATE, Field.FOLDER)
                 : EnumSet.of(Field.STATE);
         outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.RESTORED, changed));
-        return FileResponses.Document.from(restored.document());
+        return document(restored.document());
     }
 
     /**
@@ -241,7 +250,9 @@ public class FileService {
         // 잠근 뒤에 읽어야, 읽은 뒤 새로 걸린 관계가 삭제에 휩쓸려 알림 없이 사라지지 않는다.
         repository.lockForDelete(fileId);
         List<UUID> owners = repository.relationOwnersOf(fileId);
+        Optional<UUID> image = repository.imageOf(fileId);
         repository.deleteDocument(fileId);
+        image.flatMap(repository::deleteImage).ifPresent(key -> mediaCleanup.deleteAfterCommit(List.of(key)));
         activity.touch(document.projectId());
 
         List<OutboxRecord> changes = new ArrayList<>();
@@ -249,6 +260,51 @@ public class FileService {
         owners.forEach(owner -> changes.add(messages.fileChanged(document.projectId(), owner,
                 ChangeType.UPDATED, Set.of(Field.RELATIONS))));
         outbox.append(changes.toArray(OutboxRecord[]::new));
+    }
+
+    /**
+     * 문서의 대표 이미지를 정한다. 이미지는 먼저 {@code POST /projects/{id}/images} 로 올리고 확인까지 마친 것이어야
+     * 한다.
+     *
+     * <p>이전 이미지는 행과 S3 객체를 함께 지운다. 이미지 하나는 문서 하나의 것이라 남겨 둘 이유가 없다. 이미지는
+     * 문서 내용이 아니므로 revision 과 이벤트가 없다 — 관계도와 AI 가 읽는 것은 바뀌지 않는다.
+     */
+    @Transactional
+    public FileResponses.Document setImage(UUID ownerUserId, UUID fileId, FileRequests.SetImage request) {
+        FileRows.Document document = requireDocument(ownerUserId, fileId);
+        requireEditable(document);
+        if (request == null || request.imageId() == null) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        String status = repository.imageStatus(document.projectId(), request.imageId())
+                .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.IMAGE_NOT_FOUND));
+        if (!"COMMITTED".equals(status)) {
+            throw new ContentFailure(ContentFailure.Reason.OBJECT_NOT_UPLOADED);
+        }
+
+        Optional<UUID> previous;
+        try {
+            previous = repository.replaceImage(fileId, request.imageId());
+        } catch (DuplicateKeyException usedElsewhere) {
+            // 다른 문서가 이미 쓰는 이미지다. 그 문서의 이미지를 바꾸면 이쪽이 깨진다.
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        previous.flatMap(repository::deleteImage).ifPresent(key -> mediaCleanup.deleteAfterCommit(List.of(key)));
+        activity.touch(document.projectId());
+        return document(repository.findDocument(ownerUserId, fileId).orElseThrow());
+    }
+
+    /** 이미지를 뗀다. 없었으면 아무것도 하지 않는다. */
+    @Transactional
+    public void clearImage(UUID ownerUserId, UUID fileId) {
+        FileRows.Document document = requireDocument(ownerUserId, fileId);
+        requireEditable(document);
+        Optional<UUID> previous = repository.replaceImage(fileId, null);
+        if (previous.isEmpty()) {
+            return;
+        }
+        repository.deleteImage(previous.get()).ifPresent(key -> mediaCleanup.deleteAfterCommit(List.of(key)));
+        activity.touch(document.projectId());
     }
 
     /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). 돌아간 문서마다 위치가 바뀐다. */
@@ -261,6 +317,10 @@ public class FileService {
         outbox.append(moved.stream()
                 .map(id -> messages.fileChanged(projectId, id, ChangeType.UPDATED, Set.of(Field.FOLDER)))
                 .toArray(OutboxRecord[]::new));
+    }
+
+    private FileResponses.Document document(FileRows.Document row) {
+        return FileResponses.Document.from(row, storage::publicUrl);
     }
 
     private void requireProject(UUID ownerUserId, UUID projectId) {

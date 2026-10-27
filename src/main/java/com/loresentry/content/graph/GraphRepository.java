@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -26,25 +27,34 @@ class GraphRepository {
                 .query(Integer.class).optional().isPresent();
     }
 
-    /** 활성 문서 전부. 설명은 {@code description} 속성 한 줄에서 가져온다 — 없으면 빈 문자열이다. */
-    List<GraphResponses.Node> nodes(UUID projectId) {
+    /**
+     * 활성 문서 전부. 설명은 {@code description} 속성 한 줄에서 가져온다 — 없으면 빈 문자열이다.
+     *
+     * @param publicUrl 이미지 S3 키를 공개 주소로 바꾼다
+     */
+    List<GraphResponses.Node> nodes(UUID projectId, UnaryOperator<String> publicUrl) {
         return jdbcClient
                 .sql("""
                         select d.id, d.title, f.code as folder_code,
-                               coalesce(p.text_value, '') as description
+                               coalesce(p.text_value, '') as description, i.s3_key as image_key
                         from document d
                         join base_folders f on f.id = d.folder_id
                         left join document_properties p
                             on p.document_id = d.id and p.property_key = 'description'
+                        left join image i on i.id = d.image_id
                         where d.project_id = :project and d.trashed_at is null
                         order by f.position, d.rank, d.id
                         """)
                 .param("project", projectId)
-                .query((rows, index) -> new GraphResponses.Node(
-                        rows.getObject("id", UUID.class),
-                        rows.getString("title"),
-                        rows.getString("folder_code"),
-                        rows.getString("description")))
+                .query((rows, index) -> {
+                    String imageKey = rows.getString("image_key");
+                    return new GraphResponses.Node(
+                            rows.getObject("id", UUID.class),
+                            rows.getString("title"),
+                            rows.getString("folder_code"),
+                            rows.getString("description"),
+                            imageKey == null ? null : publicUrl.apply(imageKey));
+                })
                 .list();
     }
 

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -71,6 +72,20 @@ public class FileController {
     @DeleteMapping("/files/{fileId}")
     public ResponseEntity<Void> deletePermanently(@CurrentUser UUID userId, @PathVariable UUID fileId) {
         files.deletePermanently(userId, fileId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/files/{fileId}/image")
+    public FileResponses.Document setImage(
+            @CurrentUser UUID userId,
+            @PathVariable UUID fileId,
+            @RequestBody FileRequests.SetImage request) {
+        return files.setImage(userId, fileId, request);
+    }
+
+    @DeleteMapping("/files/{fileId}/image")
+    public ResponseEntity<Void> clearImage(@CurrentUser UUID userId, @PathVariable UUID fileId) {
+        files.clearImage(userId, fileId);
         return ResponseEntity.noContent().build();
     }
 }

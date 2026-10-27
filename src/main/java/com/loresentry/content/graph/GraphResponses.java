@@ -20,11 +20,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record GraphResponses() {
 
+    /** {@code image_url} 은 문서의 대표 이미지 주소다. 없으면 null 이고, 화면은 분류 아이콘을 그린다. */
     public record Node(
             UUID id,
             String title,
             @JsonProperty("folder_code") String folderCode,
-            String description) {
+            String description,
+            @JsonProperty("image_url") String imageUrl) {
     }
 
     /**
