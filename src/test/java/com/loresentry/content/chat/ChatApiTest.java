@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 class ChatApiTest extends ApiTestSupport {
 
@@ -321,11 +322,62 @@ class ChatApiTest extends ApiTestSupport {
         assertThat(documents.get("manuscripts").size()).isEqualTo(1);
         assertThat(documents.get("manuscripts").get(0)).isEqualTo(snapshot.get("manuscripts").get(2));
         assertThat(documents.get("settings").size()).isEqualTo(1);
-        assertThat(documents.get("settings").get(0)).isEqualTo(snapshot.get("settings").get(1));
+        ObjectNode lena = (ObjectNode) documents.get("settings").get(0);
+        assertThat(lena.remove("core_facts")).isEqualTo(json.createArrayNode());
+        assertThat(lena).isEqualTo(snapshot.get("settings").get(1));
         assertThat(documents.get("memos").size()).isEqualTo(1);
         assertThat(documents.get("memos").get(0)).isEqualTo(snapshot.get("memos").get(1));
         assertThat(texts(documents.get("missing"), null))
                 .containsExactly(works.abandoned().toString(), unknown.toString());
+    }
+
+    @Test
+    void carriesTheCoreFactsMarkedInEachSettingDocument() throws Exception {
+        UUID chapter = document("MANUSCRIPT", "12화 · 균열의 밤");
+        UUID greenhouse = document("LOCATION", "북쪽 온실");
+        UUID harin = document("CHARACTER", "하린");
+        UUID legacy = document("WORLDVIEW", "옛 설정");
+        saveBlocks(greenhouse, "북쪽 온실", List.of(
+                Map.of("type", "heading", "attrs", Map.of("level", 2, "core", true),
+                        "content", List.of(text("출입 규칙"))),
+                Map.of("type", "paragraph", "attrs", Map.of("core", true), "content", List.of(
+                        text("북쪽 문은 "),
+                        Map.of("type", "text", "marks", List.of(Map.of("type", "bold")), "text", "낡은 열쇠"),
+                        text(" 없이는 열리지 않는다."))),
+                Map.of("type", "paragraph", "content", List.of(text("유리 지붕은 밤마다 빛난다."))),
+                Map.of("type", "paragraph", "attrs", Map.of("core", true), "content", List.of(text("  "))),
+                Map.of("type", "paragraph", "attrs", Map.of("core", true), "content", List.of(
+                        text("온실지기는 하린이다."), Map.of("type", "hardBreak"), text("밤에만 들어간다.")))),
+                List.of(), Map.of());
+        save(harin, "하린", List.of("하린은 왼손잡이다."), List.of(), Map.of());
+        saveBlocks(chapter, "12화 · 균열의 밤", List.of(
+                        Map.of("type", "paragraph", "attrs", Map.of("core", true),
+                                "content", List.of(text("서윤은 천천히 문을 밀었다.")))),
+                List.of(), Map.of());
+        jdbcClient.sql("update document set body_json = null, body_md = :md where id = :id")
+                .param("md", "옛 본문").param("id", legacy).update();
+
+        JsonNode documents = read(mockMvc.perform(as(body(post(documentsPath()), json.writeValueAsString(Map.of(
+                        "document_ids", List.of(chapter.toString(), greenhouse.toString(), harin.toString(),
+                                legacy.toString()))))))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        JsonNode settings = documents.get("settings");
+        assertThat(texts(settings, "id"))
+                .containsExactly(legacy.toString(), harin.toString(), greenhouse.toString());
+        for (JsonNode setting : settings) {
+            assertThat(setting.propertyNames()).containsExactly(
+                    "id", "folder_code", "title", "properties", "revision_no", "body_text", "core_facts",
+                    "updated_at");
+        }
+        assertThat(settings.get(0).get("core_facts")).isEqualTo(json.createArrayNode());
+        assertThat(settings.get(1).get("core_facts")).isEqualTo(json.createArrayNode());
+        assertThat(texts(settings.get(2).get("core_facts"), null)).containsExactly(
+                "출입 규칙", "북쪽 문은 낡은 열쇠 없이는 열리지 않는다.", "온실지기는 하린이다.\n밤에만 들어간다.");
+        assertThat(documents.get("manuscripts").get(0).propertyNames()).containsExactly(
+                "id", "title", "ordinal", "episode_name", "properties", "revision_no", "body_text",
+                "updated_at");
     }
 
     @Test
@@ -418,6 +470,11 @@ class ChatApiTest extends ApiTestSupport {
                 .map(text -> Map.<String, Object>of("type", "paragraph",
                         "content", List.of(Map.of("type", "text", "text", text))))
                 .toList();
+        saveBlocks(document, title, blocks, properties, relations);
+    }
+
+    private void saveBlocks(UUID document, String title, List<Map<String, Object>> blocks,
+            List<Map<String, String>> properties, Map<UUID, String> relations) throws Exception {
         List<Map<String, String>> relationList = relations.entrySet().stream()
                 .map(entry -> Map.of("target_document_id", entry.getKey().toString(),
                         "description", entry.getValue()))
@@ -430,6 +487,10 @@ class ChatApiTest extends ApiTestSupport {
         mockMvc.perform(as(body(put("/files/" + document + "/content"), json.writeValueAsString(snapshot)))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
+    }
+
+    private static Map<String, Object> text(String text) {
+        return Map.of("type", "text", "text", text);
     }
 
     private static Map<String, String> property(String key, String value) {

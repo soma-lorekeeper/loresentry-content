@@ -1,5 +1,8 @@
 package com.loresentry.content.document;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -11,7 +14,7 @@ import tools.jackson.databind.JsonNode;
  * <p>규칙은 프론트의 {@code bodyToPlainText} 와 같아야 한다. 다르면 같은 문서의 글자 수가 화면과
  * 서버에서 다르게 보인다.
  */
-final class BodyText {
+public final class BodyText {
 
     private BodyText() {
     }
@@ -30,6 +33,23 @@ final class BodyText {
         StringBuilder text = new StringBuilder();
         appendInline(block, text);
         return text.toString();
+    }
+
+    public static List<String> coreTexts(JsonNode doc) {
+        List<String> texts = new ArrayList<>();
+        JsonNode blocks = doc == null ? null : doc.get("content");
+        if (blocks == null || !blocks.isArray()) {
+            return texts;
+        }
+        for (JsonNode block : blocks) {
+            if (block.path("attrs").path("core").booleanValue(false)) {
+                String text = blockText(block);
+                if (!text.isBlank()) {
+                    texts.add(text);
+                }
+            }
+        }
+        return texts;
     }
 
     private static void appendBlocks(JsonNode blocks, StringBuilder text) {
