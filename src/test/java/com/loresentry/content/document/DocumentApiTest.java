@@ -310,6 +310,27 @@ class DocumentApiTest extends ApiTestSupport {
     }
 
     @Test
+    void keepsTheCoreMarkOnHeadingsAndParagraphs() throws Exception {
+        String body = """
+                {"schema_version":1,"doc":{"type":"doc","content":[
+                    {"type":"heading","attrs":{"level":2,"core":true},"content":[
+                        {"type":"text","text":"회귀 규칙"}]},
+                    {"type":"paragraph","attrs":{"core":true},"content":[
+                        {"type":"text","text":"죽으면 첫날로 돌아간다."}]},
+                    {"type":"paragraph","content":[{"type":"text","text":"표시하지 않은 문단"}]}]}}
+                """;
+        mockMvc.perform(saveOf(character, 0, """
+                {"title":"유중혁","body":%s,"properties":[],"relations":[]}
+                """.formatted(body)))
+                .andExpect(status().isOk());
+
+        MvcResult result = mockMvc.perform(as(get("/files/" + character + "/content")))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(read(result).get("body")).isEqualTo(json.readTree(body));
+    }
+
+    @Test
     void refusesABodyWithoutADocOrSchemaVersion() throws Exception {
         mockMvc.perform(saveOf(character, 0,
                         "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1}}"))
