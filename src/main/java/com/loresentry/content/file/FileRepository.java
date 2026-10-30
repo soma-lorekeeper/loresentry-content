@@ -182,10 +182,9 @@ public class FileRepository {
         jdbcClient
                 .sql("""
                         insert into document
-                            (id, project_id, folder_id, episode_id, title, rank, body_json, body_json_enc,
-                             body_text_enc, body_text_mac, body_text_length)
-                        values (:id, :project, :folder, :episode, :title, :rank, :body::jsonb, :bodyEnc,
-                                :textEnc, :textMac, 0)
+                            (id, project_id, folder_id, episode_id, title, rank, body_json_enc, body_text_enc,
+                             body_text_mac, body_text_length)
+                        values (:id, :project, :folder, :episode, :title, :rank, :bodyEnc, :textEnc, :textMac, 0)
                         """)
                 .param("id", id)
                 .param("project", projectId)
@@ -193,8 +192,6 @@ public class FileRepository {
                 .param("episode", episodeId)
                 .param("title", title)
                 .param("rank", rank)
-                // 새 문서는 처음부터 JSON 본문을 갖는다. 비워 두면 변환 전 레거시 행처럼 보인다.
-                .param("body", EMPTY_BODY)
                 .param("bodyEnc", manuscripts.seal(projectId, id, Purpose.BODY_JSON, EMPTY_BODY))
                 .param("textEnc", manuscripts.seal(projectId, id, Purpose.BODY_TEXT, ""))
                 .param("textMac", manuscripts.mac(projectId, ""))

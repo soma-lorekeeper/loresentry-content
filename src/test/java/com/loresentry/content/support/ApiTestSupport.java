@@ -84,9 +84,7 @@ public abstract class ApiTestSupport {
     protected void makeLegacyMarkdown(UUID fileId, String markdown) {
         UUID projectId = jdbcClient.sql("select project_id from document where id = :id")
                 .param("id", fileId).query(UUID.class).single();
-        jdbcClient.sql("update document set body_json = null, body_md = :md, body_json_enc = null, "
-                        + "body_md_enc = :mdEnc where id = :id")
-                .param("md", markdown)
+        jdbcClient.sql("update document set body_json_enc = null, body_md_enc = :mdEnc where id = :id")
                 .param("mdEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_MD, markdown))
                 .param("id", fileId)
                 .update();
