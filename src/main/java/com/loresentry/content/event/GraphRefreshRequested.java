@@ -22,7 +22,8 @@ public record GraphRefreshRequested(
         @JsonProperty("input_fingerprint") String inputFingerprint,
         Location location,
         List<File> files,
-        @JsonProperty("required_events") List<UUID> requiredEvents) {
+        @JsonProperty("required_events") List<UUID> requiredEvents,
+        @JsonProperty("wrapped_key") String wrappedKey) {
 
     /** S3 입력의 위치. */
     public record Location(String bucket, String key) {

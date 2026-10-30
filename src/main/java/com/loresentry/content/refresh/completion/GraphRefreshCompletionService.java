@@ -4,6 +4,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Envelope;
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.refresh.GraphRefreshRepository;
 import com.loresentry.content.refresh.RefreshCleanup;
 
@@ -42,16 +45,19 @@ public class GraphRefreshCompletionService {
     /** 결과 파일 크기 한도. graph-rag 의 객체 한도와 같다. */
     private final long resultMaxBytes;
 
+    private final Manuscripts manuscripts;
+
     GraphRefreshCompletionService(GraphRefreshRepository repository, RefreshResultStorage results,
             RefreshDraftBuilder builder, RefreshCleanup cleanup,
             @Value("${graph-refresh.completed-bucket:}") String completedBucket,
-            @Value("${graph-refresh.result-max-bytes:16777216}") long resultMaxBytes) {
+            @Value("${graph-refresh.result-max-bytes:16777216}") long resultMaxBytes, Manuscripts manuscripts) {
         this.repository = repository;
         this.results = results;
         this.builder = builder;
         this.cleanup = cleanup;
         this.completedBucket = completedBucket;
         this.resultMaxBytes = resultMaxBytes;
+        this.manuscripts = manuscripts;
     }
 
     /**
@@ -85,9 +91,17 @@ public class GraphRefreshCompletionService {
         } catch (RefreshResultStorage.Unreadable unreadable) {
             return new ResultFetch.Unusable(unreadable.code(), unreadable.getMessage());
         }
+        byte[] plain = stored.bytes();
+        if (Envelope.isEnvelope(plain)) {
+            try {
+                plain = manuscripts.openBytes(event.projectId(), event.requestId(), Purpose.REFRESH_RESULT, plain);
+            } catch (Envelope.EnvelopeException unreadable) {
+                return new ResultFetch.Unusable("RESULT_INVALID", "Result cannot be decrypted");
+            }
+        }
         RefreshResult result;
         try {
-            result = RefreshResult.parse(stored.bytes());
+            result = RefreshResult.parse(plain);
         } catch (JacksonException malformed) {
             return new ResultFetch.Unusable("RESULT_INVALID", "Result is not valid JSON");
         }
@@ -97,7 +111,7 @@ public class GraphRefreshCompletionService {
                 || !OUTCOMES.contains(result.outcome())) {
             return new ResultFetch.Unusable("RESULT_INVALID", "Result does not belong to this request");
         }
-        return new ResultFetch.Read(result, new String(stored.bytes(), StandardCharsets.UTF_8), stored.sha256(),
+        return new ResultFetch.Read(result, new String(plain, StandardCharsets.UTF_8), stored.sha256(),
                 location.bucket(), location.key());
     }
 

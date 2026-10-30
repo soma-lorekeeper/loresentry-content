@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
+import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 
@@ -30,8 +31,11 @@ public class ProjectChangedMessages {
 
     private final ProjectChangedRepository repository;
 
-    ProjectChangedMessages(ProjectChangedRepository repository) {
+    private final Manuscripts manuscripts;
+
+    ProjectChangedMessages(ProjectChangedRepository repository, Manuscripts manuscripts) {
         this.repository = repository;
+        this.manuscripts = manuscripts;
     }
 
     /**
@@ -48,7 +52,7 @@ public class ProjectChangedMessages {
     /** 영구 삭제된 문서. 행이 이미 없으므로 읽을 것이 없다. */
     public OutboxRecord fileDeleted(UUID projectId, UUID fileId) {
         return new OutboxRecord(FILE_CHANGED, fileId, projectId.toString(),
-                () -> new FileChanged(projectId, fileId, ChangeType.DELETED, List.of(), null, null));
+                () -> new FileChanged(projectId, fileId, ChangeType.DELETED, List.of(), null, null, null));
     }
 
     /** 프로젝트 tombstone. aggregate 와 key 모두 프로젝트다. */
@@ -61,7 +65,7 @@ public class ProjectChangedMessages {
     private FileChanged snapshot(UUID projectId, UUID fileId, ChangeType type, List<Field> fields) {
         return repository.file(fileId)
                 .map(file -> new FileChanged(projectId, fileId, type, fields, file,
-                        repository.ownedRelations(fileId)))
+                        repository.ownedRelations(fileId), manuscripts.wrappedKey(projectId)))
                 .orElse(null);
     }
 }

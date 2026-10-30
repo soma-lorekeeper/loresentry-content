@@ -37,8 +37,8 @@ class OutboxMessagesTest {
      */
     @Test
     void sendsFileChangesAndProjectDeletionsToTheSameTopic() {
-        assertThat(OutboxMessages.topicOf("FileChanged")).isEqualTo("content.project.changed.v1");
-        assertThat(OutboxMessages.topicOf("ProjectDeleted")).isEqualTo("content.project.changed.v1");
+        assertThat(OutboxMessages.topicOf("FileChanged")).isEqualTo("content.project.changed.v2");
+        assertThat(OutboxMessages.topicOf("ProjectDeleted")).isEqualTo("content.project.changed.v2");
     }
 
     @Test
@@ -58,7 +58,7 @@ class OutboxMessagesTest {
     void buildsTheRecordTheContractDescribes() {
         ProducerRecord<String, String> record = OutboxMessages.toRecord(event("FileChanged"));
 
-        assertThat(record.topic()).isEqualTo("content.project.changed.v1");
+        assertThat(record.topic()).isEqualTo("content.project.changed.v2");
         assertThat(record.key()).isEqualTo(PROJECT_ID);
         assertThat(record.value()).isEqualTo("{\"project_id\":\"" + PROJECT_ID + "\"}");
         // partition 은 비워 둔다. 비어 있어야 key 로 정해지고, 같은 프로젝트가 같은 partition 으로 간다.

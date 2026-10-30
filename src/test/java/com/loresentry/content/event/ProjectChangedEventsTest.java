@@ -11,15 +11,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 동작마다 content.project.changed.v1 로 어떤 이벤트가 몇 개 나가는지 API 를 통해 확인한다. 규칙의 원본은
+ * 동작마다 content.project.changed.v2 로 어떤 이벤트가 몇 개 나가는지 API 를 통해 확인한다. 규칙의 원본은
  * {@code docs/events/content-project-changed-v1.md} 4절이다. outbox_events 는 테스트 사이에 지워지지 않으므로
  * 언제나 이 테스트가 만든 문서·프로젝트 id 로 거른다.
  */
@@ -48,11 +51,12 @@ class ProjectChangedEventsTest extends ApiTestSupport {
         Event created = events.getFirst();
         assertThat(created.type()).isEqualTo("FileChanged");
         assertThat(created.key()).isEqualTo(project.toString());
-        assertThat(created.payload()).isEqualTo(json.readTree("""
+        assertThat(bodyOf(created.payload())).isEmpty();
+        assertThat(withoutCiphertext(created.payload())).isEqualTo(json.readTree("""
                 {"project_id":"%s","file_id":"%s","change_type":"CREATED",
                  "changed_fields":%s,
                  "file":{"title":"유중혁","folder_code":"CHARACTER","episode_id":null,"state":"ACTIVE",
-                         "revision_no":0,"body_text":"","properties":[]},
+                         "revision_no":0,"properties":[]},
                  "relations":[]}
                 """.formatted(project, file, ALL_FIELDS)));
     }
@@ -138,7 +142,7 @@ class ProjectChangedEventsTest extends ApiTestSupport {
         save(file, "유중혁", "회귀를 반복한다.", described, "[]");
         JsonNode first = lastOf(file).payload();
         assertThat(first.get("changed_fields")).isEqualTo(json.readTree("[\"BODY\",\"PROPERTIES\"]"));
-        assertThat(first.at("/file/body_text").asString()).isEqualTo("회귀를 반복한다.");
+        assertThat(bodyOf(first)).isEqualTo("회귀를 반복한다.");
         assertThat(first.at("/file/properties")).isEqualTo(json.readTree(described));
         // revision 은 최상위가 아니라 스냅샷(file)에 있고, 저장할 때마다 오른다.
         assertThat(first.has("revision_no")).isFalse();
@@ -219,7 +223,7 @@ class ProjectChangedEventsTest extends ApiTestSupport {
         mockMvc.perform(as(delete("/files/" + high))).andExpect(status().isNoContent());
         assertThat(lastOf(high).payload()).isEqualTo(json.readTree("""
                 {"project_id":"%s","file_id":"%s","change_type":"DELETED",
-                 "changed_fields":[],"file":null,"relations":null}
+                 "changed_fields":[],"file":null,"relations":null,"wrapped_key":null}
                 """.formatted(project, high)));
         JsonNode owner = lastOf(low).payload();
         assertThat(owner.get("changed_fields")).isEqualTo(json.readTree("[\"RELATIONS\"]"));
@@ -332,5 +336,21 @@ class ProjectChangedEventsTest extends ApiTestSupport {
 
     private UUID idOf(String response) {
         return UUID.fromString(json.readTree(response).get("id").asString());
+    }
+
+    private String bodyOf(JsonNode payload) {
+        UUID projectId = UUID.fromString(payload.get("project_id").asString());
+        assertThat(payload.get("wrapped_key").asString()).isEqualTo(Manuscripts.base64(jdbcClient
+                .sql("select wrapped_key from project_keys where project_id = :id")
+                .param("id", projectId).query(byte[].class).single()));
+        return manuscripts.open(projectId, UUID.fromString(payload.get("file_id").asString()), Purpose.BODY_TEXT,
+                Manuscripts.fromBase64(payload.at("/file/body_text_enc").asString()));
+    }
+
+    private JsonNode withoutCiphertext(JsonNode payload) {
+        ObjectNode copy = (ObjectNode) payload.deepCopy();
+        copy.remove("wrapped_key");
+        ((ObjectNode) copy.get("file")).remove("body_text_enc");
+        return copy;
     }
 }

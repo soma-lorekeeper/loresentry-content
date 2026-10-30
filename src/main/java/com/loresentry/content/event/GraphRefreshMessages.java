@@ -6,6 +6,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 
@@ -28,10 +30,13 @@ public class GraphRefreshMessages {
 
     private final GraphRefreshEventRepository repository;
 
+    private final Manuscripts manuscripts;
+
     private final JsonMapper json = JsonMapper.builder().build();
 
-    GraphRefreshMessages(GraphRefreshEventRepository repository) {
+    GraphRefreshMessages(GraphRefreshEventRepository repository, Manuscripts manuscripts) {
         this.repository = repository;
+        this.manuscripts = manuscripts;
     }
 
     /**
@@ -40,9 +45,10 @@ public class GraphRefreshMessages {
      *
      * @param fileIds 보낼 문서. 그사이 휴지통에 들어가거나 지워진 문서는 입력에서 빠진다
      */
-    public PreparedInput input(UUID projectId, List<UUID> fileIds) {
+    public PreparedInput input(UUID projectId, UUID requestId, List<UUID> fileIds) {
         List<RefreshInput.Document> documents = repository.documents(projectId, fileIds);
-        byte[] bytes = json.writeValueAsBytes(new RefreshInput(RefreshInput.SCHEMA_VERSION, documents));
+        byte[] bytes = manuscripts.sealBytes(projectId, requestId, Purpose.REFRESH_INPUT,
+                json.writeValueAsBytes(new RefreshInput(RefreshInput.SCHEMA_VERSION, documents)));
         List<GraphRefreshRequested.File> files = documents.stream()
                 .map(document -> new GraphRefreshRequested.File(document.id(), document.revisionNo()))
                 .toList();
@@ -64,7 +70,7 @@ public class GraphRefreshMessages {
         return new OutboxRecord(GRAPH_REFRESH_REQUESTED, requestId, projectId.toString(),
                 () -> new GraphRefreshRequested(projectId, requestId, userId, input.fingerprint(),
                         new GraphRefreshRequested.Location(bucket, key), files,
-                        repository.latestFileChangedEvents(projectId)));
+                        repository.latestFileChangedEvents(projectId), manuscripts.wrappedKey(projectId)));
     }
 
     private static String sha256Hex(byte[] bytes) {

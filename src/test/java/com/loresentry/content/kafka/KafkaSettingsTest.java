@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  */
 class KafkaSettingsTest extends KafkaTestSupport {
 
-    private static final String PROJECT_CHANGED = "content.project.changed.v1";
+    private static final String PROJECT_CHANGED = "content.project.changed.v2";
 
     @Test
     void sendsARecordAndReadsItBackUnchanged() throws Exception {
@@ -62,7 +62,7 @@ class KafkaSettingsTest extends KafkaTestSupport {
     @Test
     void refusesARecordOverTheLimitBeforeItLeaves() {
         String key = UUID.randomUUID().toString();
-        String body = "a".repeat(4 * 1024 * 1024 + 1);
+        String body = "a".repeat(6 * 1024 * 1024 + 1);
 
         assertThatThrownBy(() -> kafkaTemplate.send(PROJECT_CHANGED, key, body))
                 .hasRootCauseInstanceOf(RecordTooLargeException.class);

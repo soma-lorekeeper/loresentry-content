@@ -9,6 +9,8 @@ import java.util.UUID;
 import com.loresentry.content.event.RefreshInput.Document;
 import com.loresentry.content.event.RefreshInput.Property;
 import com.loresentry.content.event.RefreshInput.Relation;
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -26,8 +28,11 @@ class GraphRefreshEventRepository {
 
     private final JdbcClient jdbcClient;
 
-    GraphRefreshEventRepository(JdbcClient jdbcClient) {
+    private final Manuscripts manuscripts;
+
+    GraphRefreshEventRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     /**
@@ -74,8 +79,7 @@ class GraphRefreshEventRepository {
 
         return jdbcClient
                 .sql("""
-                        select d.id, d.revision_no, f.code as folder_code, d.title,
-                               coalesce(d.body_text, '') as body_text
+                        select d.id, d.revision_no, f.code as folder_code, d.title, d.body_text_enc
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.project_id = :project and d.id in (:ids) and d.trashed_at is null
@@ -86,7 +90,8 @@ class GraphRefreshEventRepository {
                 .query((rows, index) -> {
                     UUID id = rows.getObject("id", UUID.class);
                     return new Document(id, rows.getLong("revision_no"), rows.getString("folder_code"),
-                            rows.getString("title"), rows.getString("body_text"),
+                            rows.getString("title"),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
                             properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
                 })
                 .list();

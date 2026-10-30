@@ -18,7 +18,8 @@ public record FileChanged(
         @JsonProperty("change_type") ChangeType changeType,
         @JsonProperty("changed_fields") List<Field> changedFields,
         File file,
-        List<Relation> relations) {
+        List<Relation> relations,
+        @JsonProperty("wrapped_key") String wrappedKey) {
 
     /** 이 이벤트를 낸 동작. 상태(휴지통 여부)는 이것이 아니라 {@code file.state} 가 말한다. */
     public enum ChangeType {
@@ -47,7 +48,7 @@ public record FileChanged(
             @JsonProperty("episode_id") UUID episodeId,
             State state,
             @JsonProperty("revision_no") long revisionNo,
-            @JsonProperty("body_text") String bodyText,
+            @JsonProperty("body_text_enc") String bodyTextEnc,
             List<Property> properties) {
     }
 

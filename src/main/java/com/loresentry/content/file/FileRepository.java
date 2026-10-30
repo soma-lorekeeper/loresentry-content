@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -38,8 +41,11 @@ public class FileRepository {
 
     private final JdbcClient jdbcClient;
 
-    public FileRepository(JdbcClient jdbcClient) {
+    private final Manuscripts manuscripts;
+
+    public FileRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     List<FileRows.BaseFolder> baseFolders() {
@@ -172,13 +178,16 @@ public class FileRepository {
     }
 
     FileRows.Document insertDocument(UUID projectId, short folderId, UUID episodeId, String title, String rank) {
-        UUID id = jdbcClient
+        UUID id = jdbcClient.sql("select uuidv7()").query(UUID.class).single();
+        jdbcClient
                 .sql("""
                         insert into document
-                            (project_id, folder_id, episode_id, title, rank, body_json)
-                        values (:project, :folder, :episode, :title, :rank, :body::jsonb)
-                        returning id
+                            (id, project_id, folder_id, episode_id, title, rank, body_json, body_json_enc,
+                             body_text_enc, body_text_mac, body_text_length)
+                        values (:id, :project, :folder, :episode, :title, :rank, :body::jsonb, :bodyEnc,
+                                :textEnc, :textMac, 0)
                         """)
+                .param("id", id)
                 .param("project", projectId)
                 .param("folder", folderId)
                 .param("episode", episodeId)
@@ -186,8 +195,10 @@ public class FileRepository {
                 .param("rank", rank)
                 // 새 문서는 처음부터 JSON 본문을 갖는다. 비워 두면 변환 전 레거시 행처럼 보인다.
                 .param("body", EMPTY_BODY)
-                .query(UUID.class)
-                .single();
+                .param("bodyEnc", manuscripts.seal(projectId, id, Purpose.BODY_JSON, EMPTY_BODY))
+                .param("textEnc", manuscripts.seal(projectId, id, Purpose.BODY_TEXT, ""))
+                .param("textMac", manuscripts.mac(projectId, ""))
+                .update();
         return requireDocument(id);
     }
 

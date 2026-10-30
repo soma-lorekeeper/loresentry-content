@@ -9,6 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.loresentry.content.document.BodyText;
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -19,10 +21,13 @@ class ChatRepository {
 
     private final JdbcClient jdbcClient;
 
+    private final Manuscripts manuscripts;
+
     private final JsonMapper json = JsonMapper.builder().build();
 
-    ChatRepository(JdbcClient jdbcClient) {
+    ChatRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     boolean projectExists(UUID ownerUserId, UUID projectId) {
@@ -49,7 +54,7 @@ class ChatRepository {
             Map<UUID, List<ChatResponses.Property>> properties) {
         return jdbcClient
                 .sql("""
-                        select d.id, d.title, e.name as episode_name, d.revision_no, d.body_text,
+                        select d.id, d.title, e.name as episode_name, d.revision_no, d.body_text_enc,
                                d.updated_at
                         from document d
                         left join episode_folders e on e.id = d.episode_id
@@ -66,7 +71,7 @@ class ChatRepository {
                             rows.getString("episode_name"),
                             properties.getOrDefault(id, List.of()),
                             rows.getLong("revision_no"),
-                            rows.getString("body_text"),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
                             rows.getObject("updated_at", OffsetDateTime.class));
                 })
                 .list();
@@ -76,7 +81,7 @@ class ChatRepository {
             Map<UUID, List<ChatResponses.Property>> properties) {
         return jdbcClient
                 .sql("""
-                        select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text,
+                        select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text_enc,
                                d.updated_at
                         from document d
                         join base_folders f on f.id = d.folder_id
@@ -92,7 +97,7 @@ class ChatRepository {
                             rows.getString("title"),
                             properties.getOrDefault(id, List.of()),
                             rows.getLong("revision_no"),
-                            rows.getString("body_text"),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
                             rows.getObject("updated_at", OffsetDateTime.class));
                 })
                 .list();
@@ -167,7 +172,7 @@ class ChatRepository {
         return jdbcClient
                 .sql("""
                         select d.id, d.title, e.name as episode_name, d.revision_no,
-                               char_length(d.title) + char_length(d.body_text) as base_chars, d.updated_at
+                               char_length(d.title) + d.body_text_length as base_chars, d.updated_at
                         from document d
                         left join episode_folders e on e.id = d.episode_id
                         where d.project_id = :project and d.folder_id = 4 and d.trashed_at is null
@@ -195,7 +200,7 @@ class ChatRepository {
         return jdbcClient
                 .sql("""
                         select d.id, f.code as folder_code, d.title, d.revision_no,
-                               char_length(d.title) + char_length(d.body_text) as base_chars, d.updated_at
+                               char_length(d.title) + d.body_text_length as base_chars, d.updated_at
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.project_id = :project and d.folder_id <> 4 and d.trashed_at is null
@@ -250,7 +255,7 @@ class ChatRepository {
         return jdbcClient
                 .sql("""
                         select * from (
-                            select d.id, d.title, e.name as episode_name, d.revision_no, d.body_text,
+                            select d.id, d.title, e.name as episode_name, d.revision_no, d.body_text_enc,
                                    d.updated_at,
                                    row_number() over (order by (e.id is null), e.rank, e.id, d.rank, d.id)
                                        as ordinal
@@ -272,7 +277,7 @@ class ChatRepository {
                             rows.getString("episode_name"),
                             properties.getOrDefault(id, List.of()),
                             rows.getLong("revision_no"),
-                            rows.getString("body_text"),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
                             rows.getObject("updated_at", OffsetDateTime.class));
                 })
                 .list();
@@ -285,8 +290,8 @@ class ChatRepository {
         }
         return jdbcClient
                 .sql("""
-                        select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text,
-                               d.body_json, d.updated_at
+                        select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text_enc,
+                               d.body_json_enc, d.updated_at
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.project_id = :project and d.folder_id <> 4 and d.trashed_at is null
@@ -303,8 +308,8 @@ class ChatRepository {
                             rows.getString("title"),
                             properties.getOrDefault(id, List.of()),
                             rows.getLong("revision_no"),
-                            rows.getString("body_text"),
-                            coreFacts(rows.getString("body_json")),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
+                            coreFacts(manuscripts.open(projectId, id, Purpose.BODY_JSON, rows.getBytes("body_json_enc"))),
                             rows.getObject("updated_at", OffsetDateTime.class));
                 })
                 .list();
@@ -354,7 +359,7 @@ class ChatRepository {
         return jdbcClient
                 .sql("""
                         select
-                            (select coalesce(sum(char_length(d.title) + char_length(d.body_text)), 0)
+                            (select coalesce(sum(char_length(d.title) + d.body_text_length), 0)
                              from document d
                              where d.project_id = :project and d.trashed_at is null)
                           + (select coalesce(sum(char_length(p.text_value)), 0)

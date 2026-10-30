@@ -109,8 +109,8 @@ public abstract class KafkaTestSupport extends ApiTestSupport {
      * broker 가 한 대뿐이라 replica 는 1 이다.
      */
     private static List<NewTopic> topics() {
-        NewTopic contentProjectChangedV1 = new NewTopic("content.project.changed.v1", 6, (short) 1)
-                .configs(Map.of("max.message.bytes", "4194304"));
+        NewTopic contentProjectChangedV2 = new NewTopic("content.project.changed.v2", 6, (short) 1)
+                .configs(Map.of("max.message.bytes", "6291456"));
         NewTopic contentGraphRefreshRequestedV1 = new NewTopic("content.graph-refresh.requested.v1", 3, (short) 1);
         NewTopic graphRagGraphRefreshCompletedV1 = new NewTopic("graph-rag.graph-refresh.completed.v1", 3, (short) 1);
         NewTopic authUserDeletedV1 = new NewTopic("auth.user.deleted.v1", 3, (short) 1);
@@ -118,7 +118,7 @@ public abstract class KafkaTestSupport extends ApiTestSupport {
                 new NewTopic("graph-rag.graph-refresh.completed.v1.content.dlq", 3, (short) 1);
         NewTopic authUserDeletedV1ContentDlq = new NewTopic("auth.user.deleted.v1.content.dlq", 3, (short) 1);
 
-        return List.of(contentProjectChangedV1,
+        return List.of(contentProjectChangedV2,
                 contentGraphRefreshRequestedV1,
                 graphRagGraphRefreshCompletedV1,
                 authUserDeletedV1,
