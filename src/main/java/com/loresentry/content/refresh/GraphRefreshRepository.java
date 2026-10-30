@@ -9,6 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.loresentry.content.event.GraphRefreshRequested;
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -19,8 +21,11 @@ public class GraphRefreshRepository {
 
     private final JdbcClient jdbcClient;
 
-    GraphRefreshRepository(JdbcClient jdbcClient) {
+    private final Manuscripts manuscripts;
+
+    GraphRefreshRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     /** 휴지통에 있는 프로젝트는 최신화하지 않는다. 남의 프로젝트와 같이 없는 것으로 답한다. */
@@ -204,12 +209,16 @@ public class GraphRefreshRepository {
      * @param json 결과 파일 그대로. jsonb 는 바이트를 정규화하므로 원본 해시를 따로 남긴다
      */
     public void storeResult(UUID runId, String json, String sha256, String bucket, String key) {
+        UUID projectId = jdbcClient.sql("select project_id from refresh_runs where id = :id")
+                .param("id", runId).query(UUID.class).single();
         jdbcClient.sql("""
-                        insert into refresh_results (refresh_run_id, payload, sha256, result_bucket, result_key)
-                        values (:run, :payload::jsonb, :sha256, :bucket, :key)
+                        insert into refresh_results
+                            (refresh_run_id, payload, payload_enc, sha256, result_bucket, result_key)
+                        values (:run, :payload::jsonb, :payloadEnc, :sha256, :bucket, :key)
                         on conflict (refresh_run_id) do nothing
                         """)
                 .param("run", runId).param("payload", json).param("sha256", sha256)
+                .param("payloadEnc", manuscripts.seal(projectId, runId, Purpose.REFRESH_RESULT, json))
                 .param("bucket", bucket).param("key", key)
                 .update();
     }

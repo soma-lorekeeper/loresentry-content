@@ -8,6 +8,7 @@ import com.loresentry.content.event.FileChanged.File;
 import com.loresentry.content.event.FileChanged.Property;
 import com.loresentry.content.event.FileChanged.Relation;
 import com.loresentry.content.event.FileChanged.State;
+import com.loresentry.content.manuscript.Manuscripts;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -43,7 +44,7 @@ class ProjectChangedRepository {
         return jdbcClient
                 .sql("""
                         select d.title, f.code as folder_code, d.episode_id,
-                               d.trashed_at is not null as trashed, d.revision_no, d.body_text
+                               d.trashed_at is not null as trashed, d.revision_no, d.body_text_enc
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.id = :id
@@ -55,7 +56,7 @@ class ProjectChangedRepository {
                         rows.getObject("episode_id", UUID.class),
                         rows.getBoolean("trashed") ? State.TRASHED : State.ACTIVE,
                         rows.getLong("revision_no"),
-                        rows.getString("body_text"),
+                        Manuscripts.base64(rows.getBytes("body_text_enc")),
                         properties))
                 .optional();
     }

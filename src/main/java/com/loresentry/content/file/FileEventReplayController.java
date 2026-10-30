@@ -29,8 +29,9 @@ class FileEventReplayController {
 
     @PostMapping("/internal/admin/file-events/replay")
     public ResponseEntity<Result> replay(@RequestParam(required = false) UUID after,
-            @RequestParam(defaultValue = "20") int limit) {
-        List<UUID> projects = replay.projectsAfter(after, Math.clamp(limit, 1, MAX_PROJECTS));
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(name = "include_trashed", defaultValue = "false") boolean includeTrashed) {
+        List<UUID> projects = replay.projectsAfter(after, Math.clamp(limit, 1, MAX_PROJECTS), includeTrashed);
         int documents = 0;
         for (UUID project : projects) {
             documents += replay.replay(project);

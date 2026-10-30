@@ -2,6 +2,8 @@ package com.loresentry.content.support;
 
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.web.CurrentUserArgumentResolver;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +54,9 @@ public abstract class ApiTestSupport {
     @Autowired
     protected JdbcClient jdbcClient;
 
+    @Autowired
+    protected Manuscripts manuscripts;
+
     protected final JsonMapper json = JsonMapper.builder().build();
 
     protected final UUID owner = UUID.randomUUID();
@@ -74,6 +79,17 @@ public abstract class ApiTestSupport {
 
     protected MockHttpServletRequestBuilder body(MockHttpServletRequestBuilder request, String payload) {
         return request.contentType(MediaType.APPLICATION_JSON).content(payload);
+    }
+
+    protected void makeLegacyMarkdown(UUID fileId, String markdown) {
+        UUID projectId = jdbcClient.sql("select project_id from document where id = :id")
+                .param("id", fileId).query(UUID.class).single();
+        jdbcClient.sql("update document set body_json = null, body_md = :md, body_json_enc = null, "
+                        + "body_md_enc = :mdEnc where id = :id")
+                .param("md", markdown)
+                .param("mdEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_MD, markdown))
+                .param("id", fileId)
+                .update();
     }
 
     protected JsonNode read(MvcResult result) throws Exception {

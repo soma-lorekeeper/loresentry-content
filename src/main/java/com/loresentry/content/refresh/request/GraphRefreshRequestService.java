@@ -85,7 +85,7 @@ public class GraphRefreshRequestService {
         } catch (DuplicateKeyException running) {
             throw new ContentFailure(ContentFailure.Reason.REFRESH_IN_PROGRESS);
         }
-        PreparedInput input = messages.input(projectId, changed);
+        PreparedInput input = messages.input(projectId, requestId, changed);
         repository.insertRunFiles(requestId, input.files());
         captureAndLock(projectId, requestId, input.files());
         RefreshInputStorage.Location location = storage.put(projectId, requestId, input.json());

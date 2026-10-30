@@ -354,8 +354,7 @@ class ChatApiTest extends ApiTestSupport {
                         Map.of("type", "paragraph", "attrs", Map.of("core", true),
                                 "content", List.of(text("서윤은 천천히 문을 밀었다.")))),
                 List.of(), Map.of());
-        jdbcClient.sql("update document set body_json = null, body_md = :md where id = :id")
-                .param("md", "옛 본문").param("id", legacy).update();
+        makeLegacyMarkdown(legacy, "옛 본문");
 
         JsonNode documents = read(mockMvc.perform(as(body(post(documentsPath()), json.writeValueAsString(Map.of(
                         "document_ids", List.of(chapter.toString(), greenhouse.toString(), harin.toString(),

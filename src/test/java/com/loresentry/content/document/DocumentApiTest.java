@@ -363,8 +363,7 @@ class DocumentApiTest extends ApiTestSupport {
     @Test
     void readsALegacyMarkdownRowAsLegacyBody() throws Exception {
         // 변환 전 행이 남아 있다. 서버는 Markdown 을 해석하지 않고 그대로 넘기고, 프론트가 바꾼다.
-        jdbcClient.sql("update document set body_json = null, body_md = :md where id = :id")
-                .param("md", "# 옛 본문").param("id", character).update();
+        makeLegacyMarkdown(character, "# 옛 본문");
 
         mockMvc.perform(as(get("/files/" + character + "/content")))
                 .andExpect(status().isOk())

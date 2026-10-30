@@ -19,7 +19,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
  */
 final class OutboxMessages {
 
-    static final String PROJECT_CHANGED = "content.project.changed.v1";
+    static final String PROJECT_CHANGED = "content.project.changed.v2";
 
     static final String GRAPH_REFRESH_REQUESTED = "content.graph-refresh.requested.v1";
 

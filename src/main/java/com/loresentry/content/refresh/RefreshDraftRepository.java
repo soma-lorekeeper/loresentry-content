@@ -10,6 +10,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.json.JsonMapper;
@@ -30,10 +33,13 @@ public class RefreshDraftRepository {
 
     private final JdbcClient jdbcClient;
 
+    private final Manuscripts manuscripts;
+
     private final JsonMapper json = JsonMapper.builder().build();
 
-    RefreshDraftRepository(JdbcClient jdbcClient) {
+    RefreshDraftRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     /**
@@ -41,15 +47,20 @@ public class RefreshDraftRepository {
      * right 는 결과가 와야 생긴다.
      */
     public void insertBaseDraft(UUID runId, UUID documentId, UUID baseVersionId, long revisionNo, DraftSnapshot left) {
+        UUID projectId = projectOfRun(runId);
+        UUID id = newId();
         String leftJson = json.writeValueAsString(left);
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
-                            (refresh_run_id, kind, target_document_id, base_version_id, left_source_revision_no,
-                             left_snapshot, origin_snapshot, status)
-                        values (:run, 'EDIT', :document, :base, :revision, :left::jsonb, :left::jsonb,
-                                'BASE_CAPTURED')
+                            (id, refresh_run_id, kind, target_document_id, base_version_id, left_source_revision_no,
+                             left_snapshot, origin_snapshot, left_snapshot_enc, origin_snapshot_enc, status)
+                        values (:id, :run, 'EDIT', :document, :base, :revision, :left::jsonb, :left::jsonb,
+                                :leftEnc, :originEnc, 'BASE_CAPTURED')
                         """)
+                .param("id", id)
+                .param("leftEnc", seal(projectId, id, Purpose.DRAFT_LEFT, leftJson))
+                .param("originEnc", seal(projectId, id, Purpose.DRAFT_ORIGIN, leftJson))
                 .param("run", runId)
                 .param("document", documentId)
                 .param("base", baseVersionId)
@@ -67,31 +78,44 @@ public class RefreshDraftRepository {
         Map<UUID, BaseDraft> drafts = new LinkedHashMap<>();
         jdbcClient
                 .sql("""
-                        select id, target_document_id, base_version_id, left_source_revision_no, left_snapshot::text
-                        from refresh_document_drafts
-                        where refresh_run_id = :run and status = 'BASE_CAPTURED'
-                        order by target_document_id
+                        select r.id, run.project_id, r.target_document_id, r.base_version_id, r.left_source_revision_no,
+                               r.left_snapshot_enc
+                        from refresh_document_drafts r join refresh_runs run on run.id = r.refresh_run_id
+                        where r.refresh_run_id = :run and r.status = 'BASE_CAPTURED'
+                        order by r.target_document_id
                         """)
                 .param("run", runId)
                 .query(rows -> {
                     UUID target = rows.getObject("target_document_id", UUID.class);
-                    drafts.put(target, new BaseDraft(rows.getObject("id", UUID.class), target,
+                    UUID id = rows.getObject("id", UUID.class);
+                    drafts.put(target, new BaseDraft(id, target,
                             rows.getObject("base_version_id", UUID.class), rows.getLong("left_source_revision_no"),
-                            json.readValue(rows.getString("left_snapshot"), DraftSnapshot.class)));
+                            snapshot(rows.getObject("project_id", UUID.class), id, Purpose.DRAFT_LEFT,
+                                    rows.getBytes("left_snapshot_enc"))));
                 });
         return drafts;
     }
 
     /** 요청 때 만든 작업본에 제안(right)을 채워 검토를 연다. */
     public void open(UUID draftId, DraftSnapshot right, boolean baseMismatch) {
+        UUID projectId = projectOfDraft(draftId);
+        DraftSnapshot left = jdbcClient
+                .sql("select left_snapshot_enc from refresh_document_drafts where id = :id")
+                .param("id", draftId)
+                .query((rows, index) -> snapshot(projectId, draftId, Purpose.DRAFT_LEFT,
+                        rows.getBytes("left_snapshot_enc")))
+                .single();
+        String rightJson = json.writeValueAsString(right);
         jdbcClient
                 .sql("""
                         update refresh_document_drafts
-                        set status = 'OPEN', right_snapshot = :right::jsonb, base_mismatch = :mismatch,
-                            updated_at = now()
+                        set status = 'OPEN', right_snapshot = :right::jsonb, right_snapshot_enc = :rightEnc,
+                            is_matched = :matched, base_mismatch = :mismatch, updated_at = now()
                         where id = :id
                         """)
-                .param("right", json.writeValueAsString(right))
+                .param("right", rightJson)
+                .param("rightEnc", seal(projectId, draftId, Purpose.DRAFT_RIGHT, rightJson))
+                .param("matched", same(left, right))
                 .param("mismatch", baseMismatch)
                 .param("id", draftId)
                 .update();
@@ -104,36 +128,51 @@ public class RefreshDraftRepository {
      */
     public void insertOpenEdit(UUID runId, UUID documentId, long leftRevisionNo, DraftSnapshot left, DraftSnapshot right,
             boolean baseMismatch) {
+        UUID projectId = projectOfRun(runId);
+        UUID id = newId();
         String leftJson = json.writeValueAsString(left);
+        String rightJson = json.writeValueAsString(right);
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
-                            (refresh_run_id, kind, target_document_id, left_source_revision_no, left_snapshot,
-                             origin_snapshot, right_snapshot, base_mismatch, status)
-                        values (:run, 'EDIT', :document, :revision, :left::jsonb, :left::jsonb, :right::jsonb,
-                                :mismatch, 'OPEN')
+                            (id, refresh_run_id, kind, target_document_id, left_source_revision_no, left_snapshot,
+                             origin_snapshot, right_snapshot, left_snapshot_enc, origin_snapshot_enc,
+                             right_snapshot_enc, is_matched, base_mismatch, status)
+                        values (:id, :run, 'EDIT', :document, :revision, :left::jsonb, :left::jsonb, :right::jsonb,
+                                :leftEnc, :originEnc, :rightEnc, :matched, :mismatch, 'OPEN')
                         """)
+                .param("id", id)
                 .param("run", runId)
                 .param("document", documentId)
                 .param("revision", leftRevisionNo)
                 .param("left", leftJson)
-                .param("right", json.writeValueAsString(right))
+                .param("right", rightJson)
+                .param("leftEnc", seal(projectId, id, Purpose.DRAFT_LEFT, leftJson))
+                .param("originEnc", seal(projectId, id, Purpose.DRAFT_ORIGIN, leftJson))
+                .param("rightEnc", seal(projectId, id, Purpose.DRAFT_RIGHT, rightJson))
+                .param("matched", same(left, right))
                 .param("mismatch", baseMismatch)
                 .update();
     }
 
     /** 새 설정 문서 제안의 작업본. 아직 문서가 없으므로 left 는 비어 있다. 사용자가 받아들이면 left 를 right 와 같게 한다. */
     public void insertNew(UUID runId, String candidateId, String folderCode, DraftSnapshot right) {
+        UUID projectId = projectOfRun(runId);
+        UUID id = newId();
+        String rightJson = json.writeValueAsString(right);
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
-                            (refresh_run_id, kind, candidate_id, folder_code, right_snapshot, status)
-                        values (:run, 'NEW', :candidate, :folder, :right::jsonb, 'OPEN')
+                            (id, refresh_run_id, kind, candidate_id, folder_code, right_snapshot, right_snapshot_enc,
+                             status)
+                        values (:id, :run, 'NEW', :candidate, :folder, :right::jsonb, :rightEnc, 'OPEN')
                         """)
+                .param("id", id)
                 .param("run", runId)
                 .param("candidate", candidateId)
                 .param("folder", folderCode)
-                .param("right", json.writeValueAsString(right))
+                .param("right", rightJson)
+                .param("rightEnc", seal(projectId, id, Purpose.DRAFT_RIGHT, rightJson))
                 .update();
     }
 
@@ -164,7 +203,7 @@ public class RefreshDraftRepository {
         return jdbcClient
                 .sql("""
                         select count(*) as total,
-                               count(*) filter (where matched) as matched,
+                               count(*) filter (where is_matched) as matched,
                                count(*) filter (where kind = 'NEW') as created
                         from refresh_document_drafts
                         where refresh_run_id = :run and status = 'OPEN'
@@ -189,12 +228,13 @@ public class RefreshDraftRepository {
     public List<OpenDraft> openDrafts(UUID runId) {
         return jdbcClient
                 .sql("""
-                        select r.id, r.kind, r.draft_revision, r.matched, r.updated_at, r.target_document_id,
-                               d.title as document_title, f.code as document_folder, d.revision_no as document_revision,
-                               r.candidate_id, r.folder_code, r.base_version_id, v.source_revision_no as base_revision,
-                               r.base_mismatch, r.left_source_revision_no, r.left_snapshot::text as left_json,
-                               r.right_snapshot::text as right_json
+                        select r.id, run.project_id, r.kind, r.draft_revision, r.is_matched as matched, r.updated_at,
+                               r.target_document_id, d.title as document_title, f.code as document_folder,
+                               d.revision_no as document_revision, r.candidate_id, r.folder_code, r.base_version_id,
+                               v.source_revision_no as base_revision, r.base_mismatch, r.left_source_revision_no,
+                               r.left_snapshot_enc, r.right_snapshot_enc
                         from refresh_document_drafts r
+                        join refresh_runs run on run.id = r.refresh_run_id
                         left join document d on d.id = r.target_document_id
                         left join base_folders f on f.id = d.folder_id
                         left join document_versions v on v.id = r.base_version_id
@@ -210,7 +250,8 @@ public class RefreshDraftRepository {
                         rows.getString("candidate_id"), rows.getString("folder_code"),
                         rows.getObject("base_version_id", UUID.class), rows.getObject("base_revision", Long.class),
                         rows.getBoolean("base_mismatch"), rows.getObject("left_source_revision_no", Long.class),
-                        snapshotOrNull(rows.getString("left_json")), snapshotOrNull(rows.getString("right_json"))))
+                        side(rows, Purpose.DRAFT_LEFT, "left_snapshot_enc"),
+                        side(rows, Purpose.DRAFT_RIGHT, "right_snapshot_enc")))
                 .list();
     }
 
@@ -223,18 +264,19 @@ public class RefreshDraftRepository {
     public List<ConfirmDraft> openForConfirm(UUID runId) {
         return jdbcClient
                 .sql("""
-                        select id, kind, target_document_id, candidate_id, folder_code, left_source_revision_no,
-                               origin_snapshot::text as origin_json, right_snapshot::text as right_json, matched
-                        from refresh_document_drafts
-                        where refresh_run_id = :run and status = 'OPEN'
-                        order by kind, target_document_id, candidate_id
+                        select r.id, run.project_id, r.kind, r.target_document_id, r.candidate_id, r.folder_code,
+                               r.left_source_revision_no, r.origin_snapshot_enc, r.right_snapshot_enc,
+                               r.is_matched as matched
+                        from refresh_document_drafts r join refresh_runs run on run.id = r.refresh_run_id
+                        where r.refresh_run_id = :run and r.status = 'OPEN'
+                        order by r.kind, r.target_document_id, r.candidate_id
                         """)
                 .param("run", runId)
                 .query((rows, index) -> new ConfirmDraft(rows.getObject("id", UUID.class), rows.getString("kind"),
                         rows.getObject("target_document_id", UUID.class), rows.getString("candidate_id"),
                         rows.getString("folder_code"), rows.getObject("left_source_revision_no", Long.class),
-                        snapshotOrNull(rows.getString("origin_json")), snapshotOrNull(rows.getString("right_json")),
-                        rows.getBoolean("matched")))
+                        side(rows, Purpose.DRAFT_ORIGIN, "origin_snapshot_enc"),
+                        side(rows, Purpose.DRAFT_RIGHT, "right_snapshot_enc"), rows.getBoolean("matched")))
                 .list();
     }
 
@@ -277,19 +319,38 @@ public class RefreshDraftRepository {
      * (설계 §7.5). 저장하면 번호가 하나 오르고, matched 는 DB 가 다시 계산한다.
      */
     public Optional<Current> save(UUID draftId, long expectedRevision, DraftSnapshot left, DraftSnapshot right) {
+        Optional<UUID> project = jdbcClient.sql("""
+                        select run.project_id from refresh_document_drafts r
+                        join refresh_runs run on run.id = r.refresh_run_id
+                        where r.id = :id
+                        """)
+                .param("id", draftId)
+                .query(UUID.class)
+                .optional();
+        if (project.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID projectId = project.get();
+        String leftJson = left == null ? null : json.writeValueAsString(left);
+        String rightJson = right == null ? null : json.writeValueAsString(right);
         return jdbcClient
                 .sql("""
-                        update refresh_document_drafts
+                        update refresh_document_drafts r
                         set left_snapshot = :left::jsonb, right_snapshot = :right::jsonb,
+                            left_snapshot_enc = :leftEnc, right_snapshot_enc = :rightEnc, is_matched = :matched,
                             draft_revision = draft_revision + 1, updated_at = now()
-                        where id = :id and draft_revision = :expected
-                        returning draft_revision, matched, updated_at, left_snapshot::text as left_json,
-                                  right_snapshot::text as right_json
+                        from refresh_runs run
+                        where r.id = :id and r.draft_revision = :expected and run.id = r.refresh_run_id
+                        returning r.id, run.project_id, r.draft_revision, r.is_matched as matched, r.updated_at,
+                                  r.left_snapshot_enc, r.right_snapshot_enc
                         """)
                 .param("id", draftId)
                 .param("expected", expectedRevision)
-                .param("left", left == null ? null : json.writeValueAsString(left))
-                .param("right", right == null ? null : json.writeValueAsString(right))
+                .param("left", leftJson)
+                .param("right", rightJson)
+                .param("leftEnc", seal(projectId, draftId, Purpose.DRAFT_LEFT, leftJson))
+                .param("rightEnc", seal(projectId, draftId, Purpose.DRAFT_RIGHT, rightJson))
+                .param("matched", same(left, right))
                 .query(this::mapCurrent)
                 .optional();
     }
@@ -297,9 +358,10 @@ public class RefreshDraftRepository {
     public Current current(UUID draftId) {
         return jdbcClient
                 .sql("""
-                        select draft_revision, matched, updated_at, left_snapshot::text as left_json,
-                               right_snapshot::text as right_json
-                        from refresh_document_drafts where id = :id
+                        select r.id, run.project_id, r.draft_revision, r.is_matched as matched, r.updated_at,
+                               r.left_snapshot_enc, r.right_snapshot_enc
+                        from refresh_document_drafts r join refresh_runs run on run.id = r.refresh_run_id
+                        where r.id = :id
                         """)
                 .param("id", draftId)
                 .query(this::mapCurrent)
@@ -308,12 +370,49 @@ public class RefreshDraftRepository {
 
     private Current mapCurrent(ResultSet rows, int index) throws SQLException {
         return new Current(rows.getLong("draft_revision"), rows.getBoolean("matched"),
-                rows.getObject("updated_at", OffsetDateTime.class), snapshotOrNull(rows.getString("left_json")),
-                snapshotOrNull(rows.getString("right_json")));
+                rows.getObject("updated_at", OffsetDateTime.class), side(rows, Purpose.DRAFT_LEFT, "left_snapshot_enc"),
+                side(rows, Purpose.DRAFT_RIGHT, "right_snapshot_enc"));
     }
 
-    private DraftSnapshot snapshotOrNull(String text) {
+    private DraftSnapshot side(ResultSet rows, Purpose purpose, String column) throws SQLException {
+        return snapshot(rows.getObject("project_id", UUID.class), rows.getObject("id", UUID.class), purpose,
+                rows.getBytes(column));
+    }
+
+    private DraftSnapshot snapshot(UUID projectId, UUID draftId, Purpose purpose, byte[] envelope) {
+        String text = manuscripts.open(projectId, draftId, purpose, envelope);
         return text == null ? null : json.readValue(text, DraftSnapshot.class);
+    }
+
+    private byte[] seal(UUID projectId, UUID draftId, Purpose purpose, String text) {
+        return manuscripts.seal(projectId, draftId, purpose, text);
+    }
+
+    private boolean same(DraftSnapshot left, DraftSnapshot right) {
+        return Objects.equals(left == null ? null : json.valueToTree(left),
+                right == null ? null : json.valueToTree(right));
+    }
+
+    private UUID newId() {
+        return jdbcClient.sql("select uuidv7()").query(UUID.class).single();
+    }
+
+    private UUID projectOfRun(UUID runId) {
+        return jdbcClient.sql("select project_id from refresh_runs where id = :id")
+                .param("id", runId)
+                .query(UUID.class)
+                .single();
+    }
+
+    private UUID projectOfDraft(UUID draftId) {
+        return jdbcClient.sql("""
+                        select run.project_id from refresh_document_drafts r
+                        join refresh_runs run on run.id = r.refresh_run_id
+                        where r.id = :id
+                        """)
+                .param("id", draftId)
+                .query(UUID.class)
+                .single();
     }
 
     /** 기준 버전이 없는 작업본(이웃 문서·새 문서)은 null 을 돌려주므로 뺀다. */

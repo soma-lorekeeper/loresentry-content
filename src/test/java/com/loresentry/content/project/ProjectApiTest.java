@@ -229,8 +229,9 @@ class ProjectApiTest extends ApiTestSupport {
                         + "values (:project, :user, '1부', 'a0') returning id")
                 .param("project", project).param("user", owner)
                 .query(UUID.class).single();
-        jdbcClient.sql("insert into document (project_id, folder_id, episode_id, title, rank) "
-                        + "values (:project, 4, :episode, '1화', 'a0')")
+        jdbcClient.sql("insert into document (project_id, folder_id, episode_id, title, rank, body_json_enc, "
+                        + "body_text_enc, body_text_mac, body_text_length) "
+                        + "values (:project, 4, :episode, '1화', 'a0', '\\x01', '\\x01', '\\x00', 0)")
                 .param("project", project).param("episode", episode)
                 .update();
 
