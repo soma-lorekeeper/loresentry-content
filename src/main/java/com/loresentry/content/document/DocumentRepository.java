@@ -12,6 +12,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Manuscripts;
+import com.loresentry.content.manuscript.Purpose;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
@@ -22,10 +25,13 @@ public class DocumentRepository {
 
     private final JdbcClient jdbcClient;
 
+    private final Manuscripts manuscripts;
+
     private final JsonMapper json = JsonMapper.builder().build();
 
-    public DocumentRepository(JdbcClient jdbcClient) {
+    public DocumentRepository(JdbcClient jdbcClient, Manuscripts manuscripts) {
         this.jdbcClient = jdbcClient;
+        this.manuscripts = manuscripts;
     }
 
     Optional<DocumentResponses.Content> find(UUID ownerUserId, UUID fileId) {
@@ -60,7 +66,7 @@ public class DocumentRepository {
         return jdbcClient
                 .sql("""
                         select d.id, d.project_id, d.title, f.code as folder_code, d.episode_id,
-                               d.body_json, d.body_md,
+                               d.body_json_enc, d.body_md_enc,
                                (d.locked or d.refresh_lock_run_id is not null) as locked,
                                d.refresh_lock_run_id is not null as refresh_locked,
                                d.char_count, d.revision_no, d.updated_at,
@@ -72,21 +78,28 @@ public class DocumentRepository {
                         """)
                 .param("id", fileId)
                 .param("owner", ownerUserId)
-                .query((rows, index) -> new Header(
-                        rows.getObject("id", UUID.class),
-                        rows.getObject("project_id", UUID.class),
-                        rows.getString("title"),
-                        rows.getString("folder_code"),
-                        rows.getObject("episode_id", UUID.class),
-                        readBody(rows.getString("body_json")),
-                        rows.getString("body_json") == null ? rows.getString("body_md") : null,
-                        rows.getBoolean("locked"),
-                        rows.getBoolean("refresh_locked"),
-                        rows.getInt("char_count"),
-                        rows.getLong("revision_no"),
-                        rows.getObject("updated_at", OffsetDateTime.class),
-                        rows.getObject("trashed_at", OffsetDateTime.class),
-                        rows.getObject("last_save_id", UUID.class)))
+                .query((rows, index) -> {
+                    UUID id = rows.getObject("id", UUID.class);
+                    UUID projectId = rows.getObject("project_id", UUID.class);
+                    String bodyJson = manuscripts.open(projectId, id, Purpose.BODY_JSON, rows.getBytes("body_json_enc"));
+                    return new Header(
+                            id,
+                            projectId,
+                            rows.getString("title"),
+                            rows.getString("folder_code"),
+                            rows.getObject("episode_id", UUID.class),
+                            readBody(bodyJson),
+                            bodyJson == null
+                                    ? manuscripts.open(projectId, id, Purpose.BODY_MD, rows.getBytes("body_md_enc"))
+                                    : null,
+                            rows.getBoolean("locked"),
+                            rows.getBoolean("refresh_locked"),
+                            rows.getInt("char_count"),
+                            rows.getLong("revision_no"),
+                            rows.getObject("updated_at", OffsetDateTime.class),
+                            rows.getObject("trashed_at", OffsetDateTime.class),
+                            rows.getObject("last_save_id", UUID.class));
+                })
                 .optional();
     }
 
@@ -157,8 +170,7 @@ public class DocumentRepository {
 
         return jdbcClient
                 .sql("""
-                        select d.id, d.revision_no, f.code as folder_code, d.title,
-                               coalesce(d.body_text, '') as body_text
+                        select d.id, d.revision_no, f.code as folder_code, d.title, d.body_text_enc
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.project_id = :project and d.id in (:ids) and d.trashed_at is null
@@ -169,7 +181,8 @@ public class DocumentRepository {
                 .query((rows, index) -> {
                     UUID id = rows.getObject("id", UUID.class);
                     return new DocumentResponses.ContentItem(id, rows.getLong("revision_no"),
-                            rows.getString("folder_code"), rows.getString("title"), rows.getString("body_text"),
+                            rows.getString("folder_code"), rows.getString("title"),
+                            manuscripts.open(projectId, id, Purpose.BODY_TEXT, rows.getBytes("body_text_enc")),
                             properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
                 })
                 .list();
@@ -235,7 +248,7 @@ public class DocumentRepository {
         Map<UUID, List<DocumentSnapshot.Relation>> relations = relationsOf(ids);
         return jdbcClient
                 .sql("""
-                        select d.id, f.code as folder_code, d.revision_no, d.title, d.body_json, d.body_md,
+                        select d.id, f.code as folder_code, d.revision_no, d.title, d.body_json_enc, d.body_md_enc,
                                d.locked, d.refresh_lock_run_id, d.trashed_at
                         from document d
                         join base_folders f on f.id = d.folder_id
@@ -246,9 +259,11 @@ public class DocumentRepository {
                 .param("ids", ids)
                 .query((rows, index) -> {
                     UUID id = rows.getObject("id", UUID.class);
-                    String bodyJson = rows.getString("body_json");
+                    String bodyJson = manuscripts.open(projectId, id, Purpose.BODY_JSON, rows.getBytes("body_json_enc"));
                     DocumentSnapshot snapshot = new DocumentSnapshot(rows.getString("title"), readBody(bodyJson),
-                            bodyJson == null ? rows.getString("body_md") : null,
+                            bodyJson == null
+                                    ? manuscripts.open(projectId, id, Purpose.BODY_MD, rows.getBytes("body_md_enc"))
+                                    : null,
                             properties.getOrDefault(id, List.of()), relations.getOrDefault(id, List.of()));
                     return new LiveRow(id, rows.getString("folder_code"), rows.getLong("revision_no"),
                             rows.getBoolean("locked"), rows.getObject("refresh_lock_run_id", UUID.class),
@@ -337,11 +352,14 @@ public class DocumentRepository {
             return snapshots;
         }
         jdbcClient
-                .sql("select id, snapshot from document_versions where id in (:ids) and kind = 'REFRESH_BASE'")
+                .sql("""
+                        select v.id, v.document_id, d.project_id, v.snapshot_enc
+                        from document_versions v join document d on d.id = v.document_id
+                        where v.id in (:ids) and v.kind = 'REFRESH_BASE'
+                        """)
                 .param("ids", versionIds)
                 .query(rows -> {
-                    snapshots.put(rows.getObject("id", UUID.class),
-                            json.readValue(rows.getString("snapshot"), DocumentSnapshot.class));
+                    snapshots.put(rows.getObject("id", UUID.class), versionSnapshot(rows));
                 });
         return snapshots;
     }
@@ -384,6 +402,12 @@ public class DocumentRepository {
      */
     Optional<Updated> updateIfRevisionMatches(UUID fileId, long expectedRevision, DocumentSnapshot snapshot,
             String bodyText, UUID saveId) {
+        Optional<UUID> project = projectOf(fileId);
+        if (project.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID projectId = project.get();
+        String body = json.writeValueAsString(snapshot.body());
         return jdbcClient
                 .sql("""
                         update document
@@ -391,20 +415,29 @@ public class DocumentRepository {
                             body_json = :body::jsonb,
                             body_text = :text,
                             body_sha = encode(sha256(convert_to(:body, 'UTF8')), 'hex'),
+                            body_json_enc = :bodyEnc,
+                            body_md_enc = null,
+                            body_text_enc = :textEnc,
+                            body_text_mac = :textMac,
+                            body_text_length = :textLength,
                             char_count = :chars,
                             revision_no = revision_no + 1,
                             last_save_id = :saveId,
                             updated_at = now()
                         where id = :id and revision_no = :expected
                         returning old.title is distinct from new.title as title_changed,
-                                  old.body_text is distinct from new.body_text as body_changed
+                                  old.body_text_mac is distinct from new.body_text_mac as body_changed
                         """)
                 .param("id", fileId)
                 .param("expected", expectedRevision)
                 .param("title", snapshot.title())
                 // body_md 에는 쓰지 않는다. 레거시 행을 읽는 용도로만 남겨 둔 칸이다.
-                .param("body", json.writeValueAsString(snapshot.body()))
+                .param("body", body)
                 .param("text", bodyText)
+                .param("bodyEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_JSON, body))
+                .param("textEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_TEXT, bodyText))
+                .param("textMac", manuscripts.mac(projectId, bodyText))
+                .param("textLength", bodyText.codePointCount(0, bodyText.length()))
                 .param("chars", BodyText.charCount(bodyText))
                 .param("saveId", saveId)
                 .query((rows, index) -> new Updated(
@@ -515,18 +548,21 @@ public class DocumentRepository {
 
     UUID insertVersion(UUID fileId, long sourceRevision, String kind, String label,
             DocumentSnapshot snapshot, OffsetDateTime expiresAt) {
+        UUID projectId = projectOf(fileId).orElseThrow();
+        String snapshotJson = json.writeValueAsString(snapshot);
         return jdbcClient
                 .sql("""
                         insert into document_versions
-                            (document_id, source_revision_no, kind, label, snapshot, expires_at)
-                        values (:id, :revision, :kind, :label, :snapshot::jsonb, :expires)
+                            (document_id, source_revision_no, kind, label, snapshot, snapshot_enc, expires_at)
+                        values (:id, :revision, :kind, :label, :snapshot::jsonb, :snapshotEnc, :expires)
                         returning id
                         """)
                 .param("id", fileId)
                 .param("revision", sourceRevision)
                 .param("kind", kind)
                 .param("label", label)
-                .param("snapshot", json.writeValueAsString(snapshot))
+                .param("snapshot", snapshotJson)
+                .param("snapshotEnc", manuscripts.seal(projectId, fileId, Purpose.VERSION_SNAPSHOT, snapshotJson))
                 .param("expires", expiresAt)
                 .query(UUID.class)
                 .single();
@@ -536,10 +572,11 @@ public class DocumentRepository {
     List<DocumentResponses.Version> versions(UUID fileId) {
         return jdbcClient
                 .sql("""
-                        select id, document_id, kind, label, source_revision_no, created_at, snapshot
-                        from document_versions
-                        where document_id = :id and kind <> 'REFRESH_BASE'
-                        order by created_at desc
+                        select v.id, v.document_id, d.project_id, v.kind, v.label, v.source_revision_no,
+                               v.created_at, v.snapshot_enc
+                        from document_versions v join document d on d.id = v.document_id
+                        where v.document_id = :id and v.kind <> 'REFRESH_BASE'
+                        order by v.created_at desc
                         """)
                 .param("id", fileId)
                 .query((rows, index) -> mapVersion(rows))
@@ -549,9 +586,10 @@ public class DocumentRepository {
     Optional<DocumentResponses.Version> findVersion(UUID fileId, UUID versionId) {
         return jdbcClient
                 .sql("""
-                        select id, document_id, kind, label, source_revision_no, created_at, snapshot
-                        from document_versions
-                        where id = :version and document_id = :id and kind <> 'REFRESH_BASE'
+                        select v.id, v.document_id, d.project_id, v.kind, v.label, v.source_revision_no,
+                               v.created_at, v.snapshot_enc
+                        from document_versions v join document d on d.id = v.document_id
+                        where v.id = :version and v.document_id = :id and v.kind <> 'REFRESH_BASE'
                         """)
                 .param("version", versionId).param("id", fileId)
                 .query((rows, index) -> mapVersion(rows))
@@ -562,12 +600,13 @@ public class DocumentRepository {
     Optional<DocumentSnapshot> snapshotAtRevision(UUID fileId, long revisionNo) {
         return jdbcClient
                 .sql("""
-                        select snapshot from document_versions
-                        where document_id = :id and source_revision_no = :revision
-                        order by created_at desc limit 1
+                        select v.document_id, d.project_id, v.snapshot_enc
+                        from document_versions v join document d on d.id = v.document_id
+                        where v.document_id = :id and v.source_revision_no = :revision
+                        order by v.created_at desc limit 1
                         """)
                 .param("id", fileId).param("revision", revisionNo)
-                .query((rows, index) -> json.readValue(rows.getString("snapshot"), DocumentSnapshot.class))
+                .query((rows, index) -> versionSnapshot(rows))
                 .optional();
     }
 
@@ -592,6 +631,19 @@ public class DocumentRepository {
                 rows.getString("label"),
                 rows.getLong("source_revision_no"),
                 rows.getObject("created_at", OffsetDateTime.class),
-                json.readValue(rows.getString("snapshot"), DocumentSnapshot.class));
+                versionSnapshot(rows));
+    }
+
+    private DocumentSnapshot versionSnapshot(ResultSet rows) throws SQLException {
+        return json.readValue(manuscripts.open(rows.getObject("project_id", UUID.class),
+                rows.getObject("document_id", UUID.class), Purpose.VERSION_SNAPSHOT, rows.getBytes("snapshot_enc")),
+                DocumentSnapshot.class);
+    }
+
+    private Optional<UUID> projectOf(UUID fileId) {
+        return jdbcClient.sql("select project_id from document where id = :id")
+                .param("id", fileId)
+                .query(UUID.class)
+                .optional();
     }
 }

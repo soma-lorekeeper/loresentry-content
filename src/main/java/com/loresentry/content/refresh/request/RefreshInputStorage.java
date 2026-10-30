@@ -54,7 +54,7 @@ class RefreshInputStorage {
                             .bucket(bucket)
                             .key(key)
                             .ifNoneMatch("*")
-                            .contentType("application/json")
+                            .contentType("application/octet-stream")
                             .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT))
                             .build(),
                     RequestBody.fromBytes(json));

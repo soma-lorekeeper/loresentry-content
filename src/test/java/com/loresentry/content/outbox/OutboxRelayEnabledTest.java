@@ -34,7 +34,7 @@ import org.springframework.test.context.TestPropertySource;
 class OutboxRelayEnabledTest extends KafkaTestSupport {
 
     /** FileChanged 가 실려야 하는 topic. main 의 상수와 따로 적어, 그 값이 틀리면 테스트가 알아채게 한다. */
-    private static final String PROJECT_CHANGED = "content.project.changed.v1";
+    private static final String PROJECT_CHANGED = "content.project.changed.v2";
 
     @Test
     void sendsAPendingRowWithoutBeingAsked(CapturedOutput output) {

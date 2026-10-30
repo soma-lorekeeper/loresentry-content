@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -107,7 +108,7 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         assertThat(upload.request().bucket()).isEqualTo(BUCKET);
         assertThat(upload.request().key()).isEqualTo(key);
         assertThat(upload.request().ifNoneMatch()).isEqualTo("*");
-        assertThat(upload.request().contentType()).isEqualTo("application/json");
+        assertThat(upload.request().contentType()).isEqualTo("application/octet-stream");
         String chapterJson = """
                 {"id":"%s","revision_no":0,"folder_code":"MANUSCRIPT","title":"1화","body_text":"",
                  "properties":[],
@@ -120,7 +121,8 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                 """.formatted(character, characterRevision, chapter);
         String documents = chapter.toString().compareTo(character.toString()) < 0
                 ? chapterJson + "," + characterJson : characterJson + "," + chapterJson;
-        assertThat(json.readTree(upload.body())).isEqualTo(json.readTree(
+        assertThat(json.readTree(manuscripts.openBytes(project, request, Purpose.REFRESH_INPUT, upload.body())))
+                .isEqualTo(json.readTree(
                 "{\"schema_version\":\"refresh-input-v2\",\"documents\":[" + documents + "]}"));
 
         // 이벤트: S3 위치·바이트의 sha256·실은 문서·프로젝트 문서마다 최신 FileChanged. 모델 설정은 싣지 않는다.
@@ -138,10 +140,11 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                 {"project_id":"%s","request_id":"%s","user_id":"%s","input_fingerprint":"%s",
                  "location":{"bucket":"%s","key":"%s"},
                  "files":%s,
-                 "required_events":%s}
+                 "required_events":%s,
+                 "wrapped_key":"%s"}
                 """.formatted(project, request, owner, sha256Hex(upload.body()), BUCKET, key,
                 filesJson(sorted(Map.of(chapter, 0L, character, characterRevision))),
-                json.writeValueAsString(latestFileChangedEvents()))));
+                json.writeValueAsString(latestFileChangedEvents()), manuscripts.wrappedKey(project))));
     }
 
     /** 지난 최신화 이후 저장한 문서와 새로 만든 문서만 실린다. */

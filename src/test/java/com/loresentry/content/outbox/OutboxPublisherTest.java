@@ -46,7 +46,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
      * FileChanged 가 실려야 하는 topic. main 의 상수를 가져다 쓰지 않고 따로 적는다 — 같은 상수를 쓰면 그 값이
      * 틀려도 테스트가 함께 틀려서 알아채지 못한다.
      */
-    private static final String PROJECT_CHANGED = "content.project.changed.v1";
+    private static final String PROJECT_CHANGED = "content.project.changed.v2";
 
     /** 테스트 대상. 스케줄러 없이 한 회차를 직접 부른다. */
     @Autowired
@@ -281,14 +281,14 @@ class OutboxPublisherTest extends KafkaTestSupport {
     }
 
     /**
-     * 한도(4MiB)를 넘는 행은 몇 번을 보내도 거절된다. 그대로 두면 매 회차가 이 행에서 멈춰 뒤의 행이 영영 나가지
+     * 한도(6MiB)를 넘는 행은 몇 번을 보내도 거절된다. 그대로 두면 매 회차가 이 행에서 멈춰 뒤의 행이 영영 나가지
      * 못하므로, 격리해서 줄에서 빼고 뒤의 행은 같은 회차에 그대로 보낸다.
      */
     @Test
     void quarantinesARowTooLargeToSendAndGoesOn(CapturedOutput output) {
         String projectId = UUID.randomUUID().toString();
         // 압축하면 아주 작아지지만 한도는 압축 전 크기로 잰다. send() 가 그 자리에서 거절한다.
-        String body = "a".repeat(4 * 1024 * 1024 + 1);
+        String body = "a".repeat(6 * 1024 * 1024 + 1);
         UUID tooLarge = insert("FileChanged", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
         UUID next = insertFileChanged(projectId);
 
@@ -325,7 +325,7 @@ class OutboxPublisherTest extends KafkaTestSupport {
     }
 
     /**
-     * producer 의 한도(4MiB)는 넘지 않지만 topic 의 한도는 넘는 행이다. graph-refresh topic 은 한도를 따로 정하지
+     * producer 의 한도(6MiB)는 넘지 않지만 topic 의 한도는 넘는 행이다. graph-refresh topic 은 한도를 따로 정하지
      * 않아 기본값(약 1MB)이다. 이때는 send() 가 아니라 broker 의 응답으로 실패를 알게 되는데, 마찬가지로 격리한다.
      *
      * <p>잘 줄지 않는 글이어야 한다. topic 의 한도는 압축한 뒤의 크기로 재므로, 같은 글자의 반복은 통과해 버린다.
