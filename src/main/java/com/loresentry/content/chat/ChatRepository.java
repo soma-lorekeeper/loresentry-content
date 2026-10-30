@@ -8,13 +8,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.document.BodyText;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.json.JsonMapper;
 
 @Repository
 class ChatRepository {
 
     private final JdbcClient jdbcClient;
+
+    private final JsonMapper json = JsonMapper.builder().build();
 
     ChatRepository(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
@@ -273,7 +278,7 @@ class ChatRepository {
                 .list();
     }
 
-    List<ChatResponses.Setting> settingsById(UUID projectId, List<UUID> ids,
+    List<ChatResponses.DocumentSetting> settingsById(UUID projectId, List<UUID> ids,
             Map<UUID, List<ChatResponses.Property>> properties) {
         if (ids.isEmpty()) {
             return List.of();
@@ -281,7 +286,7 @@ class ChatRepository {
         return jdbcClient
                 .sql("""
                         select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text,
-                               d.updated_at
+                               d.body_json, d.updated_at
                         from document d
                         join base_folders f on f.id = d.folder_id
                         where d.project_id = :project and d.folder_id <> 4 and d.trashed_at is null
@@ -292,16 +297,21 @@ class ChatRepository {
                 .param("ids", ids)
                 .query((rows, index) -> {
                     UUID id = rows.getObject("id", UUID.class);
-                    return new ChatResponses.Setting(
+                    return new ChatResponses.DocumentSetting(
                             id,
                             rows.getString("folder_code"),
                             rows.getString("title"),
                             properties.getOrDefault(id, List.of()),
                             rows.getLong("revision_no"),
                             rows.getString("body_text"),
+                            coreFacts(rows.getString("body_json")),
                             rows.getObject("updated_at", OffsetDateTime.class));
                 })
                 .list();
+    }
+
+    private List<String> coreFacts(String bodyJson) {
+        return bodyJson == null ? List.of() : BodyText.coreTexts(json.readTree(bodyJson).get("doc"));
     }
 
     List<ChatResponses.Memo> memosById(UUID projectId, List<UUID> ids) {

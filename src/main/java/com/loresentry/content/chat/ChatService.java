@@ -63,7 +63,7 @@ class ChatService {
         Map<UUID, List<ChatResponses.Property>> properties =
                 documentIds.isEmpty() ? Map.of() : repository.properties(projectId);
         List<ChatResponses.Manuscript> manuscripts = repository.manuscriptsById(projectId, documentIds, properties);
-        List<ChatResponses.Setting> settings = repository.settingsById(projectId, documentIds, properties);
+        List<ChatResponses.DocumentSetting> settings = repository.settingsById(projectId, documentIds, properties);
         List<ChatResponses.Memo> memos = repository.memosById(projectId, memoIds);
         Set<UUID> found = new HashSet<>();
         manuscripts.forEach(item -> found.add(item.id()));

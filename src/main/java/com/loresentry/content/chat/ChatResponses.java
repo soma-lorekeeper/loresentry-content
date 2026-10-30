@@ -114,9 +114,20 @@ public final class ChatResponses {
             @JsonProperty("memo_ids") List<UUID> memoIds) {
     }
 
+    public record DocumentSetting(
+            UUID id,
+            @JsonProperty("folder_code") String folderCode,
+            String title,
+            List<Property> properties,
+            @JsonProperty("revision_no") long revisionNo,
+            @JsonProperty("body_text") String bodyText,
+            @JsonProperty("core_facts") List<String> coreFacts,
+            @JsonProperty("updated_at") OffsetDateTime updatedAt) {
+    }
+
     public record Documents(
             List<Manuscript> manuscripts,
-            List<Setting> settings,
+            List<DocumentSetting> settings,
             List<Memo> memos,
             List<UUID> missing) {
     }
