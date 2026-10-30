@@ -32,4 +32,8 @@ public final class FileRequests {
             @JsonProperty("episode_id") UUID episodeId,
             @JsonProperty("before_file_id") UUID beforeFileId) {
     }
+
+    /** 업로드를 마친({@code COMMITTED}) 같은 프로젝트의 이미지. */
+    public record SetImage(@JsonProperty("image_id") UUID imageId) {
+    }
 }

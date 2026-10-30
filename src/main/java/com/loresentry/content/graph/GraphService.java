@@ -2,6 +2,7 @@ package com.loresentry.content.graph;
 
 import java.util.UUID;
 
+import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.stereotype.Service;
@@ -12,8 +13,11 @@ class GraphService {
 
     private final GraphRepository repository;
 
-    GraphService(GraphRepository repository) {
+    private final MediaStorageService storage;
+
+    GraphService(GraphRepository repository, MediaStorageService storage) {
         this.repository = repository;
+        this.storage = storage;
     }
 
     @Transactional(readOnly = true)
@@ -22,7 +26,7 @@ class GraphService {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }
         return new GraphResponses.Graph(
-                repository.nodes(projectId),
+                repository.nodes(projectId, storage::publicUrl),
                 repository.edges(projectId),
                 repository.episodes(projectId));
     }

@@ -29,10 +29,11 @@ public class FileRepository {
                    d.title, d.rank,
                    (d.locked or d.refresh_lock_run_id is not null) as locked,
                    d.refresh_lock_run_id is not null as refresh_locked,
-                   d.char_count, d.revision_no, d.trashed_at, d.updated_at
+                   d.char_count, d.revision_no, i.s3_key as image_key, d.trashed_at, d.updated_at
             from document d
             join base_folders f on f.id = d.folder_id
             join projects p on p.id = d.project_id
+            left join image i on i.id = d.image_id
             """;
 
     private final JdbcClient jdbcClient;
@@ -286,6 +287,44 @@ public class FileRepository {
         jdbcClient.sql("delete from document where id = :id").param("id", fileId).update();
     }
 
+    /** 이미지가 이 프로젝트의 것이고 업로드가 확인됐는가. PENDING 이면 아직 주소를 줄 수 없다. */
+    Optional<String> imageStatus(UUID projectId, UUID imageId) {
+        return jdbcClient.sql("select status from image where id = :id and project_id = :project")
+                .param("id", imageId).param("project", projectId)
+                .query(String.class)
+                .optional();
+    }
+
+    /**
+     * 문서의 이미지를 바꾼다.
+     *
+     * @return 이전 이미지 id. 없었거나 같은 이미지면 비어 있다
+     */
+    Optional<UUID> replaceImage(UUID fileId, UUID imageId) {
+        UUID previous = jdbcClient
+                .sql("update document set image_id = :image where id = :id returning old.image_id")
+                .param("id", fileId).param("image", imageId)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+        return previous == null || previous.equals(imageId) ? Optional.empty() : Optional.of(previous);
+    }
+
+    /** 이미지 행과 그 S3 키. 행을 지운 뒤에는 어느 객체를 지울지 다시 찾을 수 없으므로 키를 먼저 돌려준다. */
+    Optional<String> deleteImage(UUID imageId) {
+        return jdbcClient.sql("delete from image where id = :id returning s3_key")
+                .param("id", imageId)
+                .query(String.class)
+                .optional();
+    }
+
+    Optional<UUID> imageOf(UUID fileId) {
+        return jdbcClient.sql("select image_id from document where id = :id and image_id is not null")
+                .param("id", fileId)
+                .query(UUID.class)
+                .optional();
+    }
+
     /**
      * 에피소드만 지운다. 안의 회차는 원고 폴더로 돌아간다(와이어프레임 166).
      *
@@ -326,6 +365,7 @@ public class FileRepository {
                 rows.getBoolean("refresh_locked"),
                 rows.getInt("char_count"),
                 rows.getLong("revision_no"),
+                rows.getString("image_key"),
                 rows.getObject("trashed_at", OffsetDateTime.class),
                 rows.getObject("updated_at", OffsetDateTime.class));
     }

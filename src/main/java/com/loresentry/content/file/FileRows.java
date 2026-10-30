@@ -29,6 +29,8 @@ public final class FileRows {
             boolean refreshLocked,
             int charCount,
             long revisionNo,
+            /** 대표 이미지의 S3 키. 없으면 null. 주소는 응답을 만들 때 붙인다 */
+            String imageKey,
             OffsetDateTime trashedAt,
             OffsetDateTime updatedAt) {
 
