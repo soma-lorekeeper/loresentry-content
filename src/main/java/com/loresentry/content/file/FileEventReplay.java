@@ -33,12 +33,14 @@ public class FileEventReplay {
         this.outbox = outbox;
     }
 
-    public List<UUID> projectsAfter(UUID after, int limit) {
+    public List<UUID> projectsAfter(UUID after, int limit, boolean includeTrashed) {
         return jdbc.sql("""
                         select id from projects
-                        where trashed_at is null and (cast(:after as uuid) is null or id > cast(:after as uuid))
+                        where (trashed_at is null or :includeTrashed)
+                          and (cast(:after as uuid) is null or id > cast(:after as uuid))
                         order by id limit :limit
                         """)
+                .param("includeTrashed", includeTrashed)
                 .param("after", after)
                 .param("limit", limit)
                 .query(UUID.class)
