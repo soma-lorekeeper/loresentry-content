@@ -240,9 +240,9 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
         UUID run = requestRefresh();
 
         List<Map<String, Object>> drafts = jdbcClient.sql("""
-                        select d.target_document_id, d.status, d.kind, d.left_source_revision_no,
-                               d.left_snapshot = d.origin_snapshot as origin_is_left, d.right_snapshot is null as no_right,
-                               d.matched, v.kind as base_kind, v.source_revision_no as base_revision
+                        select d.id, d.target_document_id, d.status, d.kind, d.left_source_revision_no,
+                               d.left_snapshot_enc, d.origin_snapshot_enc, d.right_snapshot_enc is null as no_right,
+                               d.is_matched as matched, v.kind as base_kind, v.source_revision_no as base_revision
                         from refresh_document_drafts d
                         join document_versions v on v.id = d.base_version_id
                         where d.refresh_run_id = :run order by d.target_document_id
@@ -252,7 +252,10 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                         "target", rows.getObject("target_document_id", UUID.class),
                         "status", rows.getString("status"), "kind", rows.getString("kind"),
                         "left_revision", rows.getLong("left_source_revision_no"),
-                        "origin_is_left", rows.getBoolean("origin_is_left"),
+                        "origin_is_left", manuscripts.open(project, rows.getObject("id", UUID.class),
+                                Purpose.DRAFT_LEFT, rows.getBytes("left_snapshot_enc")).equals(manuscripts.open(project,
+                                rows.getObject("id", UUID.class), Purpose.DRAFT_ORIGIN,
+                                rows.getBytes("origin_snapshot_enc"))),
                         "no_right", rows.getBoolean("no_right"), "matched", rows.getBoolean("matched"),
                         "base_kind", rows.getString("base_kind"), "base_revision", rows.getLong("base_revision")))
                 .list();
@@ -264,9 +267,12 @@ class GraphRefreshRequestApiTest extends ApiTestSupport {
                     .containsEntry("no_right", true).containsEntry("matched", false)
                     .containsEntry("base_kind", "REFRESH_BASE").containsEntry("base_revision", revision);
         }
-        JsonNode left = json.readTree(jdbcClient.sql("select left_snapshot::text from refresh_document_drafts "
+        JsonNode left = json.readTree(jdbcClient.sql("select id, left_snapshot_enc from refresh_document_drafts "
                         + "where refresh_run_id = :run and target_document_id = :id")
-                .param("run", run).param("id", character).query(String.class).single());
+                .param("run", run).param("id", character)
+                .query((rows, index) -> manuscripts.open(project, rows.getObject("id", UUID.class),
+                        Purpose.DRAFT_LEFT, rows.getBytes("left_snapshot_enc")))
+                .single());
         assertThat(left.get("title").stringValue()).isEqualTo("서윤");
         assertThat(left.get("relations")).isEqualTo(json.readTree("[{\"relation_key\":\"related_manuscript\","
                 + "\"target_document_id\":\"" + chapter + "\",\"target_candidate_id\":null,\"description\":\"\"}]"));

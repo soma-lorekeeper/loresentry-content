@@ -213,11 +213,11 @@ public class GraphRefreshRepository {
                 .param("id", runId).query(UUID.class).single();
         jdbcClient.sql("""
                         insert into refresh_results
-                            (refresh_run_id, payload, payload_enc, sha256, result_bucket, result_key)
-                        values (:run, :payload::jsonb, :payloadEnc, :sha256, :bucket, :key)
+                            (refresh_run_id, payload_enc, sha256, result_bucket, result_key)
+                        values (:run, :payloadEnc, :sha256, :bucket, :key)
                         on conflict (refresh_run_id) do nothing
                         """)
-                .param("run", runId).param("payload", json).param("sha256", sha256)
+                .param("run", runId).param("sha256", sha256)
                 .param("payloadEnc", manuscripts.seal(projectId, runId, Purpose.REFRESH_RESULT, json))
                 .param("bucket", bucket).param("key", key)
                 .update();
