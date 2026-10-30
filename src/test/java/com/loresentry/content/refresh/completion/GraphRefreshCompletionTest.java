@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.ErrorDetail;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Outcome;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Result;
@@ -155,13 +156,15 @@ class GraphRefreshCompletionTest extends ApiTestSupport {
                 .isEqualTo(chapter.toString());
 
         Map<String, Object> newDraft = jdbcClient.sql("""
-                        select kind, folder_code, left_snapshot is null as no_left, right_snapshot::text as right_json,
-                               status, matched
+                        select id, kind, folder_code, left_snapshot_enc is null as no_left, right_snapshot_enc,
+                               status, is_matched as matched
                         from refresh_document_drafts where refresh_run_id = :run and kind = 'NEW'
                         """)
                 .param("run", run)
                 .query((rows, index) -> Map.<String, Object>of("folder", rows.getString("folder_code"),
-                        "no_left", rows.getBoolean("no_left"), "right", rows.getString("right_json"),
+                        "no_left", rows.getBoolean("no_left"), "right", manuscripts.open(project,
+                                rows.getObject("id", UUID.class), Purpose.DRAFT_RIGHT,
+                                rows.getBytes("right_snapshot_enc")),
                         "status", rows.getString("status"), "matched", rows.getBoolean("matched")))
                 .single();
         assertThat(newDraft).containsEntry("folder", "ITEM").containsEntry("no_left", true)
@@ -357,11 +360,13 @@ class GraphRefreshCompletionTest extends ApiTestSupport {
     /** 이 run 의 열린 기존 문서 작업본들의 right, 대상 문서별. */
     private Map<UUID, JsonNode> rights(UUID run) {
         Map<UUID, JsonNode> rights = new HashMap<>();
-        jdbcClient.sql("select target_document_id, right_snapshot::text from refresh_document_drafts "
+        jdbcClient.sql("select id, target_document_id, right_snapshot_enc from refresh_document_drafts "
                         + "where refresh_run_id = :run and kind = 'EDIT' and status = 'OPEN'")
                 .param("run", run)
                 .query(rows -> {
-                    rights.put(rows.getObject(1, UUID.class), json.readTree(rows.getString(2)));
+                    rights.put(rows.getObject("target_document_id", UUID.class), json.readTree(manuscripts.open(
+                            project, rows.getObject("id", UUID.class), Purpose.DRAFT_RIGHT,
+                            rows.getBytes("right_snapshot_enc"))));
                 });
         return rights;
     }

@@ -54,9 +54,9 @@ public class RefreshDraftRepository {
                 .sql("""
                         insert into refresh_document_drafts
                             (id, refresh_run_id, kind, target_document_id, base_version_id, left_source_revision_no,
-                             left_snapshot, origin_snapshot, left_snapshot_enc, origin_snapshot_enc, status)
-                        values (:id, :run, 'EDIT', :document, :base, :revision, :left::jsonb, :left::jsonb,
-                                :leftEnc, :originEnc, 'BASE_CAPTURED')
+                             left_snapshot_enc, origin_snapshot_enc, status)
+                        values (:id, :run, 'EDIT', :document, :base, :revision, :leftEnc, :originEnc,
+                                'BASE_CAPTURED')
                         """)
                 .param("id", id)
                 .param("leftEnc", seal(projectId, id, Purpose.DRAFT_LEFT, leftJson))
@@ -65,7 +65,6 @@ public class RefreshDraftRepository {
                 .param("document", documentId)
                 .param("base", baseVersionId)
                 .param("revision", revisionNo)
-                .param("left", leftJson)
                 .update();
     }
 
@@ -109,11 +108,10 @@ public class RefreshDraftRepository {
         jdbcClient
                 .sql("""
                         update refresh_document_drafts
-                        set status = 'OPEN', right_snapshot = :right::jsonb, right_snapshot_enc = :rightEnc,
-                            is_matched = :matched, base_mismatch = :mismatch, updated_at = now()
+                        set status = 'OPEN', right_snapshot_enc = :rightEnc, is_matched = :matched,
+                            base_mismatch = :mismatch, updated_at = now()
                         where id = :id
                         """)
-                .param("right", rightJson)
                 .param("rightEnc", seal(projectId, draftId, Purpose.DRAFT_RIGHT, rightJson))
                 .param("matched", same(left, right))
                 .param("mismatch", baseMismatch)
@@ -135,18 +133,15 @@ public class RefreshDraftRepository {
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
-                            (id, refresh_run_id, kind, target_document_id, left_source_revision_no, left_snapshot,
-                             origin_snapshot, right_snapshot, left_snapshot_enc, origin_snapshot_enc,
-                             right_snapshot_enc, is_matched, base_mismatch, status)
-                        values (:id, :run, 'EDIT', :document, :revision, :left::jsonb, :left::jsonb, :right::jsonb,
-                                :leftEnc, :originEnc, :rightEnc, :matched, :mismatch, 'OPEN')
+                            (id, refresh_run_id, kind, target_document_id, left_source_revision_no, left_snapshot_enc,
+                             origin_snapshot_enc, right_snapshot_enc, is_matched, base_mismatch, status)
+                        values (:id, :run, 'EDIT', :document, :revision, :leftEnc, :originEnc, :rightEnc, :matched,
+                                :mismatch, 'OPEN')
                         """)
                 .param("id", id)
                 .param("run", runId)
                 .param("document", documentId)
                 .param("revision", leftRevisionNo)
-                .param("left", leftJson)
-                .param("right", rightJson)
                 .param("leftEnc", seal(projectId, id, Purpose.DRAFT_LEFT, leftJson))
                 .param("originEnc", seal(projectId, id, Purpose.DRAFT_ORIGIN, leftJson))
                 .param("rightEnc", seal(projectId, id, Purpose.DRAFT_RIGHT, rightJson))
@@ -163,15 +158,13 @@ public class RefreshDraftRepository {
         jdbcClient
                 .sql("""
                         insert into refresh_document_drafts
-                            (id, refresh_run_id, kind, candidate_id, folder_code, right_snapshot, right_snapshot_enc,
-                             status)
-                        values (:id, :run, 'NEW', :candidate, :folder, :right::jsonb, :rightEnc, 'OPEN')
+                            (id, refresh_run_id, kind, candidate_id, folder_code, right_snapshot_enc, status)
+                        values (:id, :run, 'NEW', :candidate, :folder, :rightEnc, 'OPEN')
                         """)
                 .param("id", id)
                 .param("run", runId)
                 .param("candidate", candidateId)
                 .param("folder", folderCode)
-                .param("right", rightJson)
                 .param("rightEnc", seal(projectId, id, Purpose.DRAFT_RIGHT, rightJson))
                 .update();
     }
@@ -336,8 +329,7 @@ public class RefreshDraftRepository {
         return jdbcClient
                 .sql("""
                         update refresh_document_drafts r
-                        set left_snapshot = :left::jsonb, right_snapshot = :right::jsonb,
-                            left_snapshot_enc = :leftEnc, right_snapshot_enc = :rightEnc, is_matched = :matched,
+                        set left_snapshot_enc = :leftEnc, right_snapshot_enc = :rightEnc, is_matched = :matched,
                             draft_revision = draft_revision + 1, updated_at = now()
                         from refresh_runs run
                         where r.id = :id and r.draft_revision = :expected and run.id = r.refresh_run_id
@@ -346,8 +338,6 @@ public class RefreshDraftRepository {
                         """)
                 .param("id", draftId)
                 .param("expected", expectedRevision)
-                .param("left", leftJson)
-                .param("right", rightJson)
                 .param("leftEnc", seal(projectId, draftId, Purpose.DRAFT_LEFT, leftJson))
                 .param("rightEnc", seal(projectId, draftId, Purpose.DRAFT_RIGHT, rightJson))
                 .param("matched", same(left, right))

@@ -141,16 +141,16 @@ class MigrationTest {
                     + "values (least('" + character + "'::uuid, '" + chapter + "'::uuid), "
                     + "greatest('" + character + "'::uuid, '" + chapter + "'::uuid))");
             String version = column(statement,
-                    "insert into document_versions (document_id, source_revision_no, kind, snapshot) "
-                            + "values ('" + character + "', 0, 'REFRESH_BASE', '{}'::jsonb) returning id")
+                    "insert into document_versions (document_id, source_revision_no, kind, snapshot_enc) "
+                            + "values ('" + character + "', 0, 'REFRESH_BASE', '\\x01') returning id")
                     .getFirst();
             String run = column(statement,
                     "insert into refresh_runs (project_id, requested_by, status, prompt_version) "
                             + "values ('" + project + "', uuidv7(), 'GENERATING', 'v1') returning id").getFirst();
             statement.execute("insert into refresh_document_drafts "
                     + "(refresh_run_id, target_document_id, base_version_id, "
-                    + "left_source_revision_no, left_snapshot, origin_snapshot) "
-                    + "values ('" + run + "', '" + character + "', '" + version + "', 0, '{}', '{}')");
+                    + "left_source_revision_no, left_snapshot_enc, origin_snapshot_enc) "
+                    + "values ('" + run + "', '" + character + "', '" + version + "', 0, '\\x01', '\\x01')");
 
             statement.execute("delete from projects where id = '" + project + "'");
 
@@ -328,10 +328,9 @@ class MigrationTest {
 
     /**
      * 기존 문서 작업본(EDIT)은 대상 문서와 left 를 갖고, 새 문서 작업본(NEW)은 대상 없이 제안 이름과 분류를 갖는다.
-     * 두 작업본이 같은지(matched)는 DB 가 계산한다.
      */
     @Test
-    void keepsEditAndNewDraftsInShapeAndComputesWhetherTheyMatch() throws Exception {
+    void keepsEditAndNewDraftsInShape() throws Exception {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             String project = column(statement,
                     "insert into projects (owner_user_id, name) values (uuidv7(), 'Drafted') returning id")
@@ -345,16 +344,14 @@ class MigrationTest {
 
             String edit = column(statement,
                     "insert into refresh_document_drafts (refresh_run_id, target_document_id, "
-                            + "left_source_revision_no, left_snapshot, origin_snapshot) "
-                            + "values ('" + run + "', '" + document + "', 0, '{\"t\":1}', '{\"t\":1}') "
+                            + "left_source_revision_no, left_snapshot_enc, origin_snapshot_enc) "
+                            + "values ('" + run + "', '" + document + "', 0, '\\x01', '\\x01') "
                             + "returning id").getFirst();
-            assertThat(column(statement, "select matched::text from refresh_document_drafts "
-                    + "where id = '" + edit + "'")).containsExactly("false");
-
-            statement.execute("update refresh_document_drafts set status = 'OPEN', right_snapshot = '{\"t\":1}' "
+            assertThatThrownBy(() -> statement.execute("update refresh_document_drafts set status = 'OPEN' "
+                    + "where id = '" + edit + "'"))
+                    .hasMessageContaining("ck_refresh_document_drafts_snapshots");
+            statement.execute("update refresh_document_drafts set status = 'OPEN', right_snapshot_enc = '\\x01' "
                     + "where id = '" + edit + "'");
-            assertThat(column(statement, "select matched::text from refresh_document_drafts "
-                    + "where id = '" + edit + "'")).containsExactly("true");
 
             assertThatThrownBy(() -> statement.execute(
                     "insert into refresh_document_drafts (refresh_run_id, target_document_id) "

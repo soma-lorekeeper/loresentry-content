@@ -412,9 +412,6 @@ public class DocumentRepository {
                 .sql("""
                         update document
                         set title = :title,
-                            body_json = :body::jsonb,
-                            body_text = :text,
-                            body_sha = encode(sha256(convert_to(:body, 'UTF8')), 'hex'),
                             body_json_enc = :bodyEnc,
                             body_md_enc = null,
                             body_text_enc = :textEnc,
@@ -431,9 +428,6 @@ public class DocumentRepository {
                 .param("id", fileId)
                 .param("expected", expectedRevision)
                 .param("title", snapshot.title())
-                // body_md 에는 쓰지 않는다. 레거시 행을 읽는 용도로만 남겨 둔 칸이다.
-                .param("body", body)
-                .param("text", bodyText)
                 .param("bodyEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_JSON, body))
                 .param("textEnc", manuscripts.seal(projectId, fileId, Purpose.BODY_TEXT, bodyText))
                 .param("textMac", manuscripts.mac(projectId, bodyText))
@@ -553,15 +547,14 @@ public class DocumentRepository {
         return jdbcClient
                 .sql("""
                         insert into document_versions
-                            (document_id, source_revision_no, kind, label, snapshot, snapshot_enc, expires_at)
-                        values (:id, :revision, :kind, :label, :snapshot::jsonb, :snapshotEnc, :expires)
+                            (document_id, source_revision_no, kind, label, snapshot_enc, expires_at)
+                        values (:id, :revision, :kind, :label, :snapshotEnc, :expires)
                         returning id
                         """)
                 .param("id", fileId)
                 .param("revision", sourceRevision)
                 .param("kind", kind)
                 .param("label", label)
-                .param("snapshot", snapshotJson)
                 .param("snapshotEnc", manuscripts.seal(projectId, fileId, Purpose.VERSION_SNAPSHOT, snapshotJson))
                 .param("expires", expiresAt)
                 .query(UUID.class)
