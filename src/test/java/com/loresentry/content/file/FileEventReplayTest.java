@@ -44,6 +44,23 @@ class FileEventReplayTest extends ApiTestSupport {
     }
 
     @Test
+    void includesTrashedProjectsOnlyWhenAsked() throws Exception {
+        UUID kept = project("남은 작품");
+        UUID binned = project("버린 작품");
+        document(kept, "MANUSCRIPT", "1화");
+        document(binned, "MANUSCRIPT", "1화");
+        mockMvc.perform(as(post("/projects/" + binned + "/trash"))).andExpect(status().isNoContent());
+        jdbcClient.sql("delete from outbox_events").update();
+
+        mockMvc.perform(post("/internal/admin/file-events/replay"))
+                .andExpect(jsonPath("$.projects").value(1))
+                .andExpect(jsonPath("$.documents").value(1));
+        mockMvc.perform(post("/internal/admin/file-events/replay").param("include_trashed", "true"))
+                .andExpect(jsonPath("$.projects").value(2))
+                .andExpect(jsonPath("$.documents").value(2));
+    }
+
+    @Test
     void pagesThroughProjectsInIdOrder() throws Exception {
         UUID first = project("첫 작품");
         UUID second = project("둘째 작품");
