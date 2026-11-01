@@ -43,4 +43,11 @@ class ChatController {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(chat.documents(userId, projectId, request));
     }
+
+    @PostMapping("/internal/projects/{projectId}/check-versions")
+    public ResponseEntity<ChatResponses.CheckVersion> checkVersion(@CurrentUser UUID userId,
+            @PathVariable UUID projectId, @RequestBody ChatResponses.CheckVersionRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(chat.checkVersion(userId, projectId, request));
+    }
 }

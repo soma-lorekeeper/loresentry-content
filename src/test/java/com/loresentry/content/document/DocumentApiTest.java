@@ -9,8 +9,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import tools.jackson.databind.JsonNode;
 
 class DocumentApiTest extends ApiTestSupport {
 
@@ -604,6 +607,64 @@ class DocumentApiTest extends ApiTestSupport {
         mockMvc.perform(as(delete("/files/" + character + "/versions/" + versionId)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("VERSION_NOT_FOUND"));
+    }
+
+    @Test
+    void readsOneVersionInTheShapeOfTheList() throws Exception {
+        mockMvc.perform(saveOf(character, 0, "{\"title\":\"유중혁\",\"body\":{\"schema_version\":1,\"doc\":{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"1회차\"}]}]}}}"))
+                .andExpect(status().isOk());
+        MvcResult named = mockMvc.perform(as(body(post("/files/" + character + "/versions"), "{\"label\":\"초고\"}")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String versionId = read(named).get("id").stringValue();
+
+        JsonNode listed = null;
+        for (JsonNode version : read(mockMvc.perform(as(get("/files/" + character + "/versions"))).andReturn())
+                .get("versions")) {
+            if (versionId.equals(version.get("id").stringValue())) {
+                listed = version;
+            }
+        }
+        MvcResult one = mockMvc.perform(as(get("/files/" + character + "/versions/" + versionId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("NAMED"))
+                .andExpect(jsonPath("$.label").value("초고"))
+                .andExpect(jsonPath("$.snapshot.body.doc.content[0].content[0].text").value("1회차"))
+                .andReturn();
+        assertThat(listed).isNotNull();
+        assertThat(read(one)).isEqualTo(listed);
+        assertThat(read(one)).isEqualTo(read(named));
+    }
+
+    @Test
+    void readsNoVersionOutsideTheFile() throws Exception {
+        UUID other = createDocument("CHARACTER", "김독자");
+        MvcResult named = mockMvc.perform(as(body(post("/files/" + other + "/versions"), "{}")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String otherVersion = read(named).get("id").stringValue();
+        UUID refreshBase = jdbcClient.sql("""
+                        insert into document_versions (document_id, source_revision_no, kind, snapshot_enc)
+                        values (:id, 0, 'REFRESH_BASE', :snapshot) returning id
+                        """)
+                .param("id", character)
+                .param("snapshot", manuscripts.seal(project, character, Purpose.VERSION_SNAPSHOT,
+                        "{\"title\":\"유중혁\",\"body\":null,\"legacy_body_md\":null,\"properties\":[],\"relations\":[]}"))
+                .query(UUID.class).single();
+
+        for (String versionId : List.of(otherVersion, refreshBase.toString(), UUID.randomUUID().toString())) {
+            mockMvc.perform(as(get("/files/" + character + "/versions/" + versionId)))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("VERSION_NOT_FOUND"));
+        }
+
+        mockMvc.perform(as(get("/files/" + other + "/versions/" + otherVersion), stranger))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FILE_NOT_FOUND"));
+        mockMvc.perform(as(post("/files/" + other + "/trash"))).andExpect(status().isNoContent());
+        mockMvc.perform(as(get("/files/" + other + "/versions/" + otherVersion)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FILE_NOT_FOUND"));
     }
 
     @Test

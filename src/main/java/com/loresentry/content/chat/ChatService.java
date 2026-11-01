@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.document.DocumentResponses;
+import com.loresentry.content.document.DocumentService;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.stereotype.Service;
@@ -21,8 +23,11 @@ class ChatService {
 
     private final ChatRepository repository;
 
-    ChatService(ChatRepository repository) {
+    private final DocumentService documents;
+
+    ChatService(ChatRepository repository, DocumentService documents) {
         this.repository = repository;
+        this.documents = documents;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -81,6 +86,25 @@ class ChatService {
             }
         }
         return new ChatResponses.Documents(manuscripts, settings, memos, missing);
+    }
+
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
+    ChatResponses.CheckVersion checkVersion(UUID ownerUserId, UUID projectId,
+            ChatResponses.CheckVersionRequest request) {
+        if (request == null || request.documentId() == null) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
+        }
+        if (!repository.projectExists(ownerUserId, projectId)) {
+            throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
+        }
+        UUID documentId = request.documentId();
+        ChatResponses.Manuscript manuscript = repository
+                .manuscriptsById(projectId, List.of(documentId), repository.properties(projectId))
+                .stream()
+                .findFirst()
+                .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.FILE_NOT_FOUND));
+        DocumentResponses.Version version = documents.settingCheckVersion(ownerUserId, documentId);
+        return new ChatResponses.CheckVersion(version.id(), version.createdAt(), manuscript);
     }
 
     private static List<UUID> distinct(List<UUID> ids) {
