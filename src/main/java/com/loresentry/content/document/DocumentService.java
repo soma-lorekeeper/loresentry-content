@@ -194,6 +194,26 @@ public class DocumentService {
         return repository.findVersion(fileId, versionId).orElseThrow();
     }
 
+    @Transactional(readOnly = true)
+    public DocumentResponses.Version version(UUID ownerUserId, UUID fileId, UUID versionId) {
+        requireHeader(ownerUserId, fileId);
+        return repository.findVersion(fileId, versionId)
+                .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.VERSION_NOT_FOUND));
+    }
+
+    @Transactional
+    public DocumentResponses.Version settingCheckVersion(UUID ownerUserId, UUID fileId) {
+        DocumentResponses.Content current = get(ownerUserId, fileId);
+        Optional<DocumentResponses.Version> existing =
+                repository.findVersionAtRevision(fileId, "SETTING_CHECK", current.revisionNo());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        UUID versionId = repository.insertVersion(fileId, current.revisionNo(), "SETTING_CHECK", null,
+                current.snapshot(), null);
+        return repository.findVersion(fileId, versionId).orElseThrow();
+    }
+
     /**
      * 복원은 문서를 되감는 것이 아니라 <b>새 변경으로 저장</b>한다(요구사항 §3.5). 되감으면 복원
      * 자체가 기록에서 사라져 무엇이 언제 바뀌었는지 설명할 수 없다.

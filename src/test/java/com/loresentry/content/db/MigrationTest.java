@@ -173,6 +173,29 @@ class MigrationTest {
     }
 
     @Test
+    void acceptsEveryVersionKindIncludingSettingChecks() throws Exception {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            String project = column(statement,
+                    "insert into projects (owner_user_id, name) values (uuidv7(), 'Checked') returning id")
+                    .getFirst();
+            String chapter = column(statement,
+                    "insert into document (project_id, folder_id, title, rank) "
+                            + "values ('" + project + "', 4, 'chapter', 'a0') returning id").getFirst();
+
+            for (String kind : List.of("AUTO", "NAMED", "AI_APPLY", "RESTORE", "REFRESH_BASE", "SETTING_CHECK")) {
+                statement.execute("insert into document_versions (document_id, source_revision_no, kind, snapshot_enc) "
+                        + "values ('" + chapter + "', 0, '" + kind + "', '\\x01')");
+            }
+            assertThatThrownBy(() -> statement.execute(
+                    "insert into document_versions (document_id, source_revision_no, kind, snapshot_enc) "
+                            + "values ('" + chapter + "', 0, 'CHECK', '\\x01')"))
+                    .hasMessageContaining("ck_document_versions_kind");
+
+            statement.execute("delete from projects where id = '" + project + "'");
+        }
+    }
+
+    @Test
     void createsTheImageTableWithItsStatusRules() throws Exception {
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             String project = column(statement,

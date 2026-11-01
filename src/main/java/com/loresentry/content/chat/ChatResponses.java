@@ -131,4 +131,13 @@ public final class ChatResponses {
             List<Memo> memos,
             List<UUID> missing) {
     }
+
+    public record CheckVersionRequest(@JsonProperty("document_id") UUID documentId) {
+    }
+
+    public record CheckVersion(
+            @JsonProperty("version_id") UUID versionId,
+            @JsonProperty("created_at") OffsetDateTime createdAt,
+            Manuscript manuscript) {
+    }
 }

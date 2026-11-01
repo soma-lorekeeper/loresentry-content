@@ -63,7 +63,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | `PUT` | `/files/{id}/lock` | Locks or unlocks editing. `409 DOCUMENT_REFRESH_LOCKED` while a graph refresh holds the document. |
 | `GET POST` | `/files/{id}/versions` | Lists versions with their snapshots; `POST` names one. |
 | `POST` | `/files/{id}/versions/{vid}/restore` | Restores as a **new** revision. Needs `If-Match`. |
-| `DELETE` | `/files/{id}/versions/{vid}` | Deletes a version. |
+| `GET DELETE` | `/files/{id}/versions/{vid}` | One version in the list's shape, `404 VERSION_NOT_FOUND` for another file's version; `DELETE` deletes it. |
 | `GET` | `/projects/{id}/search?q=` | Title and body search inside one project. |
 | `POST` | `/projects/{id}/images` | Issues a presigned upload ticket and records the image as `PENDING`. |
 | `POST` | `/projects/{id}/images/{iid}/complete` | Confirms the object against S3 and commits. Idempotent. |
@@ -101,6 +101,7 @@ trash, and send `Cache-Control: no-store`.
 | `GET` | `/internal/projects/{id}/chat-size` | `{"size": n}` from one aggregate query that loads no bodies. Always equal to the snapshot's `size` for the same data. |
 | `GET` | `/internal/projects/{id}/chat-map` | The AI chat's map: the snapshot without bodies, in the same order and with the same properties and relations. Every manuscript, setting document and memo carries `chars`, what reading it adds to `size`. |
 | `POST` | `/internal/projects/{id}/chat-documents` | `{"document_ids": [...], "memo_ids": [...]}`, at most 100 ids. The chosen items in the snapshot's shape (manuscript `ordinal` counts the whole project) and `missing` for ids that are not active in this project. Each setting document also carries `core_facts`: the text of every top-level body block marked `attrs.core: true`, in body order, blank ones left out. |
+| `POST` | `/internal/projects/{id}/check-versions` | `{"document_id": "..."}`. Pins the manuscript a setting check reads: `{version_id, created_at, manuscript}`, where `manuscript` has the chat-documents shape and the version is a `SETTING_CHECK` snapshot of that same state, both in one `REPEATABLE READ` transaction. A call at a revision that already has one returns it instead of adding another. The version never expires and is listed by `/files/{id}/versions`. `404 FILE_NOT_FOUND` when the document is not an active manuscript of this project; a missing or malformed `document_id` is `400 INVALID_REQUEST`. |
 | `POST` | `/internal/admin/file-events/replay?after=&limit=` | Writes `FileChanged(UPDATED)` again for every active document, one project per transaction, `limit` projects (default 20) after `after`. Returns `{projects, documents, last}`. For backfilling consumers such as the AI chat summarizer; not routed by the gateway. |
 | `GET` | `/projects/{id}/files/content?ids=` | Up to 100 documents of one project as plain text, for services such as `loresentry-graph-rag` that pick documents first: `{project_id, documents: [{id, revision_no, folder_code, title, body_text, properties, relations}], missing: [...]}`. Repeat `ids` for each document; a repeated id counts once. No ids, more than 100 distinct ids, or an id that is not a UUID is `400 INVALID_REQUEST`. Read in one read-only `REPEATABLE READ` transaction. Ids that are trashed, unknown or in another project come back in `missing` instead of failing the call. Keeps the public path shape and does not send `no-store`. |
 
@@ -260,7 +261,7 @@ into `projects` — without it a permanent delete fails on a foreign key.
 | `document` | The single source of truth for a document: whole Markdown body, `rank`, `revision_no` for conditional saves |
 | `document_properties` | Text properties such as description and alias |
 | `document_relations` | Relation chips, one row per pair - relations have no direction; the source data for the graph and timeline |
-| `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE` |
+| `document_versions` | Full snapshots: `AUTO`, `NAMED`, `AI_APPLY`, `RESTORE`, `REFRESH_BASE`, `SETTING_CHECK` |
 | `refresh_runs` | One graph-refresh run; at most one `CAPTURING_BASE`/`GENERATING`/`READY` run per project |
 | `refresh_run_files` | The documents and revisions each run sent; the next refresh compares against the highest revision per document in runs that did not fail |
 | `refresh_results` | graph-rag's whole result file for a run, kept as JSONB with the sha256 of its bytes |

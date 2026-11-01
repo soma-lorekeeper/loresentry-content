@@ -38,6 +38,14 @@ public class VersionController {
         return ResponseEntity.status(201).body(version);
     }
 
+    @GetMapping("/files/{fileId}/versions/{versionId}")
+    public DocumentResponses.Version get(
+            @CurrentUser UUID userId,
+            @PathVariable UUID fileId,
+            @PathVariable UUID versionId) {
+        return documents.version(userId, fileId, versionId);
+    }
+
     /**
      * 복원도 저장이므로 {@code If-Match}를 요구한다. 그렇지 않으면 다른 탭이 방금 저장한 내용을
      * 복원이 조용히 덮어쓴다.

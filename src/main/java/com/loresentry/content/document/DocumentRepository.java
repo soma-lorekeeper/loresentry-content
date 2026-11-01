@@ -589,6 +589,21 @@ public class DocumentRepository {
                 .optional();
     }
 
+    Optional<DocumentResponses.Version> findVersionAtRevision(UUID fileId, String kind, long sourceRevision) {
+        return jdbcClient
+                .sql("""
+                        select v.id, v.document_id, d.project_id, v.kind, v.label, v.source_revision_no,
+                               v.created_at, v.snapshot_enc
+                        from document_versions v join document d on d.id = v.document_id
+                        where v.document_id = :id and v.kind = :kind and v.source_revision_no = :revision
+                        order by v.created_at desc, v.id desc
+                        limit 1
+                        """)
+                .param("id", fileId).param("kind", kind).param("revision", sourceRevision)
+                .query((rows, index) -> mapVersion(rows))
+                .optional();
+    }
+
     /** 충돌 응답의 공통 조상. 그 revision 의 스냅샷이 남아 있지 않으면 비어 있다. */
     Optional<DocumentSnapshot> snapshotAtRevision(UUID fileId, long revisionNo) {
         return jdbcClient
