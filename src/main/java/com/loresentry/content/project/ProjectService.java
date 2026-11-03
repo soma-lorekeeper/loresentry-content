@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.UUID;
 
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.outbox.OutboxRepository;
 
 import com.loresentry.content.media.MediaCleanup;
@@ -39,17 +41,20 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<Project> listActive(UUID ownerUserId) {
+        AppLogger.current().info("project list");
         return repository.findActive(ownerUserId);
     }
 
     @Transactional(readOnly = true)
     public List<Project> listTrashed(UUID ownerUserId) {
+        AppLogger.current().info("project trash list");
         return repository.findTrashed(ownerUserId);
     }
 
     /** 휴지통 프로젝트는 열 수 없으므로(요구사항 §2.2) 조회에서도 없는 것으로 본다. */
     @Transactional(readOnly = true)
     public Project getActive(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project get", LogField.projectId(projectId));
         Project project = require(ownerUserId, projectId);
         if (project.isTrashed()) {
             throw notFound();
@@ -59,6 +64,8 @@ public class ProjectService {
 
     @Transactional
     public Project create(UUID ownerUserId, CreateProjectRequest request) {
+        AppLogger.current().info("project create", LogField.param("name", request.name()),
+                LogField.param("description", request.description()));
         String name = validateName(request.name());
         String description = validateDescription(request.description());
 
@@ -67,6 +74,8 @@ public class ProjectService {
 
     @Transactional
     public Project update(UUID ownerUserId, UUID projectId, UpdateProjectRequest request) {
+        AppLogger.current().info("project update", LogField.projectId(projectId), LogField.param("name", request.name()),
+                LogField.param("description", request.description()));
         if (request.name() == null && request.description() == null) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
@@ -87,14 +96,18 @@ public class ProjectService {
     /** 이미 휴지통에 있으면 아무것도 하지 않는다. 재시도가 {@code trashed_at}을 밀지 않아야 한다. */
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project trash", LogField.projectId(projectId));
         require(ownerUserId, projectId);
         repository.markTrashed(projectId);
     }
 
     @Transactional
     public Project restore(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project restore", LogField.projectId(projectId));
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
+            // 휴지통에 없는 프로젝트라 바꿀 것이 없다(재시도 등)
+            AppLogger.current().info("project restore skipped", LogField.projectId(projectId), LogField.result("already_active", true));
             return project;
         }
 
@@ -112,6 +125,7 @@ public class ProjectService {
      */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project delete", LogField.projectId(projectId));
         Project project = require(ownerUserId, projectId);
         if (!project.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_TRASHED);
@@ -120,6 +134,8 @@ public class ProjectService {
         repository.delete(projectId);
         mediaCleanup.deleteAfterCommit(imageKeys);
         outbox.append(messages.projectDeleted(projectId, "PROJECT_DELETED"));
+        // 지울 S3 이미지 객체 수. 객체는 커밋 뒤에 지운다
+        AppLogger.current().info("project delete completed", LogField.projectId(projectId), LogField.result("image_keys", imageKeys));
     }
 
     private Project require(UUID ownerUserId, UUID projectId) {

@@ -2,6 +2,8 @@ package com.loresentry.content.file;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,6 +27,7 @@ public class FavoriteController {
 
     @GetMapping("/projects/{projectId}/favorites")
     public FavoriteService.Favorites list(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        AppLogger.current().info("favorite list requested", LogField.projectId(projectId));
         return favorites.list(userId, projectId);
     }
 
@@ -33,6 +36,7 @@ public class FavoriteController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @PathVariable UUID fileId) {
+        AppLogger.current().info("favorite add requested", LogField.projectId(projectId), LogField.fileId(fileId));
         return favorites.add(userId, projectId, fileId);
     }
 
@@ -41,6 +45,7 @@ public class FavoriteController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @PathVariable UUID fileId) {
+        AppLogger.current().info("favorite remove requested", LogField.projectId(projectId), LogField.fileId(fileId));
         return favorites.remove(userId, projectId, fileId);
     }
 }

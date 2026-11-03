@@ -2,6 +2,8 @@ package com.loresentry.content.graph;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.web.ContentFailure;
 
@@ -22,6 +24,7 @@ class GraphService {
 
     @Transactional(readOnly = true)
     GraphResponses.Graph of(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("graph get", LogField.projectId(projectId));
         if (!repository.projectExists(ownerUserId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }

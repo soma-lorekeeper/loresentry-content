@@ -3,6 +3,7 @@ package com.loresentry.content.inbox;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -45,6 +46,8 @@ class InboxRepository {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     boolean insertIfAbsent(String consumerName, UUID eventId) {
+        // 이벤트 ID 는 listener 가 바인딩한 로그 객체에 이미 붙어 있다
+        AppLogger.current().info("inbox event insert");
         int inserted = jdbcClient.sql("""
                         insert into inbox_events (consumer_name, event_id)
                         values (:consumer, :event)
@@ -68,6 +71,7 @@ class InboxRepository {
      * @return 지운 행의 수
      */
     int deleteProcessedBefore(OffsetDateTime cutoff) {
+        AppLogger.current().info("inbox processed events delete");
         return jdbcClient.sql("delete from inbox_events where processed_at < :cutoff")
                 .param("cutoff", cutoff)
                 .update();

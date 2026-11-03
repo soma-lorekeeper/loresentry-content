@@ -7,6 +7,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -20,6 +23,7 @@ class GraphRepository {
     }
 
     boolean projectExists(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project exists check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner"
                         + " and trashed_at is null")
@@ -33,6 +37,7 @@ class GraphRepository {
      * @param publicUrl 이미지 S3 키를 공개 주소로 바꾼다
      */
     List<GraphResponses.Node> nodes(UUID projectId, UnaryOperator<String> publicUrl) {
+        AppLogger.current().info("graph nodes list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, d.title, f.code as folder_code,
@@ -71,6 +76,7 @@ class GraphRepository {
      * <p>휴지통 문서가 걸린 행은 제외한다.
      */
     List<GraphResponses.Edge> edges(UUID projectId) {
+        AppLogger.current().info("graph edges list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select r.id, r.low_document_id as document_id,
@@ -98,6 +104,7 @@ class GraphRepository {
 
     /** 회차와 그 안의 원고 순서. 에피소드가 없는 원고는 담기지 않는다 — 화면이 따로 이어 붙인다. */
     List<GraphResponses.Episode> episodes(UUID projectId) {
+        AppLogger.current().info("graph episodes list", LogField.projectId(projectId));
         record Row(UUID episodeId, String name, UUID documentId) {
         }
         List<Row> rows = jdbcClient

@@ -6,9 +6,13 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.event.GraphRefreshRequested;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.SkipEntryLog;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -30,6 +34,7 @@ public class GraphRefreshRepository {
 
     /** 휴지통에 있는 프로젝트는 최신화하지 않는다. 남의 프로젝트와 같이 없는 것으로 답한다. */
     public boolean ownsActiveProject(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project owner check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner and trashed_at is null")
                 .param("id", projectId)
@@ -47,6 +52,7 @@ public class GraphRefreshRepository {
      * 기록은 세지 않는다 — 그 문서들은 graph-rag 가 처리하지 못했으므로 다시 보내야 한다.
      */
     public List<UUID> changedFiles(UUID projectId) {
+        AppLogger.current().info("refresh changed files list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id
@@ -75,6 +81,7 @@ public class GraphRefreshRepository {
      * 받지 않는다. 어느 쪽인지에 따라 클라이언트에 알리는 이유가 다르다.
      */
     public Optional<String> openRunStatus(UUID projectId) {
+        AppLogger.current().info("refresh open run status find", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select status from refresh_runs
@@ -92,6 +99,7 @@ public class GraphRefreshRepository {
      * {@code prompt_version} 은 graph-rag 가 완료 이벤트로 알려 줄 때 채운다.
      */
     public UUID insertRun(UUID projectId, UUID requestedBy) {
+        AppLogger.current().info("refresh run insert", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         insert into refresh_runs (project_id, requested_by, status)
@@ -113,6 +121,7 @@ public class GraphRefreshRepository {
      * 미리 가르는 데만 쓴다. 상태를 바꾸기 전에는 {@link #lockRun} 으로 다시 확인한다.
      */
     public Optional<RunRow> peek(UUID runId) {
+        AppLogger.current().info("refresh run peek", LogField.refreshRequestId(runId));
         return jdbcClient.sql("select id, project_id, status from refresh_runs where id = :id")
                 .param("id", runId)
                 .query(GraphRefreshRepository::mapRun)
@@ -121,6 +130,7 @@ public class GraphRefreshRepository {
 
     /** run 행을 잠그고 읽는다. 완료 반영·시간 제한·확정이 같은 run 을 동시에 바꾸지 않게 한다. */
     public Optional<RunRow> lockRun(UUID runId) {
+        AppLogger.current().info("refresh run lock", LogField.refreshRequestId(runId));
         return jdbcClient.sql("select id, project_id, status from refresh_runs where id = :id for update")
                 .param("id", runId)
                 .query(GraphRefreshRepository::mapRun)
@@ -138,6 +148,7 @@ public class GraphRefreshRepository {
 
     /** 이 프로젝트의 가장 최근 run. 폴링 응답이 보여 준다. */
     public Optional<RunInfo> latestInfo(UUID projectId) {
+        AppLogger.current().info("refresh latest run find", LogField.projectId(projectId));
         return jdbcClient.sql(RUN_INFO + " where project_id = :project order by started_at desc, id desc limit 1")
                 .param("project", projectId)
                 .query(GraphRefreshRepository::mapInfo)
@@ -146,6 +157,7 @@ public class GraphRefreshRepository {
 
     /** 이 프로젝트의 run 하나. 다른 프로젝트의 run 이면 비어 있다. */
     public Optional<RunInfo> findInfo(UUID projectId, UUID runId) {
+        AppLogger.current().info("refresh run find", LogField.projectId(projectId), LogField.refreshRequestId(runId));
         return jdbcClient.sql(RUN_INFO + " where id = :id and project_id = :project")
                 .param("id", runId).param("project", projectId)
                 .query(GraphRefreshRepository::mapInfo)
@@ -164,6 +176,7 @@ public class GraphRefreshRepository {
      * 저장과 확정이 엇갈리지 않는다. 다른 프로젝트의 run 이면 비어 있다.
      */
     public Optional<String> statusForShare(UUID projectId, UUID runId) {
+        AppLogger.current().info("refresh run share lock", LogField.projectId(projectId), LogField.refreshRequestId(runId));
         return jdbcClient.sql("select status from refresh_runs where id = :id and project_id = :project for share")
                 .param("id", runId).param("project", projectId)
                 .query(String.class)
@@ -177,12 +190,14 @@ public class GraphRefreshRepository {
 
     /** graph-rag 가 추출에 쓴 규칙 버전. 완료 이벤트가 알려 준다(실패여도 올 수 있다). */
     public void setPromptVersion(UUID runId, String promptVersion) {
+        AppLogger.current().info("refresh prompt version update", LogField.refreshRequestId(runId));
         jdbcClient.sql("update refresh_runs set prompt_version = :version where id = :id")
                 .param("version", promptVersion).param("id", runId).update();
     }
 
     /** 결과가 와서 검토할 작업본이 열렸다. */
     public void markReady(UUID runId) {
+        AppLogger.current().info("refresh run mark ready", LogField.refreshRequestId(runId));
         jdbcClient.sql("update refresh_runs set status = 'READY', ready_at = now() where id = :id")
                 .param("id", runId).update();
     }
@@ -194,6 +209,9 @@ public class GraphRefreshRepository {
      * @param message 실패 설명. 실패가 아니면 null
      */
     public void markEnded(UUID runId, String status, String code, String message) {
+        // 실패 코드는 부르는 쪽이 error.type 으로 남기고, 설명(message)에는 문서 내용이 섞일 수 있어 남기지 않는다
+        AppLogger.current().info("refresh run mark ended", LogField.refreshRequestId(runId),
+                LogField.code("status", status, Set.of("NO_CHANGE", "FAILED", "APPLIED")));
         jdbcClient.sql("""
                         update refresh_runs
                         set status = :status, completed_at = now(), error_code = :code, error_message = :message
@@ -209,6 +227,8 @@ public class GraphRefreshRepository {
      * @param json 결과 파일 그대로. jsonb 는 바이트를 정규화하므로 원본 해시를 따로 남긴다
      */
     public void storeResult(UUID runId, String json, String sha256, String bucket, String key) {
+        // 결과 원본·해시·S3 위치는 남기지 않는다
+        AppLogger.current().info("refresh result store", LogField.refreshRequestId(runId));
         UUID projectId = jdbcClient.sql("select project_id from refresh_runs where id = :id")
                 .param("id", runId).query(UUID.class).single();
         jdbcClient.sql("""
@@ -227,6 +247,7 @@ public class GraphRefreshRepository {
      * 시간 제한을 넘긴 GENERATING run 들을 잠그고 고른다. 다른 pod 가 같은 run 을 처리 중이면 건너뛴다
      * ({@code skip locked}) — 그 pod 가 끝낸다.
      */
+    @SkipEntryLog("Called by the 1-minute RefreshTimeout poll. RefreshTimeout logs start and end lines only in rounds that have runs to expire")
     public List<UUID> lockOverdue(Duration timeout, int limit) {
         return jdbcClient.sql("""
                         select id from refresh_runs
@@ -243,6 +264,7 @@ public class GraphRefreshRepository {
 
     /** 이 run 이 S3 입력에 실은 문서와 revision. 다음 요청의 기준선이 된다. */
     public void insertRunFiles(UUID runId, List<GraphRefreshRequested.File> files) {
+        AppLogger.current().info("refresh run files insert", LogField.refreshRequestId(runId), LogField.param("files", files));
         for (GraphRefreshRequested.File file : files) {
             jdbcClient
                     .sql("insert into refresh_run_files (refresh_run_id, file_id, revision_no) "

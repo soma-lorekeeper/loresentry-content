@@ -8,6 +8,8 @@ import com.loresentry.content.document.RefreshDocuments;
 import com.loresentry.content.event.GraphRefreshMessages;
 import com.loresentry.content.event.GraphRefreshMessages.PreparedInput;
 import com.loresentry.content.event.GraphRefreshRequested;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.refresh.DraftSnapshots;
 import com.loresentry.content.refresh.GraphRefreshRepository;
@@ -64,6 +66,7 @@ public class GraphRefreshRequestService {
      */
     @Transactional(isolation = Isolation.REPEATABLE_READ)
     public GraphRefreshResponse request(UUID userId, UUID projectId) {
+        AppLogger.current().info("graph refresh start", LogField.projectId(projectId));
         if (!repository.ownsActiveProject(userId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }
@@ -76,6 +79,8 @@ public class GraphRefreshRequestService {
         });
         List<UUID> changed = repository.changedFiles(projectId);
         if (changed.isEmpty()) {
+            // 지난 최신화 이후 바뀐 문서가 없어 보내지 않는다(200)
+            AppLogger.current().info("graph refresh start skipped", LogField.projectId(projectId), LogField.result("changed_files", changed));
             return GraphRefreshResponse.noChanges();
         }
 
@@ -92,6 +97,9 @@ public class GraphRefreshRequestService {
 
         // outbox 는 마지막에 한 번만 쓴다. append 가 잡는 lock 을 쥔 채 다른 행의 lock 을 기다리지 않게 하려는 것이다.
         outbox.append(messages.requested(projectId, requestId, userId, location.bucket(), location.key(), input));
+        // 새로 만든 최신화 요청, graph-rag 에 보낸 문서 수, 지난 최신화 뒤 바뀐 것으로 고른 문서 수
+        AppLogger.current().info("graph refresh start completed", LogField.projectId(projectId), LogField.refreshRequestId(requestId),
+                LogField.result("files", input.files()), LogField.result("changed_files", changed));
 
         return new GraphRefreshResponse(requestId, GraphRefreshResponse.Status.GENERATING, input.files().stream()
                 .map(file -> new GraphRefreshResponse.File(file.fileId(), file.revisionNo()))

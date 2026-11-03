@@ -1,6 +1,10 @@
 package com.loresentry.content.web;
 
+import java.util.Set;
 import java.util.UUID;
+
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
@@ -24,6 +28,9 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
 
     public static final String HEADER = "X-User-Id";
 
+    /** 헤더를 400 으로 거절한 이유(로그 전용). 값은 남기지 않는다 — gateway 가 넣은 사용자 id 이거나 위조 시도다. */
+    private static final Set<String> REJECT_REASONS = Set.of("MULTIPLE", "NOT_UUID", "NON_CANONICAL");
+
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
         return parameter.hasParameterAnnotation(CurrentUser.class)
@@ -39,6 +46,8 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
         }
         // 값이 둘 이상이면 어느 것이 gateway의 것인지 알 수 없다. 고르지 않고 거절한다.
         if (values.length != 1) {
+            AppLogger.current().warn("user header rejected", LogField.resultCode("reason", "MULTIPLE", REJECT_REASONS),
+                    LogField.result("values", values.length));
             throw invalidRequest();
         }
 
@@ -47,10 +56,14 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
             UUID id = UUID.fromString(text);
             // UUID.fromString은 비정규 표기도 받아들인다. 왕복해서 같아야만 통과시킨다.
             if (!id.toString().equalsIgnoreCase(text)) {
+                AppLogger.current().warn("user header rejected",
+                        LogField.resultCode("reason", "NON_CANONICAL", REJECT_REASONS), LogField.result("values", 1));
                 throw invalidRequest();
             }
             return id;
         } catch (IllegalArgumentException invalid) {
+            AppLogger.current().warn("user header rejected", LogField.resultCode("reason", "NOT_UUID", REJECT_REASONS),
+                    LogField.result("values", 1));
             throw invalidRequest();
         }
     }

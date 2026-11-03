@@ -25,7 +25,11 @@ dependencies {
 	implementation 'software.amazon.awssdk:s3'
 	implementation 'software.amazon.awssdk:kms'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
+	// W3C traceparent 전파와 span 생성(Micrometer Tracing + OpenTelemetry bridge, OTLP 전송). LOG_SCHEMA.md 7절
+	implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
 	testImplementation 'org.springframework.boot:spring-boot-starter-kafka-test'
+	// 로그는 AppLogger로만 찍는다는 규칙(LOG_SCHEMA.md 5절)을 테스트로 강제한다
+	testImplementation 'com.tngtech.archunit:archunit-junit5:1.5.0'
 	testImplementation 'org.testcontainers:testcontainers-kafka'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	runtimeOnly 'org.postgresql:postgresql'

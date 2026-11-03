@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.UUID;
 
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
@@ -65,11 +67,15 @@ public class UserDeletedService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void handle(UserDeletedEvent event) {
+        // 이벤트는 InboxListener 줄의 cloudevent 필드로 찾는다. 지운 사용자의 id 는 여기서 더하지 않는다
+        AppLogger.current().info("user content delete");
         List<UUID> projectIds = purge(event.userId());
         OutboxRecord[] outboxRecords = projectIds.stream()
                 .map(projectId -> messages.projectDeleted(projectId, "OWNER_DELETED"))
                 .toArray(OutboxRecord[]::new);
         outbox.append(outboxRecords);
+        // 지운 프로젝트 수. ProjectDeleted 를 같은 수만큼 outbox 에 남겼다
+        AppLogger.current().info("user content delete completed", LogField.result("projects", projectIds));
     }
 
     /**

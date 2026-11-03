@@ -2,6 +2,8 @@ package com.loresentry.content.image;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.media.InvalidUploadRequestException;
 import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.media.ObjectNotUploadedException;
@@ -38,6 +40,8 @@ public class ImageService {
     @Transactional
     public ImageDtos.Ticket createTicket(UUID ownerUserId, UUID projectId,
             ImageDtos.TicketRequest request) {
+        AppLogger.current().info("image upload ticket create", LogField.projectId(projectId),
+                LogField.param("size_bytes", request == null ? null : request.sizeBytes()));
         requireProject(ownerUserId, projectId);
         if (request == null || request.contentType() == null || request.sizeBytes() == null) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
@@ -53,6 +57,8 @@ public class ImageService {
 
         ImageRow row = repository.insertPending(projectId, request.fileName(), ticket.key(),
                 request.contentType().trim().toLowerCase(), request.sizeBytes());
+        // 새로 만든(PENDING) 이미지 행
+        AppLogger.current().info("image upload ticket create completed", LogField.projectId(projectId), LogField.imageId(row.id()));
 
         return new ImageDtos.Ticket(row.id(), ticket.key(), ticket.uploadUrl(), ticket.method(),
                 ticket.headers(), ticket.expiresAt(), ticket.publicUrl());
@@ -67,9 +73,13 @@ public class ImageService {
      */
     @Transactional
     public ImageDtos.Image complete(UUID ownerUserId, UUID projectId, UUID imageId) {
+        AppLogger.current().info("image upload complete", LogField.projectId(projectId), LogField.imageId(imageId));
         requireProject(ownerUserId, projectId);
         ImageRow row = require(projectId, imageId);
         if (row.isCommitted()) {
+            // 이미 확인한 업로드의 재시도다. 다시 확인하지 않는다
+            AppLogger.current().info("image upload complete replayed", LogField.projectId(projectId), LogField.imageId(imageId),
+                    LogField.result("already_committed", true));
             return toDto(row);
         }
 
@@ -86,6 +96,7 @@ public class ImageService {
 
     @Transactional(readOnly = true)
     public ImageDtos.Image get(UUID ownerUserId, UUID projectId, UUID imageId) {
+        AppLogger.current().info("image get", LogField.projectId(projectId), LogField.imageId(imageId));
         requireProject(ownerUserId, projectId);
         return toDto(require(projectId, imageId));
     }

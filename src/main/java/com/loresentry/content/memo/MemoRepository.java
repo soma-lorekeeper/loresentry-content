@@ -5,7 +5,11 @@ import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -23,6 +27,7 @@ public class MemoRepository {
     }
 
     boolean projectExists(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project exists check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner"
                         + " and trashed_at is null")
@@ -32,6 +37,7 @@ public class MemoRepository {
 
     /** 문서가 그 프로젝트의 활성 문서인지. 휴지통 문서에 메모를 새로 달 수는 없다. */
     boolean activeDocumentInProject(UUID projectId, UUID documentId) {
+        AppLogger.current().info("memo document check", LogField.projectId(projectId), LogField.documentId(documentId));
         return jdbcClient
                 .sql("select 1 from document where id = :id and project_id = :project"
                         + " and trashed_at is null")
@@ -41,6 +47,7 @@ public class MemoRepository {
 
     /** 최근 수정 순. 화면의 메모 카드 목록이 그 순서를 기대한다. */
     List<MemoDtos.Memo> listProjectMemos(UUID projectId) {
+        AppLogger.current().info("project memos list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select " + COLUMNS + " from memo where project_id = :project"
                         + " and scope = 'PROJECT' order by updated_at desc, id desc")
@@ -50,6 +57,7 @@ public class MemoRepository {
     }
 
     List<MemoDtos.Memo> listFileMemos(UUID projectId, UUID documentId) {
+        AppLogger.current().info("file memos list", LogField.projectId(projectId), LogField.documentId(documentId));
         return jdbcClient
                 .sql("select " + COLUMNS + " from memo where project_id = :project"
                         + " and scope = 'FILE' and document_id = :document"
@@ -64,6 +72,7 @@ public class MemoRepository {
      * 문서를 하나씩 골라 물으면 문서 수만큼 요청이 나가고, 어느 문서에도 없는 메모는 찾을 수 없다.
      */
     List<MemoDtos.Memo> listAllFileMemos(UUID projectId) {
+        AppLogger.current().info("all file memos list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select " + COLUMNS + " from memo where project_id = :project"
                         + " and scope = 'FILE' order by updated_at desc, id desc")
@@ -73,6 +82,9 @@ public class MemoRepository {
     }
 
     MemoDtos.Memo insert(UUID projectId, String scope, UUID documentId, String title, String body) {
+        // 메모 제목·본문은 남기지 않는다
+        AppLogger.current().info("memo insert", LogField.projectId(projectId), LogField.documentId(documentId),
+                LogField.code("scope", scope, Set.of("PROJECT", "FILE")));
         return jdbcClient
                 .sql("insert into memo (project_id, scope, document_id, title, body) "
                         + "values (:project, :scope, :document, :title, :body) returning " + COLUMNS)
@@ -84,6 +96,7 @@ public class MemoRepository {
 
     /** 소유권은 프로젝트에 있다. 메모 id 만으로 찾으면 남의 메모가 보인다. */
     Optional<MemoDtos.Memo> find(UUID ownerUserId, UUID memoId) {
+        AppLogger.current().info("memo find", LogField.memoId(memoId));
         return jdbcClient
                 .sql("""
                         select m.id, m.project_id, m.scope, m.document_id, m.title, m.body,
@@ -98,6 +111,7 @@ public class MemoRepository {
     }
 
     MemoDtos.Memo update(UUID memoId, String title, String body) {
+        AppLogger.current().info("memo update", LogField.memoId(memoId));
         return jdbcClient
                 .sql("update memo set title = :title, body = :body, updated_at = now() "
                         + "where id = :id returning " + COLUMNS)
@@ -107,6 +121,7 @@ public class MemoRepository {
     }
 
     void delete(UUID memoId) {
+        AppLogger.current().info("memo delete", LogField.memoId(memoId));
         jdbcClient.sql("delete from memo where id = :id").param("id", memoId).update();
     }
 

@@ -3,6 +3,9 @@ package com.loresentry.content.refresh.request;
 import java.time.Duration;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -12,6 +15,7 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * 최신화 입력을 S3 에 올린다. bucket 과 key 를 정하는 곳은 여기뿐이다.
@@ -20,6 +24,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  * 받고, 요청 id 가 key 에 있어 다른 요청의 입력을 덮어쓰지 않는다. 그래도 덮어쓰지 않도록 S3 에 조건을 건다.
  */
 @Component
+@LogLayer("client")
 class RefreshInputStorage {
 
     /** S3 응답이 늦을 때 요청 트랜잭션을 오래 붙잡지 않는다. */
@@ -45,7 +50,11 @@ class RefreshInputStorage {
      * 반대로 올린 뒤 트랜잭션이 실패하면 객체만 남는데, bucket 의 수명 규칙과 정리 작업이 지운다.
      */
     Location put(UUID projectId, UUID requestId, byte[] json) {
+        // bucket·key 와 입력 내용은 남기지 않는다
+        AppLogger.current().info("s3 refresh input put call", LogField.projectId(projectId), LogField.refreshRequestId(requestId));
         if (bucket.isBlank()) {
+            // 설정(graph-refresh.request-bucket)이 비어 있다. 응답은 503 이고, 원인은 이 줄로만 보인다
+            AppLogger.current().warn("graph refresh input bucket not configured");
             throw new ContentFailure(ContentFailure.Reason.REFRESH_UNAVAILABLE);
         }
         String key = "refresh/" + projectId + "/" + requestId + "/input.json";
@@ -59,6 +68,11 @@ class RefreshInputStorage {
                             .build(),
                     RequestBody.fromBytes(json));
         } catch (SdkException failure) {
+            // 예외 메시지에는 bucket·key 가 들어 있어 종류와 프레임만 남긴다. 응답 코드는 S3 가 답했을 때(S3Exception)만 있다
+            AppLogger.current().warn("s3 refresh input put failed", LogField.projectId(projectId),
+                    LogField.refreshRequestId(requestId), LogField.errorType(failure.getClass().getName()),
+                    failure instanceof S3Exception s3 ? LogField.result("s3_status_code", s3.statusCode()) : null,
+                    LogField.safeStackTrace(failure));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_UNAVAILABLE);
         }
         return new Location(bucket, key);

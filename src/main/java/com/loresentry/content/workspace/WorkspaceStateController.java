@@ -2,6 +2,8 @@ package com.loresentry.content.workspace;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.http.ResponseEntity;
@@ -29,6 +31,7 @@ public class WorkspaceStateController {
 
     @GetMapping("/projects/{projectId}/workspace-state")
     public WorkspaceStateService.State load(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        AppLogger.current().info("workspace state get requested", LogField.projectId(projectId));
         return state.load(userId, projectId);
     }
 
@@ -37,6 +40,9 @@ public class WorkspaceStateController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @RequestBody WorkspaceStateService.State body) {
+        // 레이아웃 JSON 은 바이트 수만 남는다
+        AppLogger.current().info("workspace state save requested", LogField.projectId(projectId),
+                LogField.param("layout", body == null ? null : body.layout()));
         state.save(userId, projectId, body);
         return ResponseEntity.noContent().build();
     }

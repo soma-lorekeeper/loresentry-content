@@ -15,6 +15,8 @@ import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
 import com.loresentry.content.file.FileService;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.project.ProjectActivity;
@@ -79,6 +81,7 @@ public class RefreshConfirmService {
 
     @Transactional
     public ConfirmResponses.Confirmed confirm(UUID userId, UUID projectId, UUID runId) {
+        AppLogger.current().info("graph refresh confirm", LogField.projectId(projectId), LogField.refreshRequestId(runId));
         if (!runs.ownsActiveProject(userId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }
@@ -93,6 +96,9 @@ public class RefreshConfirmService {
         List<String> unmatched = open.stream().filter(draft -> !draft.matched())
                 .map(draft -> draft.id().toString()).toList();
         if (!unmatched.isEmpty()) {
+            // 두 쪽이 아직 같지 않은 작업본이 있다(검증 실패)
+            AppLogger.current().warn("graph refresh confirm drafts unmatched", LogField.refreshRequestId(runId),
+                    LogField.result("unmatched", unmatched));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DRAFTS_UNMATCHED, Map.of("drafts", unmatched));
         }
         List<RefreshDraftRepository.ConfirmDraft> edits = open.stream()
@@ -109,7 +115,7 @@ public class RefreshConfirmService {
         requireUnchanged(runId, edits, locked);
 
         RelationDelta.Plan plan = RelationDelta.merge(sides(edits, accepted));
-        requireApplicable(projectId, edits, accepted, declined, plan);
+        requireApplicable(projectId, runId, edits, accepted, declined, plan);
 
         // 1. 새 설정 문서. 임시 이름 순으로 만들어 결과가 매번 같게 한다.
         Map<String, UUID> createdIds = new LinkedHashMap<>();
@@ -200,6 +206,9 @@ public class RefreshConfirmService {
         }
         open.stream().filter(draft -> "NEW".equals(draft.kind()) && draft.right() == null)
                 .forEach(draft -> unchanged.add(draft.id()));
+        // 새로 만든 문서·바꾼 문서·그대로 둔 작업본 수
+        AppLogger.current().info("graph refresh confirm completed", LogField.projectId(projectId), LogField.refreshRequestId(runId),
+                LogField.result("created", created), LogField.result("updated", updated), LogField.result("unchanged", unchanged));
         return new ConfirmResponses.Confirmed(runId, "APPLIED", created, updated, unchanged);
     }
 
@@ -220,6 +229,9 @@ public class RefreshConfirmService {
             }
         }
         if (!changed.isEmpty()) {
+            // 잠금 아래에서는 생기지 않아야 하는 어긋남이다. 어긋난 문서 수만 남긴다(목록은 응답에 있다)
+            AppLogger.current().warn("graph refresh confirm documents changed", LogField.refreshRequestId(runId),
+                    LogField.result("changed", changed));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DOCUMENTS_CHANGED, Map.of("documents", changed));
         }
     }
@@ -239,7 +251,7 @@ public class RefreshConfirmService {
      * 쓰기 전에 그대로 반영할 수 있는지 모두 확인한다. 하나라도 안 되면 무엇이 문제인지 목록으로 알리고 아무것도 쓰지
      * 않는다.
      */
-    private void requireApplicable(UUID projectId, List<RefreshDraftRepository.ConfirmDraft> edits,
+    private void requireApplicable(UUID projectId, UUID runId, List<RefreshDraftRepository.ConfirmDraft> edits,
             List<RefreshDraftRepository.ConfirmDraft> accepted, Set<String> declined, RelationDelta.Plan plan) {
         List<Map<String, String>> problems = new ArrayList<>();
         plan.conflicts().forEach(conflict -> problems.add(Map.of("code", "RELATION_CONFLICT",
@@ -279,6 +291,9 @@ public class RefreshConfirmService {
             }
         }
         if (!problems.isEmpty()) {
+            // 반영할 수 없는 문제 수만 남긴다. 문제마다의 대상(임시 이름에는 제목이 들어 있다)은 응답에만 싣는다
+            AppLogger.current().warn("graph refresh confirm drafts invalid", LogField.refreshRequestId(runId),
+                    LogField.result("problems", problems));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DRAFTS_INVALID, Map.of("problems", problems));
         }
     }

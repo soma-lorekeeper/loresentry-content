@@ -9,6 +9,8 @@ import java.util.UUID;
 import com.loresentry.content.event.RefreshInput.Document;
 import com.loresentry.content.event.RefreshInput.Property;
 import com.loresentry.content.event.RefreshInput.Relation;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -43,6 +45,7 @@ class GraphRefreshEventRepository {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     List<Document> documents(UUID projectId, List<UUID> ids) {
+        AppLogger.current().info("refresh input documents list", LogField.projectId(projectId), LogField.param("ids", ids));
         Map<UUID, List<Property>> properties = new HashMap<>();
         jdbcClient
                 .sql("select document_id, property_key, text_value from document_properties "
@@ -104,6 +107,7 @@ class GraphRefreshEventRepository {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     List<UUID> latestFileChangedEvents(UUID projectId) {
+        AppLogger.current().info("latest file changed events list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select distinct on (aggregate_id) id

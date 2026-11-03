@@ -2,6 +2,10 @@ package com.loresentry.content.project;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +20,7 @@ import org.springframework.stereotype.Component;
  * 저장소를 끌어오면 도메인 사이에 양방향 의존이 생기기 때문이다.
  */
 @Component
+@LogLayer("service")
 public class ProjectActivity {
 
     private final JdbcClient jdbcClient;
@@ -26,6 +31,7 @@ public class ProjectActivity {
 
     /** 프로젝트를 직접 안다. */
     public void touch(UUID projectId) {
+        AppLogger.current().info("project activity touch", LogField.projectId(projectId));
         jdbcClient.sql("update projects set updated_at = now() where id = :id")
                 .param("id", projectId)
                 .update();
@@ -33,6 +39,7 @@ public class ProjectActivity {
 
     /** 문서만 아는 호출자를 위해. 소유권은 호출자가 이미 확인했다. */
     public void touchByDocument(UUID documentId) {
+        AppLogger.current().info("project activity touch by document", LogField.documentId(documentId));
         jdbcClient
                 .sql("update projects set updated_at = now() "
                         + "where id = (select project_id from document where id = :document)")
@@ -48,6 +55,8 @@ public class ProjectActivity {
      * 본문을 쓴 것이다.
      */
     public void recordWorkedFile(UUID projectId, UUID documentId) {
+        // 대상은 프로젝트이고, 문서는 "마지막으로 작업한 파일"(last_file_id)로 적을 값이라 param이다
+        AppLogger.current().info("project worked file record", LogField.projectId(projectId), LogField.param("last_file_id", documentId));
         jdbcClient
                 .sql("update projects set updated_at = now(), last_file_id = :document "
                         + "where id = :project")

@@ -2,6 +2,8 @@ package com.loresentry.content.refresh.request;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.http.HttpStatus;
@@ -25,6 +27,7 @@ public class GraphRefreshRequestController {
      */
     @PostMapping("/projects/{projectId}/graph-refresh")
     public ResponseEntity<GraphRefreshResponse> request(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        AppLogger.current().info("graph refresh start requested", LogField.projectId(projectId));
         GraphRefreshResponse response = refresh.request(userId, projectId);
         HttpStatus status = response.status() == GraphRefreshResponse.Status.GENERATING
                 ? HttpStatus.ACCEPTED : HttpStatus.OK;

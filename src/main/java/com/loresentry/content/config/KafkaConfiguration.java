@@ -1,11 +1,13 @@
 package com.loresentry.content.config;
 
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.support.KafkaUtils;
+import org.springframework.kafka.support.ProducerListener;
 
 /**
- * spring-kafka 의 기본 동작 중 이 앱에 맞지 않는 두 가지를 바꾼다.
+ * spring-kafka 의 기본 동작 중 이 앱에 맞지 않는 세 가지를 바꾼다.
  *
  * <p>첫째, Kafka listener 의 켜고 끄는 설정이 앱이 다시 시작될 때도 지켜지게 한다. listener 는 설정
  * (kafka.consumer.enabled.*)으로 켜고 끈다({@code @KafkaListener(autoStartup = …)}). 그런데 spring-kafka 의 registry 는
@@ -15,8 +17,12 @@ import org.springframework.kafka.support.KafkaUtils;
  * 멈춰 두었다가 다시 쓸 때 재시작해서, 이 설정이 없으면 꺼 둔 listener 가 테스트 도중에 켜진다.
  *
  * <p>둘째, 보내는 메시지를 로그에 옮길 때 내용(value)을 빼게 한다. spring-kafka 는 보내는 record 를 기본으로 통째로
- * 글자로 바꿔 찍는데, 거기에는 원고 본문 같은 payload 가 그대로 들어간다. 그렇게 찍는 곳은 DEBUG·TRACE 수준뿐이라
- * 평소에는 나가지 않는다. 장애를 보려고 그 수준을 잠시 켜도 본문이 로그에 남지 않게 한다.
+ * 글자로 바꿔 찍는데, 거기에는 원고 본문 같은 payload 가 그대로 들어간다. 이 형식({@link KafkaUtils#format})을 쓰는
+ * 곳은 DEBUG·TRACE 수준뿐이다. 장애를 보려고 그 수준을 잠시 켜도 본문이 로그에 남지 않게 한다.
+ *
+ * <p>셋째, 보내기에 실패할 때마다 찍히는 ERROR 줄을 없앤다. Spring Boot 가 KafkaTemplate 에 기본으로 다는
+ * {@code LoggingProducerListener} 는 위 형식을 쓰지 않고 key, payload 앞부분(100자), 예외 메시지를 ERROR 로 찍는다. 그 실패는
+ * outbox relay(OutboxPublisher)와 DLQ 처리(InboxErrorHandling)가 이벤트 id·예외 종류로 이미 남긴다.
  */
 @Configuration(proxyBeanMethods = false)
 public class KafkaConfiguration {
@@ -28,5 +34,16 @@ public class KafkaConfiguration {
         // 보내는 record 는 topic 과 partition 만 찍는다. 앱 전체에 한 번 정하는 값이다(static). partition 을 정하지 않고
         // 보낸 record 는 null 로 찍힌다.
         KafkaUtils.setProducerRecordFormatter(record -> record.topic() + "-" + record.partition());
+    }
+
+    /**
+     * 아무것도 하지 않는 producer listener. 이 bean 이 있으면 Spring Boot 는 기본 {@code LoggingProducerListener} 를
+     * 만들지 않고({@code @ConditionalOnMissingBean}) 이것을 KafkaTemplate 에 단다. 성공·실패는 send() 가 돌려주는
+     * future 로 받는 쪽이 판단하고 기록한다.
+     */
+    @Bean
+    ProducerListener<Object, Object> silentProducerListener() {
+        return new ProducerListener<>() {
+        };
     }
 }

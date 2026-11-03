@@ -54,10 +54,62 @@ spring:
       # 종료 신호를 받으면 처리 중인 메시지 하나만 끝내고 멈춘다. 남은 메시지는 처리하지 않았으므로 다음 pod 가 받는다.
       # pod 가 강제 종료되기까지의 30초를 HTTP 요청 마무리에 남기기 위해서다.
       immediate-stop: true
+      # 받은 메시지의 traceparent 헤더를 이어받아 레코드마다 span 을 연다(LOG_SCHEMA.md 7절 Kafka 소비).
+      # 보내는 쪽(KafkaTemplate) observation 은 켜지 않는다. outbox relay 가 행에 저장된 traceparent 를 헤더로 싣기 때문이다
+      observation-enabled: true
 
 server:
   port: 8000
   shutdown: graceful
+
+# 로그: 모든 줄을 ECS JSON 한 줄로 stdout에 쓴다(docs LOG_SCHEMA.md 5절). Logstash가 이 줄을 필드로 펼친다.
+logging:
+  structured:
+    format:
+      # Boot 내장 ecs 형식 대신 우리 formatter. log.origin.function·error.type 같은 필드를 이름 충돌 없이 함께 낸다
+      console: com.loresentry.content.logging.EcsLogFormatter
+    ecs:
+      service:
+        # Kubernetes 이름(LOG_SCHEMA.md 6절). spring.application.name(content)과 다르다
+        name: content-api
+        # 이미지 태그(build-<run>-<attempt>). CI가 docker build --build-arg로 넘기고 Dockerfile이 ENV로 둔다
+        version: ${APP_VERSION:unknown}
+
+# trace: W3C traceparent로 span을 잇는다(LOG_SCHEMA.md 7절).
+management:
+  tracing:
+    sampling:
+      # dev는 모든 요청을 기록한다. prod 비율은 prod 실측 후 overlay 환경 변수로 정한다
+      probability: 1.0
+    propagation:
+      # W3C 헤더만 읽고 쓴다. B3 등 다른 형식은 받지 않는다
+      consume: w3c
+      produce: w3c
+    baggage:
+      # baggage 헤더는 쓰지 않는다
+      enabled: false
+    export:
+      # 전체는 켜 둔다. Boot 4는 W3C 전파기(traceparent 읽기·쓰기)도 이 값에 묶어 두어, 끄면 전파기가 noop이 되어
+      # 받은 traceparent를 잇지 못하고 내부 호출에 싣지도 못한다
+      enabled: true
+      otlp:
+        # span 전송(OTLP)만 끈다. collector를 세운 뒤 dev overlay 환경 변수(MANAGEMENT_TRACING_EXPORT_OTLP_ENABLED)로 켠다.
+        # 꺼 두어도 trace ID는 만들어지고 전파된다
+        enabled: false
+  opentelemetry:
+    resource-attributes:
+      "[service.name]": content-api
+      "[service.version]": ${APP_VERSION:unknown}
+  otlp:
+    metrics:
+      export:
+        # 지표는 Prometheus가 수집한다. OTLP로 따로 보내지 않는다
+        enabled: false
+  logging:
+    export:
+      otlp:
+        # 로그는 stdout → Filebeat → Logstash로 수집한다. OTLP로 따로 보내지 않는다
+        enabled: false
 
 manuscript:
   key-id: ${MANUSCRIPT_KEY_ID:}

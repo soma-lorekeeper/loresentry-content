@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -49,6 +51,7 @@ public class FileRepository {
     }
 
     List<FileRows.BaseFolder> baseFolders() {
+        AppLogger.current().info("base folders list");
         return jdbcClient.sql("select id, code, name, position from base_folders order by position")
                 .query((rows, index) -> new FileRows.BaseFolder(
                         rows.getShort("id"), rows.getString("code"),
@@ -57,6 +60,7 @@ public class FileRepository {
     }
 
     boolean projectExists(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project exists check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner and trashed_at is null")
                 .param("id", projectId)
@@ -67,6 +71,7 @@ public class FileRepository {
     }
 
     List<FileRows.Episode> episodes(UUID projectId) {
+        AppLogger.current().info("episodes list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select id, name, rank from episode_folders where project_id = :project order by rank")
                 .param("project", projectId)
@@ -76,6 +81,7 @@ public class FileRepository {
     }
 
     List<FileRows.Document> activeDocuments(UUID projectId) {
+        AppLogger.current().info("active documents list", LogField.projectId(projectId));
         return jdbcClient
                 .sql(DOCUMENT_SELECT + " where d.project_id = :project and d.trashed_at is null"
                         + " order by d.folder_id, d.rank")
@@ -85,6 +91,7 @@ public class FileRepository {
     }
 
     List<FileRows.TrashEntry> trashedDocuments(UUID projectId) {
+        AppLogger.current().info("trashed documents list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, d.title, f.code as folder_code, e.name as episode_name, d.trashed_at
@@ -103,6 +110,7 @@ public class FileRepository {
     }
 
     Optional<FileRows.Document> findDocument(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("document find", LogField.fileId(fileId));
         return jdbcClient
                 .sql(DOCUMENT_SELECT + " where d.id = :id and p.owner_user_id = :owner")
                 .param("id", fileId)
@@ -112,6 +120,7 @@ public class FileRepository {
     }
 
     Optional<FileRows.Episode> findEpisode(UUID ownerUserId, UUID episodeId) {
+        AppLogger.current().info("episode find", LogField.episodeId(episodeId));
         return jdbcClient
                 .sql("""
                         select e.id, e.name, e.rank
@@ -127,6 +136,7 @@ public class FileRepository {
     }
 
     UUID projectOfEpisodeOrNull(UUID episodeId) {
+        AppLogger.current().info("episode project find", LogField.episodeId(episodeId));
         return jdbcClient.sql("select project_id from episode_folders where id = :id")
                 .param("id", episodeId)
                 .query(UUID.class)
@@ -136,6 +146,9 @@ public class FileRepository {
 
     /** 같은 위치의 활성 형제 순서 값을 오름차순으로. rank 계산에만 쓴다. */
     List<String> siblingRanks(UUID projectId, short folderId, UUID episodeId, UUID excludingFileId) {
+        // 회차는 형제들이 놓인 범위라 전용 필드, 계산에서 빼는 파일(옮기는 자신)은 참조라 param 이다
+        AppLogger.current().info("sibling ranks list", LogField.projectId(projectId), LogField.episodeId(episodeId),
+                LogField.param("excluding_file_id", excludingFileId));
         return jdbcClient
                 .sql("""
                         select rank from document
@@ -155,6 +168,7 @@ public class FileRepository {
     }
 
     List<String> episodeRanks(UUID projectId) {
+        AppLogger.current().info("episode ranks list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select rank from episode_folders where project_id = :project order by rank")
                 .param("project", projectId)
@@ -163,6 +177,8 @@ public class FileRepository {
     }
 
     Optional<String> rankOfSibling(UUID projectId, short folderId, UUID episodeId, UUID fileId) {
+        // 순서 값을 읽는 기준 형제 파일이 이 줄의 대상이다
+        AppLogger.current().info("sibling rank find", LogField.projectId(projectId), LogField.episodeId(episodeId), LogField.fileId(fileId));
         return jdbcClient
                 .sql("""
                         select rank from document
@@ -178,6 +194,7 @@ public class FileRepository {
     }
 
     FileRows.Document insertDocument(UUID projectId, short folderId, UUID episodeId, String title, String rank) {
+        AppLogger.current().info("document insert", LogField.projectId(projectId), LogField.episodeId(episodeId));
         UUID id = jdbcClient.sql("select uuidv7()").query(UUID.class).single();
         jdbcClient
                 .sql("""
@@ -200,6 +217,7 @@ public class FileRepository {
     }
 
     FileRows.Episode insertEpisode(UUID projectId, UUID createdBy, String name, String rank) {
+        AppLogger.current().info("episode insert", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         insert into episode_folders (project_id, created_by_user_id, name, rank)
@@ -216,12 +234,14 @@ public class FileRepository {
     }
 
     FileRows.Document renameDocument(UUID fileId, String title) {
+        AppLogger.current().info("document rename", LogField.fileId(fileId));
         jdbcClient.sql("update document set title = :title, updated_at = now() where id = :id")
                 .param("id", fileId).param("title", title).update();
         return requireDocument(fileId);
     }
 
     FileRows.Episode renameEpisode(UUID episodeId, String name) {
+        AppLogger.current().info("episode rename", LogField.episodeId(episodeId));
         return jdbcClient
                 .sql("update episode_folders set name = :name, updated_at = now() where id = :id"
                         + " returning id, name, rank")
@@ -232,6 +252,7 @@ public class FileRepository {
     }
 
     FileRows.Placed moveDocument(UUID fileId, short folderId, UUID episodeId, String rank) {
+        AppLogger.current().info("document move", LogField.fileId(fileId), LogField.param("target_episode_id", episodeId));
         boolean locationChanged = jdbcClient
                 .sql("""
                         update document
@@ -249,6 +270,7 @@ public class FileRepository {
 
     /** @return 이 호출이 휴지통으로 보냈나. 이미 휴지통에 있었으면 false 다. */
     boolean trashDocument(UUID fileId) {
+        AppLogger.current().info("document trash", LogField.fileId(fileId));
         return jdbcClient.sql("update document set trashed_at = now(), updated_at = now()"
                         + " where id = :id and trashed_at is null")
                 .param("id", fileId).update() == 1;
@@ -256,6 +278,7 @@ public class FileRepository {
 
     /** 원래 있던 에피소드가 사라졌으면 원고 폴더 최상위로 돌린다(요구사항 §4.2). */
     FileRows.Placed restoreDocument(UUID fileId, boolean dropEpisode, String rank) {
+        AppLogger.current().info("document restore", LogField.fileId(fileId), LogField.param("drop_episode", dropEpisode));
         boolean locationChanged = jdbcClient
                 .sql("""
                         update document
@@ -277,12 +300,14 @@ public class FileRepository {
      * 잠그지 않으면 이웃을 읽은 뒤 생긴 관계가 삭제에 휩쓸려 사라지는데, 그 관계를 가진 문서의 이벤트는 나가지 않는다.
      */
     void lockForDelete(UUID fileId) {
+        AppLogger.current().info("document delete lock", LogField.fileId(fileId));
         jdbcClient.sql("select id from document where id = :id for update")
                 .param("id", fileId).query(UUID.class).optional();
     }
 
     /** 이 문서가 high 인 관계의 low 문서들. 그 관계는 low 문서가 가지므로, 이 문서가 사라지면 그 문서들이 바뀐다. */
     List<UUID> relationOwnersOf(UUID fileId) {
+        AppLogger.current().info("relation owners list", LogField.fileId(fileId));
         return jdbcClient
                 .sql("select low_document_id from document_relations where high_document_id = :id"
                         + " order by low_document_id")
@@ -292,11 +317,13 @@ public class FileRepository {
     }
 
     void deleteDocument(UUID fileId) {
+        AppLogger.current().info("document delete", LogField.fileId(fileId));
         jdbcClient.sql("delete from document where id = :id").param("id", fileId).update();
     }
 
     /** 이미지가 이 프로젝트의 것이고 업로드가 확인됐는가. PENDING 이면 아직 주소를 줄 수 없다. */
     Optional<String> imageStatus(UUID projectId, UUID imageId) {
+        AppLogger.current().info("image status find", LogField.projectId(projectId), LogField.imageId(imageId));
         return jdbcClient.sql("select status from image where id = :id and project_id = :project")
                 .param("id", imageId).param("project", projectId)
                 .query(String.class)
@@ -309,6 +336,8 @@ public class FileRepository {
      * @return 이전 이미지 id. 없었거나 같은 이미지면 비어 있다
      */
     Optional<UUID> replaceImage(UUID fileId, UUID imageId) {
+        // 대상은 문서이고 새로 붙일 이미지는 연결 상대라 param 이다(떼면 null 이라 빠진다)
+        AppLogger.current().info("document image replace", LogField.fileId(fileId), LogField.param("attached_image_id", imageId));
         UUID previous = jdbcClient
                 .sql("update document set image_id = :image where id = :id returning old.image_id")
                 .param("id", fileId).param("image", imageId)
@@ -320,6 +349,7 @@ public class FileRepository {
 
     /** 이미지 행과 그 S3 키. 행을 지운 뒤에는 어느 객체를 지울지 다시 찾을 수 없으므로 키를 먼저 돌려준다. */
     Optional<String> deleteImage(UUID imageId) {
+        AppLogger.current().info("image delete", LogField.imageId(imageId));
         return jdbcClient.sql("delete from image where id = :id returning s3_key")
                 .param("id", imageId)
                 .query(String.class)
@@ -327,6 +357,7 @@ public class FileRepository {
     }
 
     Optional<UUID> imageOf(UUID fileId) {
+        AppLogger.current().info("document image find", LogField.fileId(fileId));
         return jdbcClient.sql("select image_id from document where id = :id and image_id is not null")
                 .param("id", fileId)
                 .query(UUID.class)
@@ -339,6 +370,7 @@ public class FileRepository {
      * @return 원고 폴더로 돌아간 문서들(휴지통 문서 포함). update 문이 실제로 바꾼 행이다
      */
     List<UUID> deleteEpisode(UUID episodeId) {
+        AppLogger.current().info("episode delete", LogField.episodeId(episodeId));
         List<UUID> moved = jdbcClient
                 .sql("update document set episode_id = null, updated_at = now() where episode_id = :id"
                         + " returning id")
@@ -348,6 +380,7 @@ public class FileRepository {
     }
 
     boolean episodeStillExists(UUID episodeId) {
+        AppLogger.current().info("episode exists check", LogField.episodeId(episodeId));
         return episodeId != null && jdbcClient
                 .sql("select 1 from episode_folders where id = :id")
                 .param("id", episodeId).query(Integer.class).optional().isPresent();

@@ -15,6 +15,8 @@ import com.loresentry.content.document.DocumentSnapshot;
 import com.loresentry.content.file.FileRequests;
 import com.loresentry.content.file.FileResponses;
 import com.loresentry.content.file.FileService;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.project.CreateProjectRequest;
 import com.loresentry.content.project.Project;
 import com.loresentry.content.project.ProjectService;
@@ -63,6 +65,8 @@ public class SampleProjectService {
 
     @Transactional
     public Project create(UUID ownerUserId, String locale) {
+        // 로케일은 ko·en 이면 그대로, 아니면 other 로 남는다
+        AppLogger.current().info("sample project create", LogField.code("locale", locale, Set.of("ko", "en")));
         SampleSeed seed = seedFor(locale);
         Project project = projects.create(ownerUserId,
                 new CreateProjectRequest(freeName(ownerUserId, seed.name()), seed.description()));
@@ -102,6 +106,8 @@ public class SampleProjectService {
                     relations));
         }
 
+        // 새로 만든 예시 프로젝트와 그 안에 만든 문서 수
+        AppLogger.current().info("sample project create completed", LogField.projectId(projectId), LogField.result("documents", order));
         return projects.getActive(ownerUserId, projectId);
     }
 

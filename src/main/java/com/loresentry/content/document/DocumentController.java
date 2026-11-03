@@ -3,6 +3,8 @@ package com.loresentry.content.document;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 import com.loresentry.content.web.CurrentUser;
 
@@ -33,6 +35,7 @@ public class DocumentController {
 
     @GetMapping("/files/{fileId}/content")
     public DocumentResponses.Content get(@CurrentUser UUID userId, @PathVariable UUID fileId) {
+        AppLogger.current().info("document get requested", LogField.fileId(fileId));
         return documents.get(userId, fileId);
     }
 
@@ -45,6 +48,7 @@ public class DocumentController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @RequestParam("ids") List<String> ids) {
+        AppLogger.current().info("document contents get requested", LogField.projectId(projectId), LogField.param("ids", ids));
         return documents.contents(userId, projectId, ids);
     }
 
@@ -59,6 +63,12 @@ public class DocumentController {
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestHeader(value = SAVE_ID_HEADER, required = false) String saveId,
             @RequestBody DocumentSnapshot body) {
+        // If-Match 는 아직 해석 전 문자열이라 가려져 길이만 남는다. 제목은 길이, 본문 JSON 은 바이트 수, 속성·관계는 개수만 남는다
+        AppLogger.current().info("document save requested", LogField.fileId(fileId), LogField.saveId(saveId),
+                LogField.param("if_match", ifMatch), LogField.param("title", body == null ? null : body.title()),
+                LogField.param("body", body == null ? null : body.body()),
+                LogField.param("properties", body == null ? null : body.properties()),
+                LogField.param("relations", body == null ? null : body.relations()));
         return documents.save(userId, fileId, revisionOf(ifMatch), saveIdOf(saveId), body);
     }
 
@@ -67,6 +77,8 @@ public class DocumentController {
             @CurrentUser UUID userId,
             @PathVariable UUID fileId,
             @RequestBody LockRequest request) {
+        AppLogger.current().info("document lock set requested", LogField.fileId(fileId),
+                LogField.param("locked", request == null ? null : request.locked()));
         return documents.setLocked(userId, fileId, request.locked());
     }
 

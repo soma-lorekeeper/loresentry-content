@@ -2,6 +2,8 @@ package com.loresentry.content.search;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -27,6 +29,8 @@ public class SearchService {
 
     @Transactional(readOnly = true)
     public SearchResponses.Results search(UUID ownerUserId, UUID projectId, String rawQuery) {
+        // 검색어는 길이도 남기지 않는다
+        AppLogger.current().info("project search", LogField.projectId(projectId));
         if (!projectExists(ownerUserId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }
@@ -34,6 +38,7 @@ public class SearchService {
         String query = rawQuery == null ? "" : rawQuery.trim();
         if (query.isEmpty()) {
             // 빈 검색어는 오류가 아니라 결과 없음이다. 화면에 빈 상태가 따로 있다.
+            AppLogger.current().info("project search skipped", LogField.projectId(projectId), LogField.result("empty_query", true));
             return new SearchResponses.Results(java.util.List.of());
         }
 

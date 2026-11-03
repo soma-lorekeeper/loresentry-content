@@ -11,10 +11,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import org.flywaydb.core.api.migration.BaseJavaMigration;
 import org.flywaydb.core.api.migration.Context;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -23,7 +23,6 @@ import tools.jackson.databind.node.ObjectNode;
 @Component
 public class V19__EncryptManuscripts extends BaseJavaMigration {
 
-    private static final Logger log = LoggerFactory.getLogger(V19__EncryptManuscripts.class);
 
     private final KeyWrapper wrapper;
 
@@ -53,8 +52,9 @@ public class V19__EncryptManuscripts extends BaseJavaMigration {
             statement.execute("ALTER TABLE document_versions ALTER COLUMN snapshot_enc SET NOT NULL");
             statement.execute("ALTER TABLE refresh_results ALTER COLUMN payload_enc SET NOT NULL");
         }
-        log.info("manuscript encryption: projects={}, documents={}, versions={}, drafts={}, results={}, events={}",
-                keys.size(), documents, versions, drafts, results, events);
+        AppLogger.current().info("manuscript encryption completed", LogField.result("projects", keys.size()),
+                LogField.result("documents", documents), LogField.result("versions", versions),
+                LogField.result("drafts", drafts), LogField.result("results", results), LogField.result("events", events));
     }
 
     private Map<UUID, byte[]> projectKeys(Connection connection) throws SQLException {

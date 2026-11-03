@@ -3,12 +3,13 @@ package com.loresentry.content.inbox;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.TraceContext;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -48,8 +49,6 @@ import org.springframework.util.backoff.ExponentialBackOff;
 @Configuration(proxyBeanMethods = false)
 class InboxErrorHandling {
 
-    /** 로그를 남기는 도구. 위치, 이벤트 id, 예외 클래스 이름만 적는다 — 예외 메시지와 payload 는 적지 않는다. */
-    private static final Logger log = LoggerFactory.getLogger(InboxErrorHandling.class);
 
     /** DLQ 이름의 끝. 계약의 규칙 {@code <원본 topic>.<소비자 서비스>.dlq} 에서 소비자 서비스가 content 다. */
     static final String DEAD_LETTER_SUFFIX = ".content.dlq";
@@ -109,24 +108,38 @@ class InboxErrorHandling {
             /** 처리가 실패할 때마다 한 번. 다시 시도하지 않는 예외도 첫 실패에 한 번 불린다. */
             @Override
             public void failedDelivery(ConsumerRecord<?, ?> record, Exception failure, int deliveryAttempt) {
-                log.warn("inbox event failed: topic={}, partition={}, offset={}, event={}, attempt={}, reason={}",
-                        record.topic(), record.partition(), record.offset(), eventId(record), deliveryAttempt,
-                        reason(failure));
+                // listener 의 span 이 닫힌 뒤에도 불리므로, 레코드의 traceparent 로 원래 흐름의 trace 를 잇는다
+                try (var bound = AppLogger.bind(TraceContext.forRecord(record))) {
+                    AppLogger.current().warn("inbox event failed: topic=" + record.topic() + ", partition=" + record.partition()
+                                    + ", offset=" + record.offset() + ", event=" + eventId(record) + ", attempt=" + deliveryAttempt
+                                    + ", reason=" + reason(failure),
+                            LogField.param("attempt", deliveryAttempt), LogField.errorType(reason(failure)),
+                            LogField.result("check", check(failure)), LogField.safeStackTrace(unwrap(failure)));
+                }
             }
 
             /** DLQ 로 보냈다. 이 줄을 알림의 근거로 쓴다 — 사람이 원인을 보고 재투입해야 한다. */
             @Override
             public void recovered(ConsumerRecord<?, ?> record, Exception failure) {
-                log.error("inbox event dead-lettered: topic={}, partition={}, offset={}, event={}, reason={}",
-                        record.topic(), record.partition(), record.offset(), eventId(record), reason(failure));
+                try (var bound = AppLogger.bind(TraceContext.forRecord(record))) {
+                    AppLogger.current().error("inbox event dead-lettered: topic=" + record.topic() + ", partition="
+                                    + record.partition() + ", offset=" + record.offset() + ", event=" + eventId(record)
+                                    + ", reason=" + reason(failure),
+                            LogField.errorType(reason(failure)), LogField.result("check", check(failure)),
+                            LogField.safeStackTrace(unwrap(failure)));
+                }
             }
 
             /** DLQ 로 보내지 못했다. partition 이 멈추고 처음부터 다시 시도한다. 이유는 보내기 쪽의 예외다. */
             @Override
             public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
-                log.error("inbox event dead-letter failed: topic={}, partition={}, offset={}, event={}, reason={}",
-                        record.topic(), record.partition(), record.offset(), eventId(record),
-                        deepest(failure).getClass().getName());
+                String reason = deepest(failure).getClass().getName();
+                try (var bound = AppLogger.bind(TraceContext.forRecord(record))) {
+                    AppLogger.current().error("inbox event dead-letter failed: topic=" + record.topic() + ", partition="
+                                    + record.partition() + ", offset=" + record.offset() + ", event=" + eventId(record)
+                                    + ", reason=" + reason,
+                            LogField.errorType(reason));
+                }
             }
         });
         return errorHandler;
@@ -151,6 +164,14 @@ class InboxErrorHandling {
             current = current.getCause();
         }
         return current;
+    }
+
+    /**
+     * 계약 위반이면 걸린 검사의 종류({@code loresentry.result.check}). 그 밖의 예외이거나 예외가 없으면 null 이라 줄에서
+     * 빠진다. 메시지 대신 정해진 낱말만 남겨 종류별로 센다.
+     */
+    private static InvalidEventException.Check check(Exception failure) {
+        return unwrap(failure) instanceof InvalidEventException invalid ? invalid.check() : null;
     }
 
     /** 로그의 reason. 껍데기를 벗긴 예외의 클래스 이름이다. 예외가 없으면(넘어오지 않으면) {@code -}. */

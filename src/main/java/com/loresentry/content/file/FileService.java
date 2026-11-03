@@ -11,6 +11,8 @@ import java.util.function.Supplier;
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.outbox.OutboxRecord;
@@ -30,6 +32,13 @@ public class FileService {
 
     /** {@code base_folders} 시드의 원고 폴더. 에피소드가 붙을 수 있는 유일한 분류다. */
     private static final String MANUSCRIPT = "MANUSCRIPT";
+
+    /** 로그에 그대로 남기는 분류 코드({@code base_folders} 시드). 이 밖의 값은 로그에 other 로 남는다. */
+    static final Set<String> FOLDER_CODES = Set.of(
+            "WORLDVIEW", "CHARACTER", "LOCATION", "MANUSCRIPT", "ORGANIZATION", "ITEM", "EVENT");
+
+    /** 로그에 그대로 남기는 파일 종류. {@link #create} 가 받는 값과 같다. */
+    static final Set<String> KINDS = Set.of("document", "episode");
 
     private final FileRepository repository;
 
@@ -59,6 +68,7 @@ public class FileService {
 
     @Transactional(readOnly = true)
     public FileResponses.Tree tree(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("file tree get", LogField.projectId(projectId));
         requireProject(ownerUserId, projectId);
         return FileResponses.tree(repository.baseFolders(), repository.episodes(projectId),
                 repository.activeDocuments(projectId), storage::publicUrl);
@@ -66,12 +76,19 @@ public class FileService {
 
     @Transactional(readOnly = true)
     public FileResponses.TrashList trash(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("file trash list", LogField.projectId(projectId));
         requireProject(ownerUserId, projectId);
         return FileResponses.trash(repository.trashedDocuments(projectId));
     }
 
     @Transactional
     public Object create(UUID ownerUserId, UUID projectId, FileRequests.Create request) {
+        // 새 파일이 들어갈 회차는 새 파일의 범위라 전용 필드(episode_id)다
+        AppLogger.current().info("file create", LogField.projectId(projectId),
+                LogField.episodeId(request == null ? null : request.episodeId()),
+                LogField.code("kind", request == null ? null : request.kind(), KINDS),
+                LogField.param("title", request == null ? null : request.title()),
+                LogField.code("folder_code", request == null ? null : request.folderCode(), FOLDER_CODES));
         requireProject(ownerUserId, projectId);
         String title = validateTitle(request.title());
         String kind = request.kind() == null ? "" : request.kind();
@@ -87,6 +104,10 @@ public class FileService {
             outbox.append(messages.fileChanged(projectId, document.id(), ChangeType.CREATED,
                     EnumSet.allOf(Field.class)));
         }
+        // 새로 만든 문서(file_id) 또는 회차(episode_id)
+        AppLogger.current().info("file create completed", LogField.projectId(projectId),
+                created instanceof FileResponses.Document createdDocument ? LogField.fileId(createdDocument.id()) : null,
+                created instanceof FileResponses.Episode createdEpisode ? LogField.episodeId(createdEpisode.id()) : null);
         return created;
     }
 
@@ -100,6 +121,8 @@ public class FileService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public UUID createSettingDocument(UUID projectId, String folderCode, String title) {
+        AppLogger.current().info("setting document create", LogField.projectId(projectId),
+                LogField.code("folder_code", folderCode, FOLDER_CODES), LogField.param("title", title));
         if ("MANUSCRIPT".equals(folderCode)) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_FILE_LOCATION);
         }
@@ -107,7 +130,10 @@ public class FileService {
         short folderId = folderIdOf(folderCode);
         List<String> ranks = repository.siblingRanks(projectId, folderId, null, null);
         String rank = Ranks.between(ranks.isEmpty() ? null : ranks.getLast(), null);
-        return duplicateAware(() -> repository.insertDocument(projectId, folderId, null, validTitle, rank)).id();
+        UUID created = duplicateAware(() -> repository.insertDocument(projectId, folderId, null, validTitle, rank)).id();
+        // 새로 만든 설정 문서
+        AppLogger.current().info("setting document create completed", LogField.projectId(projectId), LogField.fileId(created));
+        return created;
     }
 
     private FileRows.Document createDocument(UUID projectId, FileRequests.Create request, String title) {
@@ -130,6 +156,8 @@ public class FileService {
 
     @Transactional
     public FileResponses.Document rename(UUID ownerUserId, UUID fileId, FileRequests.Rename request) {
+        AppLogger.current().info("file rename", LogField.fileId(fileId),
+                LogField.param("title", request == null ? null : request.title()));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         String title = validateTitle(request.title());
@@ -145,6 +173,8 @@ public class FileService {
     /** 에피소드 이름은 어느 문서의 스냅샷에도 없으므로 이벤트가 없다. */
     @Transactional
     public FileResponses.Episode renameEpisode(UUID ownerUserId, UUID episodeId, FileRequests.Rename request) {
+        AppLogger.current().info("episode rename", LogField.episodeId(episodeId),
+                LogField.param("title", request == null ? null : request.title()));
         requireEpisode(ownerUserId, episodeId);
         String name = validateTitle(request.title());
 
@@ -160,6 +190,11 @@ public class FileService {
      */
     @Transactional
     public FileResponses.Document move(UUID ownerUserId, UUID fileId, FileRequests.Move request) {
+        // 옮길 위치(분류·회차)와 기준 파일은 대상이 아니라 참조라 역할 이름을 붙인 param 이다
+        AppLogger.current().info("file move", LogField.fileId(fileId),
+                LogField.code("target_folder_code", request == null ? null : request.folderCode(), FOLDER_CODES),
+                LogField.param("target_episode_id", request == null ? null : request.episodeId()),
+                LogField.param("before_file_id", request == null ? null : request.beforeFileId()));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
 
@@ -177,6 +212,8 @@ public class FileService {
             outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.UPDATED,
                     Set.of(Field.FOLDER)));
         }
+        // 자리(분류·회차)가 바뀌었는지. 같은 자리 안의 순서 변경이면 이벤트가 없다
+        AppLogger.current().info("file move completed", LogField.fileId(fileId), LogField.result("location_changed", moved.locationChanged()));
         return document(moved.document());
     }
 
@@ -201,6 +238,7 @@ public class FileService {
 
     @Transactional
     public void moveToTrash(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("file trash", LogField.fileId(fileId));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         boolean trashed = repository.trashDocument(fileId);
@@ -210,12 +248,17 @@ public class FileService {
             outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.TRASHED,
                     Set.of(Field.STATE)));
         }
+        // 이미 휴지통에 있던 문서면 false 다(이벤트 없음)
+        AppLogger.current().info("file trash completed", LogField.fileId(fileId), LogField.result("trashed", trashed));
     }
 
     @Transactional
     public FileResponses.Document restore(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("file restore", LogField.fileId(fileId));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
+            // 휴지통에 없는 문서라 바꿀 것이 없다(재시도 등)
+            AppLogger.current().info("file restore skipped", LogField.fileId(fileId), LogField.result("already_active", true));
             return document(document);
         }
 
@@ -234,6 +277,9 @@ public class FileService {
                 ? EnumSet.of(Field.STATE, Field.FOLDER)
                 : EnumSet.of(Field.STATE);
         outbox.append(messages.fileChanged(document.projectId(), fileId, ChangeType.RESTORED, changed));
+        // 원래 회차가 사라져 원고 폴더 최상위로 돌렸는지
+        AppLogger.current().info("file restore completed", LogField.fileId(fileId), LogField.result("episode_dropped", dropEpisode),
+                LogField.result("location_changed", restored.locationChanged()));
         return document(restored.document());
     }
 
@@ -243,6 +289,7 @@ public class FileService {
      */
     @Transactional
     public void deletePermanently(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("file delete", LogField.fileId(fileId));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         if (!document.isTrashed()) {
             throw new ContentFailure(ContentFailure.Reason.FILE_NOT_TRASHED);
@@ -260,6 +307,9 @@ public class FileService {
         owners.forEach(owner -> changes.add(messages.fileChanged(document.projectId(), owner,
                 ChangeType.UPDATED, Set.of(Field.RELATIONS))));
         outbox.append(changes.toArray(OutboxRecord[]::new));
+        // 관계가 바뀐 것으로 알린 상대 문서 수와 대표 이미지를 함께 지웠는지
+        AppLogger.current().info("file delete completed", LogField.projectId(document.projectId()), LogField.fileId(fileId),
+                LogField.result("relation_owners", owners), LogField.result("image_deleted", image.isPresent()));
     }
 
     /**
@@ -271,6 +321,9 @@ public class FileService {
      */
     @Transactional
     public FileResponses.Document setImage(UUID ownerUserId, UUID fileId, FileRequests.SetImage request) {
+        // 대상은 파일이고 이미지는 연결할 상대라 param 이다
+        AppLogger.current().info("file image set", LogField.fileId(fileId),
+                LogField.param("attached_image_id", request == null ? null : request.imageId()));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         if (request == null || request.imageId() == null) {
@@ -287,20 +340,28 @@ public class FileService {
             previous = repository.replaceImage(fileId, request.imageId());
         } catch (DuplicateKeyException usedElsewhere) {
             // 다른 문서가 이미 쓰는 이미지다. 그 문서의 이미지를 바꾸면 이쪽이 깨진다.
+            // 결과 줄의 이유는 INVALID_REQUEST 하나라 이 줄로 가른다
+            AppLogger.current().warn("file image already attached elsewhere", LogField.fileId(fileId),
+                    LogField.param("attached_image_id", request.imageId()));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         previous.flatMap(repository::deleteImage).ifPresent(key -> mediaCleanup.deleteAfterCommit(List.of(key)));
         activity.touch(document.projectId());
+        // 이전 이미지를 바꿔 지웠는지
+        AppLogger.current().info("file image set completed", LogField.fileId(fileId), LogField.result("previous_replaced", previous.isPresent()));
         return document(repository.findDocument(ownerUserId, fileId).orElseThrow());
     }
 
     /** 이미지를 뗀다. 없었으면 아무것도 하지 않는다. */
     @Transactional
     public void clearImage(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("file image clear", LogField.fileId(fileId));
         FileRows.Document document = requireDocument(ownerUserId, fileId);
         requireEditable(document);
         Optional<UUID> previous = repository.replaceImage(fileId, null);
         if (previous.isEmpty()) {
+            // 뗄 이미지가 없었다
+            AppLogger.current().info("file image clear skipped", LogField.fileId(fileId), LogField.result("had_image", false));
             return;
         }
         repository.deleteImage(previous.get()).ifPresent(key -> mediaCleanup.deleteAfterCommit(List.of(key)));
@@ -310,6 +371,7 @@ public class FileService {
     /** 에피소드만 사라지고 회차는 원고 폴더로 돌아간다(와이어프레임 166). 돌아간 문서마다 위치가 바뀐다. */
     @Transactional
     public void deleteEpisode(UUID ownerUserId, UUID episodeId) {
+        AppLogger.current().info("episode delete", LogField.episodeId(episodeId));
         requireEpisode(ownerUserId, episodeId);
         UUID projectId = repository.projectOfEpisodeOrNull(episodeId);
         List<UUID> moved = repository.deleteEpisode(episodeId);
@@ -317,6 +379,9 @@ public class FileService {
         outbox.append(moved.stream()
                 .map(id -> messages.fileChanged(projectId, id, ChangeType.UPDATED, Set.of(Field.FOLDER)))
                 .toArray(OutboxRecord[]::new));
+        // 원고 폴더로 돌아간 문서 수
+        AppLogger.current().info("episode delete completed", LogField.projectId(projectId), LogField.episodeId(episodeId),
+                LogField.result("moved_documents", moved));
     }
 
     private FileResponses.Document document(FileRows.Document row) {

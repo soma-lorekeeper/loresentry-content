@@ -7,6 +7,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -86,7 +89,10 @@ public class ProjectKeys {
 
     private void remember(UUID projectId, byte[] key) {
         if (cache.size() >= MAX_ENTRIES) {
+            // 한도에 닿으면 통째로 비운다. 비운 뒤에는 프로젝트마다 키를 다시 풀어야(운영은 KMS 호출) 하므로, 자주 보이면 한도를 늘릴 때다
+            int entries = cache.size();
             cache.clear();
+            AppLogger.current().info("project key cache cleared", LogField.result("entries", entries));
         }
         cache.put(projectId, new Cached(key, System.nanoTime() + TTL_NANOS));
     }

@@ -13,10 +13,37 @@ package com.loresentry.content.inbox;
 public class InvalidEventException extends RuntimeException {
 
     /**
+     * 걸린 검사의 종류. 로그 필드({@code loresentry.result.check})로만 쓴다. 메시지와 달리 header 이름·필드 경로가 없는
+     * 정해진 낱말이라 Kibana 에서 종류별로 셀 수 있다.
+     */
+    public enum Check {
+        /** 필수 header 가 없거나 비어 있다. */
+        MISSING_HEADER,
+        /** header 의 값이 계약과 다르다(ce_specversion, ce_source, ce_time, content-type, id 형식). */
+        INVALID_HEADER,
+        /** value 가 없거나 JSON 의 null 이다. */
+        MISSING_PAYLOAD,
+        /** value 를 이벤트로 읽을 수 없다(JSON 이 아니거나 필드의 타입·값이 틀림). */
+        UNREADABLE_PAYLOAD,
+        /** 항상 있어야 하는 payload 필드가 없다. */
+        MISSING_FIELD,
+        /** ce_subject 와 payload 의 id 가 다르다. */
+        SUBJECT_MISMATCH
+    }
+
+    private final Check check;
+
+    /**
+     * @param check 걸린 검사의 종류. 로그에만 쓴다
      * @param message 어느 검사에 걸렸는지. 받은 값이나 payload 의 내용은 넣지 않는다 — 로그에 적어도 되는 글자만
      *         담기 위해서다. 받은 값은 원본 메시지에 그대로 남아 있다.
      */
-    public InvalidEventException(String message) {
+    public InvalidEventException(Check check, String message) {
         super(message);
+        this.check = check;
+    }
+
+    public Check check() {
+        return check;
     }
 }

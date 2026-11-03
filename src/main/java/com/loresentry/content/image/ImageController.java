@@ -2,6 +2,8 @@ package com.loresentry.content.image;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.http.ResponseEntity;
@@ -25,6 +27,9 @@ public class ImageController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @RequestBody ImageDtos.TicketRequest request) {
+        // 파일 이름은 남기지 않는다. MIME 타입은 허용 목록을 가진 MediaStorageService 줄에 남는다
+        AppLogger.current().info("image upload ticket create requested", LogField.projectId(projectId),
+                LogField.param("size_bytes", request == null ? null : request.sizeBytes()));
         ImageDtos.Ticket ticket = images.createTicket(userId, projectId, request);
         return ResponseEntity
                 .created(java.net.URI.create("/projects/" + projectId + "/images/" + ticket.imageId()))
@@ -36,6 +41,7 @@ public class ImageController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @PathVariable UUID imageId) {
+        AppLogger.current().info("image upload complete requested", LogField.projectId(projectId), LogField.imageId(imageId));
         return images.complete(userId, projectId, imageId);
     }
 
@@ -44,6 +50,7 @@ public class ImageController {
             @CurrentUser UUID userId,
             @PathVariable UUID projectId,
             @PathVariable UUID imageId) {
+        AppLogger.current().info("image get requested", LogField.projectId(projectId), LogField.imageId(imageId));
         return images.get(userId, projectId, imageId);
     }
 }

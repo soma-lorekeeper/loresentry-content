@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -42,6 +44,8 @@ public class SearchRepository {
     }
 
     List<Row> search(UUID ownerUserId, UUID projectId, String query, int limit) {
+        // 검색어는 남기지 않는다
+        AppLogger.current().info("document search", LogField.projectId(projectId), LogField.param("limit", limit));
         String needle = query.toLowerCase(Locale.ROOT);
         List<Ranked> ranked = new ArrayList<>();
         jdbcClient.sql(DOCUMENTS)

@@ -7,6 +7,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogLayer;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -23,6 +26,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
  * (연결 실패, 시간 초과 등)는 그대로 던져 Kafka 재시도에 맡긴다.
  */
 @Component
+@LogLayer("client")
 class RefreshResultStorage {
 
     /** 결과 파일은 최대 16MiB 다. 그만큼을 받을 시간을 둔다. */
@@ -39,18 +43,28 @@ class RefreshResultStorage {
     record Stored(byte[] bytes, String sha256) {
     }
 
-    /** 결과 파일을 쓸 수 없다. {@code code} 는 run 의 실패 코드가 된다. */
+    /**
+     * 결과 파일을 쓸 수 없다. {@code code} 는 run 의 실패 코드가 된다. {@code reason} 은 로그에만 남기는 더 잘게 나눈
+     * 이유다(같은 RESULT_INVALID 라도 해시가 없는지 다른지 구분한다).
+     */
     static final class Unreadable extends RuntimeException {
 
         private final String code;
 
-        Unreadable(String code, String message) {
+        private final String reason;
+
+        Unreadable(String code, String reason, String message) {
             super(message);
             this.code = code;
+            this.reason = reason;
         }
 
         String code() {
             return code;
+        }
+
+        String reason() {
+            return reason;
         }
     }
 
@@ -60,6 +74,8 @@ class RefreshResultStorage {
      * @param maxBytes 받을 수 있는 최대 크기. 넘으면 끝까지 받지 않고 끊는다
      */
     Stored read(String bucket, String key, long maxBytes) {
+        // bucket·key 는 남기지 않는다. 어느 run 의 결과인지는 부른 쪽 줄에 있다
+        AppLogger.current().info("s3 refresh result get call");
         GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(bucket)
                 .key(key)
@@ -69,22 +85,24 @@ class RefreshResultStorage {
             Long length = object.response().contentLength();
             if (length != null && length > maxBytes) {
                 object.abort();
-                throw new Unreadable("RESULT_TOO_LARGE", "Result object exceeds the size limit");
+                throw new Unreadable("RESULT_TOO_LARGE", "TOO_LARGE", "Result object exceeds the size limit");
             }
             byte[] bytes = object.readNBytes((int) Math.min(Integer.MAX_VALUE - 8, maxBytes + 1));
             if (bytes.length > maxBytes) {
                 object.abort();
-                throw new Unreadable("RESULT_TOO_LARGE", "Result object exceeds the size limit");
+                throw new Unreadable("RESULT_TOO_LARGE", "TOO_LARGE", "Result object exceeds the size limit");
             }
             String actual = sha256Hex(bytes);
             String expected = object.response().metadata() == null ? null : object.response().metadata().get("sha256");
             if (expected == null || !expected.equalsIgnoreCase(actual)) {
-                throw new Unreadable("RESULT_INVALID", "Result object does not match its sha256 metadata");
+                // 메타데이터가 아예 없는지(graph-rag 가 쓰지 않음) 값이 다른지(내용이 바뀜)를 로그에서 가른다
+                throw new Unreadable("RESULT_INVALID", expected == null ? "SHA256_MISSING" : "SHA256_MISMATCH",
+                        "Result object does not match its sha256 metadata");
             }
             return new Stored(bytes, actual);
         } catch (NoSuchKeyException missing) {
             // 결과 객체는 며칠 뒤 만료된다(bucket 수명 규칙). DLQ 를 늦게 다시 보내면 생긴다.
-            throw new Unreadable("RESULT_EXPIRED", "Result object is gone");
+            throw new Unreadable("RESULT_EXPIRED", "EXPIRED", "Result object is gone");
         } catch (IOException reading) {
             throw new UncheckedIOException(reading);
         }

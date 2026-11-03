@@ -10,8 +10,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -22,6 +25,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Repository
 public class DocumentRepository {
+
+    /** 로그에 그대로 남기는 버전 종류({@code document_versions.kind}). 이 밖의 값은 로그에 other 로 남는다. */
+    private static final Set<String> VERSION_KINDS = Set.of("AUTO", "NAMED", "RESTORE", "REFRESH_BASE", "AI_APPLY");
 
     private final JdbcClient jdbcClient;
 
@@ -35,10 +41,13 @@ public class DocumentRepository {
     }
 
     Optional<DocumentResponses.Content> find(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("document find", LogField.fileId(fileId));
         return findHeader(ownerUserId, fileId).map(this::contentOf);
     }
 
     DocumentResponses.Content contentOf(Header row) {
+        // 이미 읽은 머리 행에 속성·관계를 더해 응답 모양을 만든다
+        AppLogger.current().info("document content get", LogField.fileId(row.id()));
         return new DocumentResponses.Content(
                 row.id(), row.projectId(), row.title(), row.folderCode(), row.episodeId(),
                 row.body(), row.legacyBodyMd(),
@@ -63,6 +72,7 @@ public class DocumentRepository {
     }
 
     Optional<Header> findHeader(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("document header find", LogField.fileId(fileId));
         return jdbcClient
                 .sql("""
                         select d.id, d.project_id, d.title, f.code as folder_code, d.episode_id,
@@ -108,6 +118,7 @@ public class DocumentRepository {
     }
 
     List<DocumentSnapshot.TextProperty> properties(UUID fileId) {
+        AppLogger.current().info("document properties list", LogField.fileId(fileId));
         return jdbcClient
                 .sql("select property_key, text_value from document_properties "
                         + "where document_id = :id order by position, property_key")
@@ -127,6 +138,7 @@ public class DocumentRepository {
      * 행은 그대로 두므로 그 문서를 되살리면 관계도 함께 돌아온다.
      */
     List<DocumentSnapshot.Relation> relations(UUID fileId) {
+        AppLogger.current().info("document relations list", LogField.fileId(fileId));
         return jdbcClient
                 .sql("""
                         select f.relation_key, other.id as target_document_id, r.description
@@ -149,6 +161,7 @@ public class DocumentRepository {
 
     /** 휴지통에 있는 프로젝트의 문서는 읽지 않는다. 남의 프로젝트와 같이 없는 것으로 답한다. */
     boolean ownsActiveProject(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project owner check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner and trashed_at is null")
                 .param("id", projectId)
@@ -165,6 +178,7 @@ public class DocumentRepository {
      * <p>속성 순서와 관계 규칙은 {@link #properties}·{@link #relations} 와 같다.
      */
     List<DocumentResponses.ContentItem> contents(UUID projectId, List<UUID> ids) {
+        AppLogger.current().info("document contents list", LogField.projectId(projectId), LogField.param("ids", ids));
         Map<UUID, List<DocumentSnapshot.TextProperty>> properties = propertiesOf(ids);
         Map<UUID, List<DocumentSnapshot.Relation>> relations = relationsOf(ids);
 
@@ -241,6 +255,7 @@ public class DocumentRepository {
 
     /** 이 프로젝트의 문서 중 {@code ids} 에 있는 것을 읽는다(없는 id 는 빠진다). 문서·속성·관계를 각각 한 쿼리로 읽는다. */
     List<LiveRow> liveRows(UUID projectId, Collection<UUID> ids) {
+        AppLogger.current().info("document live rows list", LogField.projectId(projectId), LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return List.of();
         }
@@ -281,6 +296,7 @@ public class DocumentRepository {
      * {@code for update} 는 관계 행을 넣을 때 외래 키 검사가 잡는 key share 잠금과 부딪혀 저장과 교착할 수 있다.
      */
     List<ApplyRow> lockForApply(Collection<UUID> ids) {
+        AppLogger.current().info("documents lock for apply", LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return List.of();
         }
@@ -303,6 +319,8 @@ public class DocumentRepository {
      * @return 실제로 바뀐 쌍. 그대로면 비어 있다
      */
     Optional<RelationPair> upsertRelation(UUID one, UUID other, String description) {
+        // 앞쪽 끝을 대상(document_id), 다른 쪽을 연결 상대(param)로 둔다. 설명은 남기지 않는다
+        AppLogger.current().info("document relation upsert", LogField.documentId(one), LogField.param("related_document_id", other));
         return jdbcClient
                 .sql("""
                         insert into document_relations (low_document_id, high_document_id, description)
@@ -319,6 +337,7 @@ public class DocumentRepository {
 
     /** 관계 한 쌍을 지운다. 없으면 비어 있다. */
     Optional<RelationPair> deleteRelation(UUID one, UUID other) {
+        AppLogger.current().info("document relation delete", LogField.documentId(one), LogField.param("related_document_id", other));
         return jdbcClient
                 .sql("""
                         delete from document_relations
@@ -332,6 +351,7 @@ public class DocumentRepository {
 
     /** 최신화 run 이 이 문서들을 잠근다. 편집 가능 여부는 사용자 잠금과 합쳐 본다(V16). */
     void lockForRefresh(UUID runId, Collection<UUID> ids) {
+        AppLogger.current().info("documents refresh lock", LogField.refreshRequestId(runId), LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return;
         }
@@ -341,12 +361,14 @@ public class DocumentRepository {
 
     /** 이 run 이 건 잠금만 푼다. 사용자 잠금은 그대로 남는다. */
     void unlockRefresh(UUID runId) {
+        AppLogger.current().info("documents refresh unlock", LogField.refreshRequestId(runId));
         jdbcClient.sql("update document set refresh_lock_run_id = null where refresh_lock_run_id = :run")
                 .param("run", runId).update();
     }
 
     /** 최신화 기준 버전들의 스냅샷. 없는 id 는 빠진다. */
     Map<UUID, DocumentSnapshot> refreshBases(Collection<UUID> versionIds) {
+        AppLogger.current().info("refresh base versions find", LogField.param("version_ids", versionIds));
         Map<UUID, DocumentSnapshot> snapshots = new HashMap<>();
         if (versionIds.isEmpty()) {
             return snapshots;
@@ -366,6 +388,7 @@ public class DocumentRepository {
 
     /** 최신화 기준 버전을 지운다. 사용자 버전(AUTO·NAMED 등)은 kind 로 걸러 건드리지 않는다. */
     void deleteRefreshBases(Collection<UUID> versionIds) {
+        AppLogger.current().info("refresh base versions delete", LogField.param("version_ids", versionIds));
         if (versionIds.isEmpty()) {
             return;
         }
@@ -375,6 +398,7 @@ public class DocumentRepository {
 
     /** 분류 코드 → 그 분류 문서를 가리키는 관계 키(V10). 관계 키는 대상 문서의 분류에서 나온다. */
     Map<String, String> relationKeysByFolder() {
+        AppLogger.current().info("relation keys by folder list");
         Map<String, String> keys = new HashMap<>();
         jdbcClient.sql("select code, relation_key from base_folders")
                 .query(rows -> {
@@ -402,6 +426,8 @@ public class DocumentRepository {
      */
     Optional<Updated> updateIfRevisionMatches(UUID fileId, long expectedRevision, DocumentSnapshot snapshot,
             String bodyText, UUID saveId) {
+        AppLogger.current().info("document update", LogField.fileId(fileId), LogField.param("expected_revision", expectedRevision),
+                LogField.saveId(saveId == null ? null : saveId.toString()));
         Optional<UUID> project = projectOf(fileId);
         if (project.isEmpty()) {
             return Optional.empty();
@@ -440,6 +466,7 @@ public class DocumentRepository {
     }
 
     void replaceProperties(UUID fileId, List<DocumentSnapshot.TextProperty> properties) {
+        AppLogger.current().info("document properties replace", LogField.fileId(fileId), LogField.param("properties", properties));
         jdbcClient.sql("delete from document_properties where document_id = :id")
                 .param("id", fileId).update();
         int position = 10;
@@ -470,6 +497,7 @@ public class DocumentRepository {
      *         달리 그 사이에 끼어든 다른 저장에 속지 않는다. 그 관계를 가진 문서(low)의 이벤트를 고르는 데 쓴다
      */
     List<RelationPair> replaceRelations(UUID fileId, List<DocumentSnapshot.Relation> relations) {
+        AppLogger.current().info("document relations replace", LogField.fileId(fileId), LogField.param("relations", relations));
         // 같은 대상을 여러 키로 가리켜도 쌍은 하나다. 설명이 적힌 쪽을 남긴다.
         Map<UUID, String> wanted = new LinkedHashMap<>();
         for (DocumentSnapshot.Relation relation : relations) {
@@ -528,6 +556,8 @@ public class DocumentRepository {
 
     /** 관계 대상은 같은 프로젝트의 활성 문서여야 한다. 외래 키는 존재만 보장하고 프로젝트는 보지 않는다. */
     boolean isUsableRelationTarget(UUID projectId, UUID targetId) {
+        // 확인하는 문서는 저장 중인 문서의 연결 상대라 param 이다
+        AppLogger.current().info("relation target check", LogField.projectId(projectId), LogField.param("related_document_id", targetId));
         return jdbcClient
                 .sql("select 1 from document where id = :id and project_id = :project"
                         + " and trashed_at is null")
@@ -536,12 +566,16 @@ public class DocumentRepository {
     }
 
     void setLocked(UUID fileId, boolean locked) {
+        AppLogger.current().info("document lock update", LogField.fileId(fileId), LogField.param("locked", locked));
         jdbcClient.sql("update document set locked = :locked, updated_at = now() where id = :id")
                 .param("id", fileId).param("locked", locked).update();
     }
 
     UUID insertVersion(UUID fileId, long sourceRevision, String kind, String label,
             DocumentSnapshot snapshot, OffsetDateTime expiresAt) {
+        // 이름(label)은 사용자가 쓴 글이라 남기지 않는다
+        AppLogger.current().info("document version insert", LogField.fileId(fileId), LogField.param("source_revision", sourceRevision),
+                LogField.code("kind", kind, VERSION_KINDS));
         UUID projectId = projectOf(fileId).orElseThrow();
         String snapshotJson = json.writeValueAsString(snapshot);
         return jdbcClient
@@ -563,6 +597,7 @@ public class DocumentRepository {
 
     /** 최신화의 내부 기준({@code REFRESH_BASE})은 사용자 버전 목록에 넣지 않는다(TABLE_AND_LOGIC §4.8). */
     List<DocumentResponses.Version> versions(UUID fileId) {
+        AppLogger.current().info("document versions list", LogField.fileId(fileId));
         return jdbcClient
                 .sql("""
                         select v.id, v.document_id, d.project_id, v.kind, v.label, v.source_revision_no,
@@ -577,6 +612,7 @@ public class DocumentRepository {
     }
 
     Optional<DocumentResponses.Version> findVersion(UUID fileId, UUID versionId) {
+        AppLogger.current().info("document version find", LogField.fileId(fileId), LogField.versionId(versionId));
         return jdbcClient
                 .sql("""
                         select v.id, v.document_id, d.project_id, v.kind, v.label, v.source_revision_no,
@@ -591,6 +627,7 @@ public class DocumentRepository {
 
     /** 충돌 응답의 공통 조상. 그 revision 의 스냅샷이 남아 있지 않으면 비어 있다. */
     Optional<DocumentSnapshot> snapshotAtRevision(UUID fileId, long revisionNo) {
+        AppLogger.current().info("document revision snapshot find", LogField.fileId(fileId), LogField.param("revision_no", revisionNo));
         return jdbcClient
                 .sql("""
                         select v.document_id, d.project_id, v.snapshot_enc
@@ -604,6 +641,7 @@ public class DocumentRepository {
     }
 
     Optional<OffsetDateTime> lastAutoVersionAt(UUID fileId) {
+        AppLogger.current().info("document last auto version find", LogField.fileId(fileId));
         return jdbcClient
                 .sql("select max(created_at) from document_versions "
                         + "where document_id = :id and kind = 'AUTO'")
@@ -613,6 +651,7 @@ public class DocumentRepository {
     }
 
     void deleteVersion(UUID versionId) {
+        AppLogger.current().info("document version delete", LogField.versionId(versionId));
         jdbcClient.sql("delete from document_versions where id = :id").param("id", versionId).update();
     }
 

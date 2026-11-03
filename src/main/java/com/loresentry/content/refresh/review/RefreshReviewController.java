@@ -2,6 +2,8 @@ package com.loresentry.content.refresh.review;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +24,7 @@ public class RefreshReviewController {
     /** 가장 최근 최신화의 상태. 화면은 결과를 기다리는 동안 이것을 몇 초마다 다시 읽는다(폴링). */
     @GetMapping("/projects/{projectId}/graph-refresh")
     public RefreshResponses.Summary latest(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        AppLogger.current().info("graph refresh latest get requested", LogField.projectId(projectId));
         return review.latest(userId, projectId);
     }
 
@@ -29,6 +32,7 @@ public class RefreshReviewController {
     @GetMapping("/projects/{projectId}/graph-refresh/{requestId}")
     public RefreshResponses.Detail detail(@CurrentUser UUID userId, @PathVariable UUID projectId,
             @PathVariable UUID requestId) {
+        AppLogger.current().info("graph refresh get requested", LogField.projectId(projectId), LogField.refreshRequestId(requestId));
         return review.detail(userId, projectId, requestId);
     }
 
@@ -37,6 +41,13 @@ public class RefreshReviewController {
     public RefreshResponses.SavedDraft saveDraft(@CurrentUser UUID userId, @PathVariable UUID projectId,
             @PathVariable UUID requestId, @PathVariable UUID draftId,
             @RequestBody RefreshResponses.DraftSave request) {
+        // 양쪽 스냅샷은 본문 바이트 수와 관계 개수만 남긴다(스냅샷 객체는 LogField 가 받지 않는다)
+        AppLogger.current().info("graph refresh draft save requested", LogField.projectId(projectId), LogField.refreshRequestId(requestId),
+                LogField.refreshDraftId(draftId), LogField.param("draft_revision", request == null ? null : request.draftRevision()),
+                LogField.param("left_body", request == null || request.leftSnapshot() == null ? null : request.leftSnapshot().body()),
+                LogField.param("left_relations", request == null || request.leftSnapshot() == null ? null : request.leftSnapshot().relations()),
+                LogField.param("right_body", request == null || request.rightSnapshot() == null ? null : request.rightSnapshot().body()),
+                LogField.param("right_relations", request == null || request.rightSnapshot() == null ? null : request.rightSnapshot().relations()));
         return review.saveDraft(userId, projectId, requestId, draftId, request);
     }
 }

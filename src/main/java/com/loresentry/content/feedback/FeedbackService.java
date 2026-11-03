@@ -4,6 +4,8 @@ import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.stereotype.Service;
@@ -30,6 +32,9 @@ public class FeedbackService {
 
     @Transactional
     public FeedbackDtos.Created create(UUID userId, FeedbackDtos.CreateRequest request) {
+        // 분류는 허용 목록 밖이면 other 로, 의견 본문은 길이만 남는다
+        AppLogger.current().info("feedback create", LogField.code("category", request.category(), CATEGORIES),
+                LogField.param("message", request.message()));
         String category = request.category() == null ? "" : request.category().trim().toUpperCase();
         if (!CATEGORIES.contains(category)) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_FEEDBACK);
@@ -40,6 +45,8 @@ public class FeedbackService {
         }
 
         if (repository.countSince(userId, OffsetDateTime.now().minusHours(1)) >= HOURLY_LIMIT) {
+            // 한 시간 한도를 넘었다(429)
+            AppLogger.current().warn("feedback rate limited", LogField.result("hourly_limit", HOURLY_LIMIT));
             throw new ContentFailure(ContentFailure.Reason.FEEDBACK_RATE_LIMITED);
         }
         return repository.insert(userId, category, message,

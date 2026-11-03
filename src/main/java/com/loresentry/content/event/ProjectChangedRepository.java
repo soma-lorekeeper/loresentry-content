@@ -8,6 +8,8 @@ import com.loresentry.content.event.FileChanged.File;
 import com.loresentry.content.event.FileChanged.Property;
 import com.loresentry.content.event.FileChanged.Relation;
 import com.loresentry.content.event.FileChanged.State;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -34,6 +36,7 @@ class ProjectChangedRepository {
     /** 문서의 내용·위치·상태와 속성. 문서가 없으면(동시에 영구 삭제됨) 비어 있다. */
     @Transactional(propagation = Propagation.MANDATORY)
     Optional<File> file(UUID fileId) {
+        AppLogger.current().info("file snapshot find", LogField.fileId(fileId));
         // 편집 화면(DocumentRepository.properties)과 같은 순서다.
         List<Property> properties = jdbcClient
                 .sql("select property_key, text_value from document_properties "
@@ -67,6 +70,7 @@ class ProjectChangedRepository {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     List<Relation> ownedRelations(UUID fileId) {
+        AppLogger.current().info("file owned relations list", LogField.fileId(fileId));
         return jdbcClient
                 .sql("select id, high_document_id, description from document_relations "
                         + "where low_document_id = :id order by id")

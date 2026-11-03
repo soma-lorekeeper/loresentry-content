@@ -8,13 +8,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.document.RefreshDocuments;
 import com.loresentry.content.refresh.DraftSnapshot;
 import com.loresentry.content.refresh.DraftSnapshots;
 import com.loresentry.content.refresh.RefreshDraftRepository;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,9 +40,9 @@ import tools.jackson.databind.JsonNode;
  * 원고 본문 수정, 모양이 틀린 새 문서. 제안이 하나도 남지 않은 작업본은 기준 버전과 함께 지운다.
  */
 @Component
+@LogLayer("service")
 class RefreshDraftBuilder {
 
-    private static final Logger log = LoggerFactory.getLogger(RefreshDraftBuilder.class);
 
     /** 원고 폴더. 원고 본문은 최신화가 고치지 않는다(설정 문서만 고친다). 관계 끝으로는 올 수 있다. */
     private static final String MANUSCRIPT = "MANUSCRIPT";
@@ -80,13 +81,25 @@ class RefreshDraftBuilder {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     boolean build(UUID runId, UUID projectId, RefreshResult result) {
+        // 제안 내용은 남기지 않고 종류별 개수만 남긴다
+        AppLogger.current().info("graph refresh drafts build", LogField.projectId(projectId), LogField.refreshRequestId(runId),
+                LogField.param("document_proposals", result.documentProposalsOrEmpty()),
+                LogField.param("relation_proposals", result.relationProposalsOrEmpty()),
+                LogField.param("new_document_proposals", result.newDocumentProposalsOrEmpty()));
         Map<String, String> relationKeys = documents.relationKeysByFolder();
 
         // 새 설정 문서 제안: 임시 이름이 "new:분류:이름" 과 맞고, 설정 폴더이며, 이름이 제목으로 쓸 수 있어야 한다.
         Map<String, RefreshResult.NewDocumentProposal> candidates = new LinkedHashMap<>();
+        // 계약에 맞지 않는 모양이라 버린 제안 수(로그 전용). 지금 문서 상태(휴지통·잠금 등) 때문에 못 쓰는 제안과 따로 센다
+        int malformedNew = 0;
+        int malformedDocuments = 0;
+        int malformedRelations = 0;
         for (RefreshResult.NewDocumentProposal proposal : result.newDocumentProposalsOrEmpty()) {
             if (usableCandidate(proposal, relationKeys)) {
                 candidates.putIfAbsent(proposal.candidateId(), proposal);
+            } else {
+                // 빈 필드·모르는 분류·원고 폴더·제목 한도·임시 이름 모양은 모두 결과 파일의 모양 문제다
+                malformedNew++;
             }
         }
 
@@ -108,6 +121,10 @@ class RefreshDraftBuilder {
             RefreshDocuments.Live document = target == null ? null : live.get(target);
             if (!"body_text".equals(proposal.field()) || proposal.value() == null || !editable(document)
                     || MANUSCRIPT.equals(document.folderCode())) {
+                // 대상이 문서 id 가 아니거나, 모르는 필드이거나, 값이 없으면 모양 문제다
+                if (target == null || !"body_text".equals(proposal.field()) || proposal.value() == null) {
+                    malformedDocuments++;
+                }
                 continue;
             }
             edits.putIfAbsent(target, proposal);
@@ -120,6 +137,10 @@ class RefreshDraftBuilder {
             String other = proposal.targetDocumentId();
             if (!"ADD".equals(proposal.operation()) || one == null || other == null || one.equals(other)
                     || !usableEndpoint(one, live, candidates) || !usableEndpoint(other, live, candidates)) {
+                // 모르는 operation, 끝점 없음, 자기 자신과의 관계는 모양 문제다
+                if (!"ADD".equals(proposal.operation()) || one == null || other == null || one.equals(other)) {
+                    malformedRelations++;
+                }
                 continue;
             }
             links.add(new Link(one, other, proposal.baseRevisionNo(), proposal.targetBaseRevisionNo(),
@@ -180,12 +201,26 @@ class RefreshDraftBuilder {
         // 결과에 제안이 없는 문서의 작업본은 검토할 것이 없다. 기준 버전과 함께 지운다(잠금은 run 이 끝날 때 푼다).
         documents.deleteRefreshBases(drafts.deleteUnopened(runId));
 
-        int dropped = result.documentProposalsOrEmpty().size() - edits.size()
-                + result.relationProposalsOrEmpty().size() - links.size()
-                + result.newDocumentProposalsOrEmpty().size() - candidates.size();
+        int droppedDocuments = result.documentProposalsOrEmpty().size() - edits.size();
+        int droppedRelations = result.relationProposalsOrEmpty().size() - links.size();
+        int droppedNew = result.newDocumentProposalsOrEmpty().size() - candidates.size();
+        int dropped = droppedDocuments + droppedRelations + droppedNew;
         if (dropped > 0) {
-            log.info("Graph refresh {} skipped {} proposal(s) it cannot apply", runId, dropped);
+            // 적용할 수 없는 제안(없는 문서·관계 대상 등)을 건너뛴 개수. 합계와 종류별 개수다
+            AppLogger.current().info("graph refresh proposals skipped", LogField.refreshRequestId(runId),
+                    LogField.result("dropped", dropped), LogField.result("dropped_document_proposals", droppedDocuments),
+                    LogField.result("dropped_relation_proposals", droppedRelations),
+                    LogField.result("dropped_new_document_proposals", droppedNew));
         }
+        if (malformedDocuments + malformedRelations + malformedNew > 0) {
+            // graph-rag 가 계약에 맞지 않는 모양을 보냈다. 위 건너뛴 개수에 이미 들어 있고, 그중 모양 문제만 센 것이다
+            AppLogger.current().warn("graph refresh proposals malformed", LogField.refreshRequestId(runId),
+                    LogField.result("malformed_document_proposals", malformedDocuments),
+                    LogField.result("malformed_relation_proposals", malformedRelations),
+                    LogField.result("malformed_new_document_proposals", malformedNew));
+        }
+        // 검토할 작업본을 연 개수. 0 이면 부르는 쪽이 run 을 변경 없음으로 끝낸다
+        AppLogger.current().info("graph refresh drafts build completed", LogField.refreshRequestId(runId), LogField.result("opened", opened));
         return opened > 0;
     }
 
