@@ -2,6 +2,8 @@ package com.loresentry.content.graph;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +21,7 @@ class GraphController {
 
     @GetMapping("/projects/{projectId}/graph")
     public GraphResponses.Graph of(@CurrentUser UUID userId, @PathVariable UUID projectId) {
+        AppLogger.current().info("graph get requested", LogField.projectId(projectId));
         return graph.of(userId, projectId);
     }
 }

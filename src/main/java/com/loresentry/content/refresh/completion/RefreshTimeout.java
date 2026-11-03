@@ -3,13 +3,17 @@ package com.loresentry.content.refresh.completion;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogLayer;
+import com.loresentry.content.logging.SkipEntryLog;
 import com.loresentry.content.refresh.GraphRefreshRepository;
 import com.loresentry.content.refresh.RefreshCleanup;
 
@@ -24,13 +28,15 @@ import com.loresentry.content.refresh.RefreshCleanup;
  * {@value #BATCH} 개씩 처리한다.
  */
 @Component
+@LogLayer("scheduler")
 class RefreshTimeout {
 
-    /** 로그를 남기는 도구. 개수와 예외의 종류만 적는다. */
-    private static final Logger log = LoggerFactory.getLogger(RefreshTimeout.class);
 
     /** 한 트랜잭션에서 끝내는 run 수. 많아야 이만큼의 문서 잠금·작업본을 한 번에 치운다. */
     static final int BATCH = 50;
+
+    /** 로그의 작업 이름(loresentry.schedule.name). */
+    static final String SCHEDULE = "graph-refresh-timeout";
 
     private final GraphRefreshRepository runs;
 
@@ -61,30 +67,48 @@ class RefreshTimeout {
      * 로그에 남기지 않는다. 다음 간격에 다시 확인한다.
      */
     @Scheduled(fixedDelayString = "${graph-refresh.timeout-check-interval:1m}")
+    @SkipEntryLog("Polls every minute. Logs start and end lines only in rounds that have runs to expire")
     void run() {
-        if (!enabled) {
-            return;
-        }
-        try {
-            int expired = expireOverdue();
-            if (expired > 0) {
-                // 이 문구로 로그를 찾는다.
-                log.info("graph refresh timeout: expired={}", expired);
+        // 회차 하나의 시작점. 스케줄 observation 이 연 span 으로 로그 객체를 만들고 작업 이름을 붙여, 이 회차의 모든 줄(부른 repository 줄 포함)에 남게 한다
+        try (var bound = AppLogger.bind(TraceContext.newLogger().with(LogField.scheduleName(SCHEDULE)))) {
+            if (!enabled) {
+                return;
             }
-        } catch (RuntimeException failure) {
-            log.error("graph refresh timeout failed: reason={}", failure.getClass().getName());
+            long startedAt = System.nanoTime();
+            try {
+                int expired = expireOverdue();
+                if (expired > 0) {
+                    // 종료 줄. 이 문구로 로그를 찾는다. 로그에는 개수와 예외의 종류만 적는다.
+                    AppLogger.current().info("graph refresh timeout: expired=" + expired, LogField.result("expired", expired),
+                            LogField.duration(Duration.ofNanos(System.nanoTime() - startedAt)));
+                }
+            } catch (RuntimeException failure) {
+                AppLogger.current().error("graph refresh timeout failed: reason=" + failure.getClass().getName(),
+                        LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
+            }
         }
     }
 
     /** 시간 제한이 지난 GENERATING run 을 모두 실패로 끝낸다. 끝낸 개수를 돌려준다. */
+    @SkipEntryLog("Called by the 1-minute poll (run). Start and end lines are logged only in rounds that have runs to expire")
     int expireOverdue() {
         int expired = 0;
+        // 시작 줄을 남겼는가. 끝낼 run 이 처음 나온 배치에서 한 번만 남긴다(1분 폴링이라 빈 회차는 줄을 남기지 않는다)
+        AtomicBoolean started = new AtomicBoolean();
         while (true) {
             Integer done = transaction.execute(status -> {
                 List<UUID> overdue = runs.lockOverdue(timeout, BATCH);
+                if (!overdue.isEmpty() && started.compareAndSet(false, true)) {
+                    // 시작 줄. 시작할 때 아는 값(첫 배치에서 고른 run 수와 시간 제한)을 함께 남긴다
+                    AppLogger.current().info("graph refresh timeout start", LogField.param("overdue_runs", overdue.size()),
+                            LogField.param("timeout_minutes", timeout.toMinutes()));
+                }
                 for (UUID runId : overdue) {
                     cleanup.release(runId);
                     runs.markEnded(runId, "FAILED", "TIMED_OUT", "No result arrived within the refresh timeout");
+                    // 완료 이벤트로 실패한 run 과 같은 문구라, run 하나의 실패를 이 문구 하나로 찾는다
+                    AppLogger.current().warn("graph refresh run failed", LogField.refreshRequestId(runId),
+                            LogField.errorType("TIMED_OUT"));
                 }
                 return overdue.size();
             });

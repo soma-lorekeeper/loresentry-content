@@ -2,6 +2,8 @@ package com.loresentry.content.file;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.http.ResponseEntity;
@@ -29,11 +31,14 @@ public class EpisodeController {
             @CurrentUser UUID userId,
             @PathVariable UUID episodeId,
             @RequestBody FileRequests.Rename request) {
+        AppLogger.current().info("episode rename requested", LogField.episodeId(episodeId),
+                LogField.param("title", request == null ? null : request.title()));
         return files.renameEpisode(userId, episodeId, request);
     }
 
     @DeleteMapping("/episodes/{episodeId}")
     public ResponseEntity<Void> delete(@CurrentUser UUID userId, @PathVariable UUID episodeId) {
+        AppLogger.current().info("episode delete requested", LogField.episodeId(episodeId));
         files.deleteEpisode(userId, episodeId);
         return ResponseEntity.noContent().build();
     }

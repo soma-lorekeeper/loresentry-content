@@ -10,6 +10,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -47,6 +49,9 @@ public class RefreshDraftRepository {
      * right 는 결과가 와야 생긴다.
      */
     public void insertBaseDraft(UUID runId, UUID documentId, UUID baseVersionId, long revisionNo, DraftSnapshot left) {
+        // 기준 버전은 작업본이 참조하는 것이라 param 이다. 스냅샷 내용은 남기지 않는다
+        AppLogger.current().info("refresh base draft insert", LogField.refreshRequestId(runId), LogField.documentId(documentId),
+                LogField.param("base_version_id", baseVersionId), LogField.param("revision_no", revisionNo));
         UUID projectId = projectOfRun(runId);
         UUID id = newId();
         String leftJson = json.writeValueAsString(left);
@@ -74,6 +79,7 @@ public class RefreshDraftRepository {
 
     /** 이 run 이 요청 때 만든 작업본들(BASE_CAPTURED). 대상 문서로 찾는다. */
     public Map<UUID, BaseDraft> baseDrafts(UUID runId) {
+        AppLogger.current().info("refresh base drafts list", LogField.refreshRequestId(runId));
         Map<UUID, BaseDraft> drafts = new LinkedHashMap<>();
         jdbcClient
                 .sql("""
@@ -97,6 +103,7 @@ public class RefreshDraftRepository {
 
     /** 요청 때 만든 작업본에 제안(right)을 채워 검토를 연다. */
     public void open(UUID draftId, DraftSnapshot right, boolean baseMismatch) {
+        AppLogger.current().info("refresh draft open", LogField.refreshDraftId(draftId), LogField.param("base_mismatch", baseMismatch));
         UUID projectId = projectOfDraft(draftId);
         DraftSnapshot left = jdbcClient
                 .sql("select left_snapshot_enc from refresh_document_drafts where id = :id")
@@ -126,6 +133,8 @@ public class RefreshDraftRepository {
      */
     public void insertOpenEdit(UUID runId, UUID documentId, long leftRevisionNo, DraftSnapshot left, DraftSnapshot right,
             boolean baseMismatch) {
+        AppLogger.current().info("refresh open edit draft insert", LogField.refreshRequestId(runId), LogField.documentId(documentId),
+                LogField.param("left_revision_no", leftRevisionNo), LogField.param("base_mismatch", baseMismatch));
         UUID projectId = projectOfRun(runId);
         UUID id = newId();
         String leftJson = json.writeValueAsString(left);
@@ -152,6 +161,7 @@ public class RefreshDraftRepository {
 
     /** 새 설정 문서 제안의 작업본. 아직 문서가 없으므로 left 는 비어 있다. 사용자가 받아들이면 left 를 right 와 같게 한다. */
     public void insertNew(UUID runId, String candidateId, String folderCode, DraftSnapshot right) {
+        AppLogger.current().info("refresh new draft insert", LogField.refreshRequestId(runId));
         UUID projectId = projectOfRun(runId);
         UUID id = newId();
         String rightJson = json.writeValueAsString(right);
@@ -171,6 +181,7 @@ public class RefreshDraftRepository {
 
     /** 결과에 제안이 없어 열리지 않은 작업본을 지우고, 그 작업본들의 기준 버전 id 를 돌려준다. */
     public List<UUID> deleteUnopened(UUID runId) {
+        AppLogger.current().info("refresh unopened drafts delete", LogField.refreshRequestId(runId));
         return baseVersionIds(jdbcClient
                 .sql("""
                         delete from refresh_document_drafts
@@ -184,6 +195,7 @@ public class RefreshDraftRepository {
 
     /** run 의 작업본을 모두 지우고, 기준 버전 id 들을 돌려준다. run 이 끝날 때 쓴다. */
     List<UUID> deleteByRun(UUID runId) {
+        AppLogger.current().info("refresh drafts delete", LogField.refreshRequestId(runId));
         return baseVersionIds(jdbcClient
                 .sql("delete from refresh_document_drafts where refresh_run_id = :run returning base_version_id")
                 .param("run", runId)
@@ -193,6 +205,7 @@ public class RefreshDraftRepository {
 
     /** 열린 작업본 수, 그중 맞춘 수, 그중 새 문서 제안 수. */
     public DraftCounts counts(UUID runId) {
+        AppLogger.current().info("refresh draft counts get", LogField.refreshRequestId(runId));
         return jdbcClient
                 .sql("""
                         select count(*) as total,
@@ -219,6 +232,7 @@ public class RefreshDraftRepository {
 
     /** 열린 작업본들. 기존 문서 먼저, 분류 순서와 제목 순이고, 새 문서 제안은 뒤에 임시 이름 순으로 온다. */
     public List<OpenDraft> openDrafts(UUID runId) {
+        AppLogger.current().info("refresh open drafts list", LogField.refreshRequestId(runId));
         return jdbcClient
                 .sql("""
                         select r.id, run.project_id, r.kind, r.draft_revision, r.is_matched as matched, r.updated_at,
@@ -255,6 +269,7 @@ public class RefreshDraftRepository {
 
     /** 이 run 의 열린 작업본 전부. 확정은 run 을 잠근 뒤 읽으므로 그 사이 저장이 끼어들지 않는다. */
     public List<ConfirmDraft> openForConfirm(UUID runId) {
+        AppLogger.current().info("refresh confirm drafts list", LogField.refreshRequestId(runId));
         return jdbcClient
                 .sql("""
                         select r.id, run.project_id, r.kind, r.target_document_id, r.candidate_id, r.folder_code,
@@ -278,6 +293,7 @@ public class RefreshDraftRepository {
     }
 
     public Optional<DraftHead> findOpen(UUID runId, UUID draftId) {
+        AppLogger.current().info("refresh open draft find", LogField.refreshRequestId(runId), LogField.refreshDraftId(draftId));
         return jdbcClient
                 .sql("""
                         select id, kind, target_document_id, candidate_id from refresh_document_drafts
@@ -291,6 +307,7 @@ public class RefreshDraftRepository {
 
     /** 이 run 의 새 설정 문서 제안: 임시 이름 → 분류. 작업본의 관계가 아직 없는 문서를 가리킬 때 확인한다. */
     public Map<String, String> candidateFolders(UUID runId) {
+        AppLogger.current().info("refresh candidate folders list", LogField.refreshRequestId(runId));
         Map<String, String> folders = new LinkedHashMap<>();
         jdbcClient
                 .sql("select candidate_id, folder_code from refresh_document_drafts "
@@ -312,6 +329,7 @@ public class RefreshDraftRepository {
      * (설계 §7.5). 저장하면 번호가 하나 오르고, matched 는 DB 가 다시 계산한다.
      */
     public Optional<Current> save(UUID draftId, long expectedRevision, DraftSnapshot left, DraftSnapshot right) {
+        AppLogger.current().info("refresh draft save", LogField.refreshDraftId(draftId), LogField.param("expected_revision", expectedRevision));
         Optional<UUID> project = jdbcClient.sql("""
                         select run.project_id from refresh_document_drafts r
                         join refresh_runs run on run.id = r.refresh_run_id
@@ -346,6 +364,7 @@ public class RefreshDraftRepository {
     }
 
     public Current current(UUID draftId) {
+        AppLogger.current().info("refresh draft current get", LogField.refreshDraftId(draftId));
         return jdbcClient
                 .sql("""
                         select r.id, run.project_id, r.draft_revision, r.is_matched as matched, r.updated_at,

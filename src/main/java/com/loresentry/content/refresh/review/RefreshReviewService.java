@@ -10,6 +10,8 @@ import java.util.UUID;
 
 import com.loresentry.content.document.DocumentSnapshot;
 import com.loresentry.content.document.RefreshDocuments;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 import com.loresentry.content.refresh.DraftSnapshot;
 import com.loresentry.content.refresh.DraftSnapshots;
@@ -45,6 +47,7 @@ public class RefreshReviewService {
     /** 이 프로젝트의 가장 최근 최신화. 한 번도 하지 않았으면 {@code REFRESH_NOT_FOUND}. */
     @Transactional(readOnly = true)
     public RefreshResponses.Summary latest(UUID userId, UUID projectId) {
+        AppLogger.current().info("graph refresh latest get", LogField.projectId(projectId));
         requireProject(userId, projectId);
         GraphRefreshRepository.RunInfo run = runs.latestInfo(projectId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.REFRESH_NOT_FOUND));
@@ -55,6 +58,7 @@ public class RefreshReviewService {
     /** run 하나와 열린 작업본 전부. 기준 버전 스냅샷은 한 번에 읽는다. */
     @Transactional(readOnly = true)
     public RefreshResponses.Detail detail(UUID userId, UUID projectId, UUID runId) {
+        AppLogger.current().info("graph refresh get", LogField.projectId(projectId), LogField.refreshRequestId(runId));
         requireProject(userId, projectId);
         GraphRefreshRepository.RunInfo run = runs.findInfo(projectId, runId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.REFRESH_NOT_FOUND));
@@ -95,6 +99,8 @@ public class RefreshReviewService {
     @Transactional
     public RefreshResponses.SavedDraft saveDraft(UUID userId, UUID projectId, UUID runId, UUID draftId,
             RefreshResponses.DraftSave request) {
+        AppLogger.current().info("graph refresh draft save", LogField.projectId(projectId), LogField.refreshRequestId(runId),
+                LogField.refreshDraftId(draftId), LogField.param("draft_revision", request == null ? null : request.draftRevision()));
         requireProject(userId, projectId);
         String status = runs.statusForShare(projectId, runId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.REFRESH_NOT_FOUND));
@@ -121,6 +127,10 @@ public class RefreshReviewService {
         RefreshDraftRepository.Current saved = drafts.save(draftId, request.draftRevision(), left, right)
                 .orElseThrow(() -> {
                     RefreshDraftRepository.Current current = drafts.current(draftId);
+                    // 보낸 draft_revision 이 지금 값과 다르다(409)
+                    AppLogger.current().warn("graph refresh draft save conflict", LogField.refreshDraftId(draftId),
+                            LogField.param("draft_revision", request.draftRevision()),
+                            LogField.result("current_draft_revision", current.draftRevision()));
                     // 다른 탭·기기가 먼저 저장했다. 지금 모습을 돌려줘 화면이 다시 맞추게 한다.
                     Map<String, Object> latest = new LinkedHashMap<>();
                     latest.put("draft_revision", current.draftRevision());
@@ -130,6 +140,9 @@ public class RefreshReviewService {
                     return new ContentFailure(ContentFailure.Reason.REFRESH_DRAFT_CONFLICT,
                             Map.of("current", latest));
                 });
+        // 저장 뒤 두 쪽이 같아졌는지(matched)는 확정할 수 있는지를 정한다
+        AppLogger.current().info("graph refresh draft save completed", LogField.refreshDraftId(draftId),
+                LogField.result("draft_revision", saved.draftRevision()), LogField.result("matched", saved.matched()));
         return new RefreshResponses.SavedDraft(draftId, saved.draftRevision(), saved.matched(), saved.updatedAt(),
                 saved.left(), saved.right());
     }

@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -24,6 +26,7 @@ public class FavoriteService {
 
     @Transactional(readOnly = true)
     public Favorites list(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("favorite list", LogField.projectId(projectId));
         requireProject(ownerUserId, projectId);
         return current(projectId);
     }
@@ -34,6 +37,7 @@ public class FavoriteService {
      */
     @Transactional
     public Favorites add(UUID ownerUserId, UUID projectId, UUID fileId) {
+        AppLogger.current().info("favorite add", LogField.projectId(projectId), LogField.fileId(fileId));
         requireProject(ownerUserId, projectId);
         if (!activeDocument(projectId, fileId)) {
             // 휴지통 문서를 즐겨찾기에 두면 열 수 없는 바로가기가 사이드바에 남는다.
@@ -50,6 +54,7 @@ public class FavoriteService {
 
     @Transactional
     public Favorites remove(UUID ownerUserId, UUID projectId, UUID fileId) {
+        AppLogger.current().info("favorite remove", LogField.projectId(projectId), LogField.fileId(fileId));
         requireProject(ownerUserId, projectId);
         jdbcClient
                 .sql("delete from favorite where project_id = :project and document_id = :document")

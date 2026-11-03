@@ -9,6 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.loresentry.content.document.BodyText;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 
@@ -31,6 +33,7 @@ class ChatRepository {
     }
 
     boolean projectExists(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project exists check", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select 1 from projects where id = :id and owner_user_id = :owner"
                         + " and trashed_at is null")
@@ -39,6 +42,7 @@ class ChatRepository {
     }
 
     Optional<ChatResponses.Project> project(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("chat project find", LogField.projectId(projectId));
         return jdbcClient
                 .sql("select id, name, description from projects"
                         + " where id = :id and owner_user_id = :owner and trashed_at is null")
@@ -52,6 +56,7 @@ class ChatRepository {
 
     List<ChatResponses.Manuscript> manuscripts(UUID projectId,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat manuscripts list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, d.title, e.name as episode_name, d.revision_no, d.body_text_enc,
@@ -79,6 +84,7 @@ class ChatRepository {
 
     List<ChatResponses.Setting> settings(UUID projectId,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat settings list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, f.code as folder_code, d.title, d.revision_no, d.body_text_enc,
@@ -104,6 +110,7 @@ class ChatRepository {
     }
 
     Map<UUID, List<ChatResponses.Property>> properties(UUID projectId) {
+        AppLogger.current().info("chat properties list", LogField.projectId(projectId));
         Map<UUID, List<ChatResponses.Property>> byDocument = new LinkedHashMap<>();
         jdbcClient
                 .sql("""
@@ -125,6 +132,7 @@ class ChatRepository {
     }
 
     List<ChatResponses.Relation> relations(UUID projectId) {
+        AppLogger.current().info("chat relations list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select r.low_document_id, r.high_document_id, r.description
@@ -144,6 +152,7 @@ class ChatRepository {
     }
 
     List<ChatResponses.Memo> memos(UUID projectId) {
+        AppLogger.current().info("chat memos list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select m.id, m.scope, m.document_id, m.title, m.body, m.updated_at
@@ -169,6 +178,7 @@ class ChatRepository {
 
     List<ChatResponses.MapManuscript> mapManuscripts(UUID projectId,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat map manuscripts list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, d.title, e.name as episode_name, d.revision_no,
@@ -197,6 +207,7 @@ class ChatRepository {
 
     List<ChatResponses.MapSetting> mapSettings(UUID projectId,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat map settings list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select d.id, f.code as folder_code, d.title, d.revision_no,
@@ -223,6 +234,7 @@ class ChatRepository {
     }
 
     List<ChatResponses.MapMemo> mapMemos(UUID projectId) {
+        AppLogger.current().info("chat map memos list", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select m.id, m.scope, m.document_id, m.title,
@@ -249,6 +261,7 @@ class ChatRepository {
 
     List<ChatResponses.Manuscript> manuscriptsById(UUID projectId, List<UUID> ids,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat manuscripts by id list", LogField.projectId(projectId), LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return List.of();
         }
@@ -285,6 +298,7 @@ class ChatRepository {
 
     List<ChatResponses.DocumentSetting> settingsById(UUID projectId, List<UUID> ids,
             Map<UUID, List<ChatResponses.Property>> properties) {
+        AppLogger.current().info("chat settings by id list", LogField.projectId(projectId), LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return List.of();
         }
@@ -320,6 +334,7 @@ class ChatRepository {
     }
 
     List<ChatResponses.Memo> memosById(UUID projectId, List<UUID> ids) {
+        AppLogger.current().info("chat memos by id list", LogField.projectId(projectId), LogField.param("ids", ids));
         if (ids.isEmpty()) {
             return List.of();
         }
@@ -356,6 +371,7 @@ class ChatRepository {
     }
 
     long size(UUID projectId) {
+        AppLogger.current().info("chat project size get", LogField.projectId(projectId));
         return jdbcClient
                 .sql("""
                         select

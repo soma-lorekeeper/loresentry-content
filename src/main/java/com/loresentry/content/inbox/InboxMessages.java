@@ -6,13 +6,13 @@ import java.time.format.DateTimeParseException;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.inbox.InvalidEventException.Check;
+import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.util.InvalidMimeTypeException;
 import org.springframework.util.MimeTypeUtils;
 import tools.jackson.core.JacksonException;
@@ -41,8 +41,6 @@ import tools.jackson.databind.json.JsonMapper;
  */
 final class InboxMessages {
 
-    /** 로그를 남기는 도구. 여기서는 건너뛴 메시지의 경고만 남긴다. */
-    private static final Logger log = LoggerFactory.getLogger(InboxMessages.class);
 
     /**
      * JSON 을 읽는 도구. 앱의 기본 설정(JacksonConfiguration)을 쓰지 않고 따로 만든다. 기본 설정은 모르는 필드가
@@ -76,7 +74,7 @@ final class InboxMessages {
         // 5. header 의 대상과 payload 의 id 가 같은 유저를 가리키는가. 글자가 아니라 UUID 값으로 비교하므로
         //    대소문자만 다른 것은 같다고 본다.
         if (!ids.subject().equals(event.userId())) {
-            throw new InvalidEventException("ce_subject does not match the payload id");
+            throw new InvalidEventException(Check.SUBJECT_MISMATCH, "ce_subject does not match the payload id");
         }
         return Optional.of(new Received<>(ids.eventId(), event));
     }
@@ -103,7 +101,7 @@ final class InboxMessages {
         requireField(event.outcome(), "outcome");
         // 5. 이 이벤트의 대상은 프로젝트가 아니라 요청이다. ce_subject 는 request_id 와 같아야 한다.
         if (!ids.subject().equals(event.requestId())) {
-            throw new InvalidEventException("ce_subject does not match the payload id");
+            throw new InvalidEventException(Check.SUBJECT_MISMATCH, "ce_subject does not match the payload id");
         }
         return Optional.of(new Received<>(ids.eventId(), event));
     }
@@ -125,8 +123,8 @@ final class InboxMessages {
             return true;
         }
         // 이 문구로 로그를 찾는다. 새 종류가 추가된 것인지 이름을 잘못 적은 것인지 볼 수 있게 받은 값을 적는다.
-        log.warn("inbox event skipped: topic={}, partition={}, offset={}, type={}",
-                record.topic(), record.partition(), record.offset(), type);
+        AppLogger.current().warn("inbox event skipped: topic=" + record.topic() + ", partition=" + record.partition()
+                + ", offset=" + record.offset() + ", type=" + type);
         return false;
     }
 
@@ -140,28 +138,28 @@ final class InboxMessages {
     private static Ids checkHeaders(ConsumerRecord<String, String> record, String expectedSource) {
         // 계약의 버전. 다른 값이면 header 의 뜻 자체가 달라졌을 수 있다.
         if (!"1.0".equals(required(record, "ce_specversion"))) {
-            throw new InvalidEventException("invalid header: ce_specversion");
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: ce_specversion");
         }
         UUID eventId = uuid(record, "ce_id");
         if (!expectedSource.equals(required(record, "ce_source"))) {
-            throw new InvalidEventException("invalid header: ce_source");
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: ce_source");
         }
         UUID subject = uuid(record, "ce_subject");
         // 시각은 쓰지 않는다. RFC 3339 시각으로 읽히는지만 본다.
         try {
             OffsetDateTime.parse(required(record, "ce_time"));
         } catch (DateTimeParseException notATime) {
-            throw new InvalidEventException("invalid header: ce_time");
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: ce_time");
         }
         // 글자를 그대로 비교하지 않고 media type 으로 읽어 종류만 비교한다. "application/json; charset=UTF-8" 이나
         // 대문자로 적은 값은 뜻이 같으므로 통과시킨다.
         try {
             if (!MimeTypeUtils.parseMimeType(required(record, "content-type"))
                     .equalsTypeAndSubtype(MimeTypeUtils.APPLICATION_JSON)) {
-                throw new InvalidEventException("invalid header: content-type");
+                throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: content-type");
             }
         } catch (InvalidMimeTypeException notAMediaType) {
-            throw new InvalidEventException("invalid header: content-type");
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: content-type");
         }
         return new Ids(eventId, subject);
     }
@@ -175,20 +173,20 @@ final class InboxMessages {
         // 같은 이름이 여러 개면 마지막 것을 준다. 계약은 같은 이름을 하나만 두므로 고를 일은 없다. 없으면 null 이다.
         Header header = record.headers().lastHeader(name);
         if (header == null) {
-            throw new InvalidEventException("missing header: " + name);
+            throw new InvalidEventException(Check.MISSING_HEADER, "missing header: " + name);
         }
 
         // header 는 붙었는데 값이 없는 경우. Kafka 는 값이 null 인 header 를 허용한다.
         byte[] bytes = header.value();
         if (bytes == null) {
-            throw new InvalidEventException("missing header: " + name);
+            throw new InvalidEventException(Check.MISSING_HEADER, "missing header: " + name);
         }
 
         // 계약이 header 의 값을 UTF-8 글자로 정했다. 공백뿐인 값도 넣지 않은 것으로 본다 — 그렇지 않으면 공백뿐인
         // ce_type 이 "모르는 종류"로 분류되어 거부되지 않고 건너뛰어진다.
         String value = new String(bytes, StandardCharsets.UTF_8);
         if (value.isBlank()) {
-            throw new InvalidEventException("missing header: " + name);
+            throw new InvalidEventException(Check.MISSING_HEADER, "missing header: " + name);
         }
 
         return value;
@@ -204,12 +202,12 @@ final class InboxMessages {
         // UUID.fromString 은 "1-2-3-4-5" 처럼 짧은 묶음도 받아 0 으로 채운다. 그러면 서로 다른 글자가 같은 UUID 가
         // 되어 inbox 에서 같은 이벤트로 취급되므로, 표준 표기의 길이(36)인지 먼저 본다.
         if (value.length() != 36) {
-            throw new InvalidEventException("invalid header: " + name);
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: " + name);
         }
         try {
             return UUID.fromString(value);
         } catch (IllegalArgumentException notAUuid) {
-            throw new InvalidEventException("invalid header: " + name);
+            throw new InvalidEventException(Check.INVALID_HEADER, "invalid header: " + name);
         }
     }
 
@@ -225,7 +223,7 @@ final class InboxMessages {
         // Kafka 는 value 가 없는 record 를 허용한다. JSON library 에 null 을 넘기면 계약과 상관없는 예외가 나므로
         // 먼저 본다.
         if (record.value() == null) {
-            throw new InvalidEventException("missing payload");
+            throw new InvalidEventException(Check.MISSING_PAYLOAD, "missing payload");
         }
         T payload;
         try {
@@ -241,11 +239,11 @@ final class InboxMessages {
                 message.append(" (line ").append(location.getLineNr())
                         .append(", column ").append(location.getColumnNr()).append(')');
             }
-            throw new InvalidEventException(message.toString());
+            throw new InvalidEventException(Check.UNREADABLE_PAYLOAD, message.toString());
         }
         // value 가 JSON 의 null 이면 library 는 예외 없이 null 을 돌려준다.
         if (payload == null) {
-            throw new InvalidEventException("missing payload");
+            throw new InvalidEventException(Check.MISSING_PAYLOAD, "missing payload");
         }
         return payload;
     }
@@ -259,7 +257,7 @@ final class InboxMessages {
      */
     private static void requireField(Object value, String name) {
         if (value == null) {
-            throw new InvalidEventException("missing payload field: " + name);
+            throw new InvalidEventException(Check.MISSING_FIELD, "missing payload field: " + name);
         }
     }
 }

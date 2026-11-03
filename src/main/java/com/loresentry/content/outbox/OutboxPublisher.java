@@ -11,12 +11,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.SkipEntryLog;
+import com.loresentry.content.logging.TraceContext;
 import com.loresentry.content.outbox.Round.Outcome;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.RecordTooLargeException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -36,9 +38,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 class OutboxPublisher {
-
-    /** 로그를 남기는 도구. 로그에는 행의 id 와 종류, 예외의 종류만 적는다 — payload 와 예외 메시지는 적지 않는다. */
-    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
 
     /** 한 회차에 보내는 행 수의 상한. 작은 행이 아주 많을 때 한 회차가 지나치게 길어지지 않게 한다. */
     static final int MAX_ROWS = 50;
@@ -92,6 +91,21 @@ class OutboxPublisher {
     private record Failure(OutboxEvent event, Throwable cause, boolean quarantine) {
     }
 
+    /**
+     * 보낸 행 하나의 줄. 그 행을 만든 요청의 trace(행에 저장된 traceparent)로 남겨, 요청의 흐름 끝에 이 이벤트가 언제 어느
+     * offset 으로 나갔는지 보이게 한다(LOG_SCHEMA.md 7절 outbox). traceparent 가 없는 행(추적 전에 쌓인 행)은 relay 회차의 trace 다.
+     */
+    private static void logPublished(OutboxEvent event, SendResult<String, String> result) {
+        try (var bound = AppLogger.bind(TraceContext.fromTraceparent(event.traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
+            var metadata = result == null ? null : result.getRecordMetadata();
+            AppLogger.current().info("outbox event published", LogField.cloudeventId(event.id()),
+                    LogField.cloudeventType(event.eventType()),
+                    metadata == null ? null : LogField.kafkaTopic(metadata.topic()),
+                    metadata == null ? null : LogField.kafkaPartition(metadata.partition()),
+                    metadata == null ? null : LogField.kafkaOffset(metadata.offset()));
+        }
+    }
+
     /** 할 일이 없었던 회차의 결과. 개수가 모두 0 이다. */
     private static final Round NOTHING_DONE = new Round(Outcome.IDLE, 0, 0, 0);
 
@@ -116,6 +130,7 @@ class OutboxPublisher {
      *         실패는 다시 보낼 것이 아니므로 FAILED 로 만들지 않는다
      */
     @Transactional
+    @SkipEntryLog("Called on every round of the 1-second relay. Logs the start line (outbox relay batch start) and per-row lines only when there are rows to send")
     Round publishBatch() {
         // 1. 다른 인스턴스가 이미 돌리고 있으면 이번 회차는 건너뛴다.
         if (!repository.tryRelayLock()) {
@@ -126,6 +141,8 @@ class OutboxPublisher {
         if (batch.isEmpty()) {
             return NOTHING_DONE;
         }
+        // 시작 줄. 보낼 행이 있는 회차에만 남긴다(1초 폴링이라 빈 회차는 줄을 남기지 않는다). 끝은 OutboxRelay 의 요약 줄이다
+        AppLogger.current().info("outbox relay batch start", LogField.param("rows", batch.size()));
 
         // 3. 전부 먼저 보내고 결과는 그다음에 기다린다. 행마다 보내고 바로 기다리면 메시지가 하나씩 따로 나가
         // producer 가 묶어 보내지 못한다.
@@ -169,8 +186,9 @@ class OutboxPublisher {
         for (Sent sent : inFlight) {
             try {
                 // 결과가 올 때까지 최대 SEND_WAIT 동안 멈춘다. 성공이면 다음 줄로 가고, 실패면 예외가 난다.
-                sent.result().get(SEND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+                SendResult<String, String> result = sent.result().get(SEND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
                 published.add(sent.event().id());
+                logPublished(sent.event(), result);
             } catch (InterruptedException interrupted) {
                 // 종료 신호다. 발행 실패가 아니므로 남은 행은 기록 없이 미발행으로 두고 더 기다리지 않는다.
                 // 흔한 관용구와 달리 interrupt 표시를 다시 켜지 않는다. 표시가 켜진 채로는 virtual thread 에서
@@ -209,13 +227,27 @@ class OutboxPublisher {
             if (failure.quarantine()) {
                 quarantined++;
                 repository.quarantine(id, error);
-                // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다.
-                log.error("outbox event quarantined: id={}, type={}, reason={}",
-                        id, failure.event().eventType(), reason);
+                // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다. 그 행을 만든 요청의 trace 로 남긴다.
+                // 로그에는 행의 id 와 종류, 예외의 종류만 적는다 — payload 와 예외 메시지는 적지 않는다.
+                try (var bound = AppLogger.bind(TraceContext.fromTraceparent(failure.event().traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
+                    AppLogger.current().error("outbox event quarantined: id=" + id + ", type=" + failure.event().eventType()
+                                    + ", reason=" + reason, LogField.cloudeventId(id),
+                            LogField.cloudeventType(failure.event().eventType()), LogField.errorType(reason));
+                }
             } else {
                 retrying++;
                 failed = true;
-                if (repository.markFailed(id, error) >= WARN_AFTER_ATTEMPTS) {
+                int attempts = repository.markFailed(id, error);
+                if (attempts == 1) {
+                    // 이 행의 첫 실패만 행마다 한 줄 남긴다. 그 행을 만든 요청의 trace 로 남겨, 요청의 흐름 끝에서 발행이
+                    // 실패한 것이 보인다. 이어지는 실패는 relay 요약 줄의 failed 개수로, 5번 이상이면 아래 still failing 줄로 센다.
+                    try (var bound = AppLogger.bind(TraceContext.fromTraceparent(failure.event().traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
+                        AppLogger.current().warn("outbox event send failed", LogField.cloudeventId(id),
+                                LogField.cloudeventType(failure.event().eventType()), LogField.errorType(reason),
+                                LogField.result("attempts", attempts));
+                    }
+                }
+                if (attempts >= WARN_AFTER_ATTEMPTS) {
                     // 이 이유의 개수를 1 올린다. 처음 나온 이유면 1 로 시작한다.
                     stuck.merge(reason, 1, Integer::sum);
                 }
@@ -225,7 +257,7 @@ class OutboxPublisher {
         // 이유별 개수를 싣는다 — 서로 다른 문제가 겹쳤을 때 한쪽이 가려지지 않는다. 어느 행인지는 DB 의
         // attempts 와 last_error 로 찾는다. 이 문구로 로그를 찾으므로, 바꾸면 조회와 알림이 함께 깨진다.
         if (!stuck.isEmpty()) {
-            log.warn("outbox events still failing: {}", stuck);
+            AppLogger.current().warn("outbox events still failing: " + stuck, LogField.result("stuck", stuck));
         }
         // 다시 보내야 할 실패나 종료 신호가 있었으면 FAILED, 없었으면 MORE 다. 여기까지 왔다면 읽은 행이 있었으므로
         // IDLE 은 아니다.

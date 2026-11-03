@@ -3,6 +3,8 @@ package com.loresentry.content.user;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +20,8 @@ class UserDeletedRepository {
 
     /** 휴지통 프로젝트와 PENDING 이미지도 포함한다. 업로드만 끝나고 확인되지 않은 객체도 S3 에 있다. */
     List<String> imageKeysOf(UUID ownerUserId) {
+        // 탈퇴한 사용자는 이 레코드의 로그 객체에 이미 붙어 있다
+        AppLogger.current().info("user image keys list");
         return jdbcClient
                 .sql("""
                         select i.s3_key
@@ -37,6 +41,7 @@ class UserDeletedRepository {
      *         프로젝트도 빠지지 않는다. 지운 프로젝트마다 ProjectDeleted 를 내는 데 쓴다
      */
     List<UUID> deleteProjects(UUID ownerUserId) {
+        AppLogger.current().info("user projects delete");
         return jdbcClient.sql("delete from projects where owner_user_id = :owner returning id")
                 .param("owner", ownerUserId)
                 .query(UUID.class)
@@ -45,6 +50,7 @@ class UserDeletedRepository {
 
     /** 작업공간 행은 사용자 키도 갖는다. 남의 프로젝트를 열었던 기록이 생겨도 함께 지운다. */
     int deleteWorkspaceStates(UUID ownerUserId) {
+        AppLogger.current().info("user workspace states delete");
         return jdbcClient.sql("delete from workspace_state where owner_user_id = :owner")
                 .param("owner", ownerUserId)
                 .update();

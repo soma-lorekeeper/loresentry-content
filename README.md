@@ -40,7 +40,7 @@ Boot 4 moved several test annotations. The one this repo uses is
 | --- | --- | --- |
 | `GET` | `/health` | `{"status":"ok"}`. Used by the Kubernetes probes. |
 | `GET` | `/` | `{"service":"content-api"}` |
-| `GET` | `/health/db` | Reports whether the PostgreSQL connection works. `503` with the driver error otherwise. |
+| `GET` | `/health/db` | Reports whether the PostgreSQL connection works (`status`, `service`, `database`). `503` with a fixed message otherwise; the DB user, version and driver error are not returned. |
 | `GET` | `/projects` | Active projects, most recently worked first. |
 | `GET` | `/projects/trash` | Trashed projects, most recently trashed first. |
 | `POST` | `/projects` | Creates a project. `201` with a `Location` header. |

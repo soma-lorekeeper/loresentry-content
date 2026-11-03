@@ -11,6 +11,9 @@ RUN ./gradlew --no-daemon clean bootJar -x test
 
 FROM eclipse-temurin:21-jre-alpine
 
+# 이미지 태그(build-<run>-<attempt>). 로그와 span의 service.version이 된다
+ARG APP_VERSION=unknown
+ENV APP_VERSION=${APP_VERSION}
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
 
 WORKDIR /app

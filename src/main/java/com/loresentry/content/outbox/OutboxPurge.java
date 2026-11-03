@@ -3,8 +3,10 @@ package com.loresentry.content.outbox;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogLayer;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,15 +24,17 @@ import org.springframework.stereotype.Component;
  * <p>현재 시각은 직접 읽는다. 시간 계산이 뺄셈 한 번뿐이라, 테스트는 행의 시각을 지금 기준으로 잡으면 된다.
  */
 @Component
+@LogLayer("scheduler")
 class OutboxPurge {
 
-    /** 로그를 남기는 도구. 개수와 예외의 종류만 적는다 — 예외 메시지와 SQL 은 적지 않는다. */
-    private static final Logger log = LoggerFactory.getLogger(OutboxPurge.class);
 
     /**
      * 발행된 행을 남겨 두는 기간. Kafka topic 의 보존 기간(3일)과 맞췄다 — 그 뒤에는 Kafka 에서도 메시지가 사라져,
      * outbox 의 행을 다시 볼 일이 없다. 하루 한 번 지우므로 실제로는 3일에서 4일 사이 남는다.
      */
+    /** 로그의 작업 이름(loresentry.schedule.name). */
+    static final String SCHEDULE = "outbox-purge";
+
     static final Duration RETENTION = Duration.ofDays(3);
 
     /**
@@ -64,19 +68,27 @@ class OutboxPurge {
      */
     @Scheduled(cron = DAILY_AT_FOUR, zone = ZONE)
     void run() {
-        // 걸린 시간을 재기 위한 시작점. 시각이 아니라 흘러간 시간만 재는 값이다.
-        long startedAt = System.nanoTime();
-        try {
-            // 지금에서 보존 기간을 뺀 시각. 이보다 먼저 발행된 행이 지워진다.
-            OffsetDateTime cutoff = OffsetDateTime.now().minus(RETENTION);
-            int deleted = repository.deletePublishedBefore(cutoff);
-            long took = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
-            // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다. deleted 가 커지는 추세가 보이면 한 번에
-            // 지우는 양에 상한을 둘 때다.
-            log.info("outbox purge: deleted={}, took={}ms", deleted, took);
-        } catch (RuntimeException failure) {
-            // 삭제가 실패했다(예: DB 에 닿지 못함). 트랜잭션이 rollback 되어 지워진 것이 없다.
-            log.error("outbox purge failed: reason={}", failure.getClass().getName());
+        // 회차 하나의 시작점. 스케줄 observation 이 연 span 으로 로그 객체를 만들고 작업 이름을 붙여, 이 회차의 모든 줄(부른 repository 줄 포함)에 남게 한다
+        try (var bound = AppLogger.bind(TraceContext.newLogger().with(LogField.scheduleName(SCHEDULE)))) {
+            // 로그에는 개수와 예외의 종류만 적는다 — 예외 메시지와 SQL 은 적지 않는다.
+            // 시작 줄. 시작할 때 아는 값(보존 기간)을 함께 남긴다
+            AppLogger.current().info("outbox purge start", LogField.param("retention_days", RETENTION.toDays()));
+            // 걸린 시간을 재기 위한 시작점. 시각이 아니라 흘러간 시간만 재는 값이다.
+            long startedAt = System.nanoTime();
+            try {
+                // 지금에서 보존 기간을 뺀 시각. 이보다 먼저 발행된 행이 지워진다.
+                OffsetDateTime cutoff = OffsetDateTime.now().minus(RETENTION);
+                int deleted = repository.deletePublishedBefore(cutoff);
+                Duration took = Duration.ofNanos(System.nanoTime() - startedAt);
+                // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다. deleted 가 커지는 추세가 보이면 한 번에
+                // 지우는 양에 상한을 둘 때다.
+                AppLogger.current().info("outbox purge: deleted=" + deleted + ", took=" + took.toMillis() + "ms",
+                        LogField.result("deleted", deleted), LogField.duration(took));
+            } catch (RuntimeException failure) {
+                // 삭제가 실패했다(예: DB 에 닿지 못함). 트랜잭션이 rollback 되어 지워진 것이 없다.
+                AppLogger.current().error("outbox purge failed: reason=" + failure.getClass().getName(),
+                        LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
+            }
         }
     }
 }

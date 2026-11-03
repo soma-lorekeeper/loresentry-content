@@ -15,6 +15,8 @@ import java.util.stream.Collectors;
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 import com.loresentry.content.project.ProjectActivity;
@@ -71,6 +73,7 @@ public class DocumentService {
     /** 휴지통 문서는 목록에만 보이고 열리지 않는다. 그래서 여기도 {@link #requireHeader}를 지난다. */
     @Transactional(readOnly = true)
     public DocumentResponses.Content get(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("document get", LogField.fileId(fileId));
         return repository.contentOf(requireHeader(ownerUserId, fileId));
     }
 
@@ -84,6 +87,7 @@ public class DocumentService {
      */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public DocumentResponses.Contents contents(UUID ownerUserId, UUID projectId, List<String> ids) {
+        AppLogger.current().info("document contents get", LogField.projectId(projectId), LogField.param("ids", ids));
         // 쿼리 파라미터는 경로 변수와 달리 형식 오류를 잘못된 요청(400)으로 답하려고 문자열로 받아 여기서 바꾼다.
         Set<UUID> wanted = new LinkedHashSet<>();
         for (String id : ids) {
@@ -103,6 +107,9 @@ public class DocumentService {
         List<DocumentResponses.ContentItem> documents = repository.contents(projectId, List.copyOf(wanted));
         Set<UUID> found = documents.stream().map(DocumentResponses.ContentItem::id).collect(Collectors.toSet());
         List<UUID> missing = wanted.stream().filter(id -> !found.contains(id)).toList();
+        // 열 수 없어(없음·휴지통·다른 프로젝트) 빠진 문서 수
+        AppLogger.current().info("document contents get completed", LogField.projectId(projectId),
+                LogField.result("documents", documents), LogField.result("missing", missing));
         return new DocumentResponses.Contents(projectId, documents, missing);
     }
 
@@ -114,12 +121,16 @@ public class DocumentService {
     @Transactional
     public DocumentResponses.Content save(UUID ownerUserId, UUID fileId, long expectedRevision,
             UUID saveId, DocumentSnapshot incoming) {
+        AppLogger.current().info("document save", LogField.fileId(fileId), LogField.saveId(saveId == null ? null : saveId.toString()),
+                LogField.param("expected_revision", expectedRevision));
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         if (header.locked()) {
             throw new ContentFailure(ContentFailure.Reason.DOCUMENT_LOCKED);
         }
 
         if (saveId != null && saveId.equals(header.lastSaveId())) {
+            // 이미 반영한 저장의 재시도다. revision 을 또 올리지 않고 그 결과를 돌려준다
+            AppLogger.current().info("document save replayed", LogField.fileId(fileId), LogField.result("revision", header.revisionNo()));
             return repository.contentOf(header);
         }
 
@@ -140,8 +151,12 @@ public class DocumentService {
             // 이쪽 조건이 어긋난다. 충돌이 아니라 같은 저장이므로 그 결과를 돌려준다. 위의 검사는 원래 요청이
             // 이 요청보다 먼저 끝난 경우만 잡는다.
             if (saveId != null && saveId.equals(current.lastSaveId())) {
+                AppLogger.current().info("document save replayed", LogField.fileId(fileId), LogField.result("revision", current.revisionNo()));
                 return repository.contentOf(current);
             }
+            // 다른 탭·기기가 먼저 저장했다(409). 클라이언트가 보낸 revision 과 지금 revision 을 남긴다
+            AppLogger.current().warn("document save conflict", LogField.fileId(fileId), LogField.param("expected_revision", expectedRevision),
+                    LogField.result("current_revision", current.revisionNo()));
             throw new DocumentConflict(repository.contentOf(current),
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
@@ -159,6 +174,10 @@ public class DocumentService {
         activity.recordWorkedFile(header.projectId(), fileId);
         outbox.append(savedMessages(header.projectId(), fileId, updated.get(), propertiesChanged,
                 changedRelations));
+        // 저장이 실제로 바꾼 것. 바뀐 관계는 이 문서와 상대 문서의 쌍 개수다
+        AppLogger.current().info("document save completed", LogField.fileId(fileId), LogField.result("revision", saved.revisionNo()),
+                LogField.result("title_changed", updated.get().titleChanged()), LogField.result("body_changed", updated.get().bodyChanged()),
+                LogField.result("properties_changed", propertiesChanged), LogField.result("changed_relations", changedRelations));
         return saved;
     }
 
@@ -170,6 +189,7 @@ public class DocumentService {
      */
     @Transactional
     public DocumentResponses.Content setLocked(UUID ownerUserId, UUID fileId, boolean locked) {
+        AppLogger.current().info("document lock set", LogField.fileId(fileId), LogField.param("locked", locked));
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         if (header.refreshLocked()) {
             throw new ContentFailure(ContentFailure.Reason.DOCUMENT_REFRESH_LOCKED);
@@ -181,6 +201,7 @@ public class DocumentService {
 
     @Transactional(readOnly = true)
     public DocumentResponses.VersionList versions(UUID ownerUserId, UUID fileId) {
+        AppLogger.current().info("document version list", LogField.fileId(fileId));
         requireHeader(ownerUserId, fileId);
         return new DocumentResponses.VersionList(repository.versions(fileId));
     }
@@ -188,9 +209,13 @@ public class DocumentService {
     /** 사용자가 이름을 붙인 버전은 파일이 영구 삭제될 때까지 남는다 — {@code expires_at}이 없다. */
     @Transactional
     public DocumentResponses.Version saveNamed(UUID ownerUserId, UUID fileId, String label) {
+        AppLogger.current().info("document version create", LogField.fileId(fileId), LogField.param("label", label));
         DocumentResponses.Content current = get(ownerUserId, fileId);
         UUID versionId = repository.insertVersion(fileId, current.revisionNo(), "NAMED",
                 label == null || label.isBlank() ? null : label.trim(), current.snapshot(), null);
+        // 새로 만든 버전
+        AppLogger.current().info("document version create completed", LogField.fileId(fileId), LogField.versionId(versionId),
+                LogField.result("revision", current.revisionNo()));
         return repository.findVersion(fileId, versionId).orElseThrow();
     }
 
@@ -203,6 +228,8 @@ public class DocumentService {
     @Transactional
     public DocumentResponses.Content restore(UUID ownerUserId, UUID fileId, UUID versionId,
             long expectedRevision) {
+        AppLogger.current().info("document version restore", LogField.fileId(fileId), LogField.versionId(versionId),
+                LogField.param("expected_revision", expectedRevision));
         DocumentRepository.Header header = requireHeader(ownerUserId, fileId);
         if (header.locked()) {
             throw new ContentFailure(ContentFailure.Reason.DOCUMENT_LOCKED);
@@ -223,6 +250,8 @@ public class DocumentService {
             throw new ContentFailure(ContentFailure.Reason.FILE_TITLE_TAKEN);
         }
         if (updated.isEmpty()) {
+            AppLogger.current().warn("document version restore conflict", LogField.fileId(fileId), LogField.versionId(versionId),
+                    LogField.param("expected_revision", expectedRevision), LogField.result("current_revision", current.revisionNo()));
             throw new DocumentConflict(current,
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
@@ -237,11 +266,14 @@ public class DocumentService {
         DocumentResponses.Content restored = repository.find(ownerUserId, fileId).orElseThrow();
         outbox.append(savedMessages(header.projectId(), fileId, updated.get(), propertiesChanged,
                 changedRelations));
+        AppLogger.current().info("document version restore completed", LogField.fileId(fileId), LogField.versionId(versionId),
+                LogField.result("revision", restored.revisionNo()));
         return restored;
     }
 
     @Transactional
     public void deleteVersion(UUID ownerUserId, UUID fileId, UUID versionId) {
+        AppLogger.current().info("document version delete", LogField.fileId(fileId), LogField.versionId(versionId));
         requireHeader(ownerUserId, fileId);
         DocumentResponses.Version version = repository.findVersion(fileId, versionId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.VERSION_NOT_FOUND));
@@ -313,6 +345,8 @@ public class DocumentService {
 
     private DocumentSnapshot validate(UUID projectId, UUID fileId, DocumentSnapshot incoming) {
         if (incoming == null) {
+            AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+                    LogField.resultCode("rule", "SNAPSHOT_MISSING", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
 
@@ -327,6 +361,8 @@ public class DocumentService {
                 incoming.properties() == null ? List.of() : incoming.properties();
         for (DocumentSnapshot.TextProperty property : properties) {
             if (property.key() == null || property.key().isBlank() || property.value() == null) {
+                AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+                        LogField.resultCode("rule", "PROPERTY_INVALID", BODY_RULES));
                 throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
             }
         }
@@ -337,6 +373,8 @@ public class DocumentService {
             // relation_key 는 받되 쓰지 않는다 — 키는 대상 문서의 분류에서 나온다(V10). 보내온 키가
             // 틀렸다고 막는 것은 시늉이다. 어차피 버릴 값이고, 막으면 옛 클라이언트만 못 쓰게 된다.
             if (relation.targetDocumentId() == null) {
+                AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+                        LogField.resultCode("rule", "RELATION_TARGET_MISSING", BODY_RULES));
                 throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
             }
             // 자기 참조는 그래프에 자기 루프를 만들고 타임라인에서 의미가 없다.
@@ -362,6 +400,14 @@ public class DocumentService {
     private static final int BODY_JSON_BYTES_MAX = 4 * 1024 * 1024;
 
     /**
+     * 저장 내용을 INVALID_REQUEST 로 거절한 규칙(로그 전용). 결과 줄의 이유는 INVALID_REQUEST 하나라, 어느 검사에 걸렸는지는
+     * "document body rejected" 줄의 {@code result.rule} 로 본다. 제목·관계 대상은 따로 오류 코드가 있어 여기 없다.
+     */
+    private static final Set<String> BODY_RULES = Set.of("SNAPSHOT_MISSING", "PROPERTY_INVALID",
+            "RELATION_TARGET_MISSING", "NOT_OBJECT", "DOC_MISSING", "SCHEMA_VERSION", "UNKNOWN_NODE", "UNKNOWN_MARK",
+            "TOO_LARGE", "TEXT_TOO_LONG");
+
+    /**
      * 본문 모양을 확인한다.
      *
      * <p>모르는 노드·마크를 그대로 저장하면 다른 클라이언트가 열 수 없는 문서가 생긴다. 허용 목록
@@ -370,22 +416,33 @@ public class DocumentService {
      * <p>그래프 최신화의 작업본도 같은 규칙으로 확인한다({@link RefreshDocuments}).
      */
     JsonNode validateBody(JsonNode body) {
+        // 본문 크기는 부른 쪽(저장 요청 등)의 진입 줄에 있다. 여기서 다시 직렬화하지 않는다
+        AppLogger.current().info("document body validate");
+        // 아래 거절 줄에는 file_id 가 없다. 이 메서드는 문서 저장과 최신화 작업본 저장이 함께 쓰고, 대상 id 는 같은 요청의
+        // 앞 줄(부른 쪽의 진입 줄)에 있다
         if (body == null || !body.isObject()) {
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "NOT_OBJECT", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         JsonNode doc = body.get("doc");
         if (doc == null || !"doc".equals(doc.path("type").asString(""))) {
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "DOC_MISSING", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         if (body.path("schema_version").asInt(0) != BODY_SCHEMA_VERSION) {
+            // 클라이언트가 보낸 판 번호(숫자가 아니면 0)
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "SCHEMA_VERSION", BODY_RULES),
+                    LogField.param("schema_version", body.path("schema_version").asInt(0)));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         checkNode(doc);
         if (json.writeValueAsString(body).getBytes(StandardCharsets.UTF_8).length
                 > BODY_JSON_BYTES_MAX) {
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "TOO_LARGE", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         if (BodyText.extract(doc).length() > BODY_MAX) {
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "TEXT_TOO_LONG", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         return body;
@@ -393,12 +450,15 @@ public class DocumentService {
 
     private void checkNode(JsonNode node) {
         if (!NODES.contains(node.path("type").asString(""))) {
+            // 모르는 노드 이름은 사용자가 보낸 글자라 남기지 않는다
+            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "UNKNOWN_NODE", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         JsonNode marks = node.get("marks");
         if (marks != null && marks.isArray()) {
             for (JsonNode mark : marks) {
                 if (!MARKS.contains(mark.path("type").asString(""))) {
+                    AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "UNKNOWN_MARK", BODY_RULES));
                     throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
                 }
             }

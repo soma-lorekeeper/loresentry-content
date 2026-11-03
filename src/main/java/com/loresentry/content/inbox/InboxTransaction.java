@@ -2,8 +2,9 @@ package com.loresentry.content.inbox;
 
 import java.util.UUID;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,10 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
  * connection 을 잡지 않게 하려는 것이다.
  */
 @Component
+@LogLayer("consumer")
 class InboxTransaction {
 
-    /** 로그를 남기는 도구. 다시 온 이벤트를 건너뛸 때 한 줄 남긴다. */
-    private static final Logger log = LoggerFactory.getLogger(InboxTransaction.class);
 
     /** 처리 기록을 적는 곳. */
     private final InboxRepository repository;
@@ -56,16 +56,22 @@ class InboxTransaction {
      * @param consumerName 처리기의 이름. consumer group id 와 같은 값이다. 같은 이벤트라도 처리기마다 따로 센다
      * @param eventId 이벤트의 id. header {@code ce_id}
      * @param work 처리. 이 트랜잭션 안에서, 이 메서드를 부른 thread 에서 실행된다
+     * @return 처음 온 이벤트라 처리했으면 true, 이미 처리한 이벤트라 건너뛰었으면 false. listener 의 종료 줄(outcome)에 쓴다
      */
     @Transactional
-    void runOnce(String consumerName, UUID eventId, Runnable work) {
+    boolean runOnce(String consumerName, UUID eventId, Runnable work) {
+        // 이벤트 ID 는 listener 가 바인딩한 로그 객체에 이미 붙어 있다
+        AppLogger.current().info("inbox event run once");
         // inbox write 먼저, 그 이후 비즈니스 로직 처리.
         if (repository.insertIfAbsent(consumerName, eventId)) {
             // 새로 적혔다: 처음 온 이벤트다. 기록과 같은 트랜잭션에서 처리한다.
             work.run();
+            return true;
         } else {
             // 이미 있었다: 이 처리기가 처리를 마친 이벤트가 다시 왔다. 처리하지 않고, 다시 왔다는 것만 남긴다.
-            log.info("inbox event already processed: consumer={}, event={}", consumerName, eventId);
+            AppLogger.current().info("inbox event already processed: consumer=" + consumerName + ", event=" + eventId,
+                    LogField.cloudeventId(eventId));
+            return false;
         }
     }
 }

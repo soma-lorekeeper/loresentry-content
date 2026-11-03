@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.stereotype.Service;
@@ -27,6 +29,7 @@ public class WithdrawalSurveyService {
 
     @Transactional
     public void record(List<String> rawReasons, String rawComment) {
+        AppLogger.current().info("withdrawal survey record", LogField.param("reasons", rawReasons), LogField.param("comment", rawComment));
         Set<String> reasons = new LinkedHashSet<>();
         for (String raw : rawReasons == null ? List.<String>of() : rawReasons) {
             String reason = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT);

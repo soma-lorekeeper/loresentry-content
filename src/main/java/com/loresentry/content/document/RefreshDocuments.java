@@ -7,6 +7,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
+
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +24,7 @@ import tools.jackson.databind.JsonNode;
  * ({@code MANDATORY}) — 최신화는 run 상태 변경과 문서 변경을 한 트랜잭션으로 묶는다.
  */
 @Component
+@LogLayer("service")
 public class RefreshDocuments {
 
     private final DocumentRepository repository;
@@ -44,6 +49,7 @@ public class RefreshDocuments {
     /** 이 프로젝트 문서 중 {@code ids} 에 있는 것. 없는 id 는 결과에 없다. 휴지통 문서는 {@code trashed} 로 알린다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public Map<UUID, Live> read(UUID projectId, Collection<UUID> ids) {
+        AppLogger.current().info("refresh documents read", LogField.projectId(projectId), LogField.param("ids", ids));
         Map<UUID, Live> live = new LinkedHashMap<>();
         for (DocumentRepository.LiveRow row : repository.liveRows(projectId, ids)) {
             live.put(row.id(), new Live(row.id(), row.folderCode(), row.revisionNo(), row.userLocked(),
@@ -58,34 +64,40 @@ public class RefreshDocuments {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public UUID insertRefreshBase(UUID fileId, long revisionNo, DocumentSnapshot snapshot) {
+        AppLogger.current().info("refresh base version insert", LogField.fileId(fileId), LogField.param("revision_no", revisionNo));
         return repository.insertVersion(fileId, revisionNo, "REFRESH_BASE", null, snapshot, null);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public Map<UUID, DocumentSnapshot> refreshBases(Collection<UUID> versionIds) {
+        AppLogger.current().info("refresh base versions get", LogField.param("version_ids", versionIds));
         return repository.refreshBases(versionIds);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void deleteRefreshBases(Collection<UUID> versionIds) {
+        AppLogger.current().info("refresh base versions delete", LogField.param("version_ids", versionIds));
         repository.deleteRefreshBases(versionIds);
     }
 
     /** 최신화 run 이 문서들을 잠근다. 잠긴 문서는 편집·이름 변경·이동·휴지통·잠금 API 가 막힌다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void lock(UUID runId, Collection<UUID> ids) {
+        AppLogger.current().info("refresh documents lock", LogField.refreshRequestId(runId), LogField.param("ids", ids));
         repository.lockForRefresh(runId, ids);
     }
 
     /** run 이 끝날 때(확정·변경 없음·실패·시간 초과) 그 run 이 건 잠금을 푼다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void unlock(UUID runId) {
+        AppLogger.current().info("refresh documents unlock", LogField.refreshRequestId(runId));
         repository.unlockRefresh(runId);
     }
 
     /** 분류 코드 → 관계 키. 작업본의 관계 키를 서버가 다시 정할 때 쓴다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public Map<String, String> relationKeysByFolder() {
+        AppLogger.current().info("relation keys by folder get");
         return repository.relationKeysByFolder();
     }
 
@@ -96,6 +108,7 @@ public class RefreshDocuments {
     /** 확정이 쓸 문서들을 id 순으로 잠그고 읽는다. 없는(영구 삭제된) 문서는 결과에 없다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public Map<UUID, Locked> lockForApply(Collection<UUID> ids) {
+        AppLogger.current().info("refresh documents lock for apply", LogField.param("ids", ids));
         Map<UUID, Locked> locked = new LinkedHashMap<>();
         for (DocumentRepository.ApplyRow row : repository.lockForApply(ids)) {
             locked.put(row.id(), new Locked(row.id(), row.revisionNo(), row.userLocked(), row.refreshLockRunId(),
@@ -118,6 +131,9 @@ public class RefreshDocuments {
     @Transactional(propagation = Propagation.MANDATORY)
     public Written write(UUID fileId, long expectedRevision, String title, JsonNode body,
             List<DocumentSnapshot.TextProperty> properties) {
+        // 제목은 길이, 본문 JSON 은 바이트 수, 속성은 개수만 남는다
+        AppLogger.current().info("refresh document write", LogField.fileId(fileId), LogField.param("expected_revision", expectedRevision),
+                LogField.param("title", title), LogField.param("body", body), LogField.param("properties", properties));
         DocumentSnapshot snapshot = new DocumentSnapshot(title, body, null, properties, List.of());
         DocumentRepository.Updated updated = repository
                 .updateIfRevisionMatches(fileId, expectedRevision, snapshot, BodyText.extract(body.get("doc")), null)
@@ -134,12 +150,16 @@ public class RefreshDocuments {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public Optional<UUID> putRelation(UUID one, UUID other, String description) {
+        // 관계의 두 끝 중 앞쪽을 대상(document_id), 다른 쪽을 연결 상대(param)로 둔다. 설명은 길이만 남는다
+        AppLogger.current().info("refresh relation put", LogField.documentId(one), LogField.param("related_document_id", other),
+                LogField.param("description", description));
         return repository.upsertRelation(one, other, description).map(DocumentRepository.RelationPair::low);
     }
 
     /** 관계 한 쌍을 지운다. 지웠으면 그 관계를 가졌던 문서(low)를 돌려준다. */
     @Transactional(propagation = Propagation.MANDATORY)
     public Optional<UUID> removeRelation(UUID one, UUID other) {
+        AppLogger.current().info("refresh relation remove", LogField.documentId(one), LogField.param("related_document_id", other));
         return repository.deleteRelation(one, other).map(DocumentRepository.RelationPair::low);
     }
 
@@ -149,17 +169,21 @@ public class RefreshDocuments {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordAiApply(UUID projectId, UUID fileId) {
+        AppLogger.current().info("refresh ai apply version record", LogField.projectId(projectId), LogField.fileId(fileId));
         DocumentRepository.LiveRow row = repository.liveRows(projectId, List.of(fileId)).getFirst();
         repository.insertVersion(fileId, row.revisionNo(), "AI_APPLY", null, row.snapshot(), null);
     }
 
     /** graph-rag 의 평문 본문을 에디터 본문으로 되돌린다. 규칙은 {@link BodyFromText}. */
     public JsonNode bodyFromText(String text, JsonNode referenceBody) {
+        // 평문은 길이만, 기준 본문은 바이트 수만 남는다
+        AppLogger.current().info("refresh body from text", LogField.param("text", text), LogField.param("reference_body", referenceBody));
         return BodyFromText.fromText(text, referenceBody);
     }
 
     /** 문서 저장과 같은 본문 검사. 통과하면 그대로 돌려주고, 아니면 {@code INVALID_REQUEST} 로 실패한다. */
     public JsonNode requireValidBody(JsonNode body) {
+        AppLogger.current().info("refresh body validate", LogField.param("body", body));
         return documents.validateBody(body);
     }
 }

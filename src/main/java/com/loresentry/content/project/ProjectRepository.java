@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -43,6 +46,7 @@ public class ProjectRepository {
     }
 
     List<Project> findActive(UUID ownerUserId) {
+        AppLogger.current().info("active projects list");
         return jdbcClient
                 .sql(SELECT + " where p.owner_user_id = :owner and p.trashed_at is null "
                         + "order by p.updated_at desc, p.id desc")
@@ -52,6 +56,7 @@ public class ProjectRepository {
     }
 
     List<Project> findTrashed(UUID ownerUserId) {
+        AppLogger.current().info("trashed projects list");
         return jdbcClient
                 .sql(SELECT + " where p.owner_user_id = :owner and p.trashed_at is not null "
                         + "order by p.trashed_at desc, p.id desc")
@@ -62,6 +67,7 @@ public class ProjectRepository {
 
     /** 휴지통 여부와 무관하게 찾는다. 상태 전이는 현재 상태를 알아야 판단할 수 있다. */
     Optional<Project> findById(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project find", LogField.projectId(projectId));
         return jdbcClient
                 .sql(SELECT + " where p.id = :id and p.owner_user_id = :owner")
                 .param("id", projectId)
@@ -71,6 +77,7 @@ public class ProjectRepository {
     }
 
     Project insert(UUID ownerUserId, String name, String description) {
+        AppLogger.current().info("project insert");
         UUID id = jdbcClient
                 .sql("insert into projects (owner_user_id, name, description) "
                         + "values (:owner, :name, :description) returning id")
@@ -83,6 +90,7 @@ public class ProjectRepository {
     }
 
     Project update(UUID ownerUserId, UUID projectId, String name, String description) {
+        AppLogger.current().info("project update", LogField.projectId(projectId));
         jdbcClient
                 .sql("update projects set name = :name, description = :description, updated_at = now() "
                         + "where id = :id")
@@ -94,6 +102,7 @@ public class ProjectRepository {
     }
 
     void markTrashed(UUID projectId) {
+        AppLogger.current().info("project trash", LogField.projectId(projectId));
         jdbcClient
                 .sql("update projects set trashed_at = now(), updated_at = now() "
                         + "where id = :id and trashed_at is null")
@@ -102,6 +111,7 @@ public class ProjectRepository {
     }
 
     Project markRestored(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("project restore", LogField.projectId(projectId));
         jdbcClient
                 .sql("update projects set trashed_at = null, updated_at = now() where id = :id")
                 .param("id", projectId)
@@ -111,6 +121,7 @@ public class ProjectRepository {
 
     /** 상태와 무관하게 전부. PENDING 이어도 브라우저가 이미 올렸을 수 있다. */
     List<String> imageKeys(UUID projectId) {
+        AppLogger.current().info("project image keys list", LogField.projectId(projectId));
         return jdbcClient.sql("select s3_key from image where project_id = :id")
                 .param("id", projectId)
                 .query(String.class)
@@ -119,6 +130,7 @@ public class ProjectRepository {
 
     /** 문서·에피소드·버전·최신화 작업본은 외래 키 CASCADE가 함께 지운다 (V3). */
     void delete(UUID projectId) {
+        AppLogger.current().info("project delete", LogField.projectId(projectId));
         jdbcClient.sql("delete from projects where id = :id")
                 .param("id", projectId)
                 .update();

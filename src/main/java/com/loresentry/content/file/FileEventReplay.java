@@ -7,6 +7,9 @@ import java.util.UUID;
 import com.loresentry.content.event.FileChanged.ChangeType;
 import com.loresentry.content.event.FileChanged.Field;
 import com.loresentry.content.event.ProjectChangedMessages;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.outbox.OutboxRecord;
 import com.loresentry.content.outbox.OutboxRepository;
 
@@ -19,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 관리 작업이다. 프로젝트 하나를 트랜잭션 하나로 묶어, 큰 서비스에서도 잠금과 트랜잭션이 짧게 끝난다.
  */
 @Component
+@LogLayer("service")
 public class FileEventReplay {
 
     private final JdbcClient jdbc;
@@ -34,6 +38,8 @@ public class FileEventReplay {
     }
 
     public List<UUID> projectsAfter(UUID after, int limit, boolean includeTrashed) {
+        AppLogger.current().info("file event replay projects get", LogField.param("after_project_id", after),
+                LogField.param("limit", limit), LogField.param("include_trashed", includeTrashed));
         return jdbc.sql("""
                         select id from projects
                         where (trashed_at is null or :includeTrashed)
@@ -53,6 +59,7 @@ public class FileEventReplay {
      */
     @Transactional
     public int replay(UUID projectId) {
+        AppLogger.current().info("project file events replay", LogField.projectId(projectId));
         List<UUID> documents = jdbc.sql("""
                         select id from document
                         where project_id = :project and trashed_at is null
@@ -65,6 +72,8 @@ public class FileEventReplay {
         outbox.append(documents.stream()
                 .map(id -> messages.fileChanged(projectId, id, ChangeType.UPDATED, EnumSet.allOf(Field.class)))
                 .toArray(OutboxRecord[]::new));
+        AppLogger.current().info("project file events replay completed", LogField.projectId(projectId),
+                LogField.result("documents", documents));
         return documents.size();
     }
 }

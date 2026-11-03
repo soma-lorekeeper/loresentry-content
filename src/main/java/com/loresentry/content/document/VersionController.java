@@ -2,6 +2,8 @@ package com.loresentry.content.document;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.http.HttpHeaders;
@@ -25,6 +27,7 @@ public class VersionController {
 
     @GetMapping("/files/{fileId}/versions")
     public DocumentResponses.VersionList list(@CurrentUser UUID userId, @PathVariable UUID fileId) {
+        AppLogger.current().info("document version list requested", LogField.fileId(fileId));
         return documents.versions(userId, fileId);
     }
 
@@ -33,6 +36,8 @@ public class VersionController {
             @CurrentUser UUID userId,
             @PathVariable UUID fileId,
             @RequestBody(required = false) DocumentController.NamedVersionRequest request) {
+        AppLogger.current().info("document version create requested", LogField.fileId(fileId),
+                LogField.param("label", request == null ? null : request.label()));
         DocumentResponses.Version version = documents.saveNamed(userId, fileId,
                 request == null ? null : request.label());
         return ResponseEntity.status(201).body(version);
@@ -48,6 +53,9 @@ public class VersionController {
             @PathVariable UUID fileId,
             @PathVariable UUID versionId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        // 파일은 범위, 버전은 대상이다
+        AppLogger.current().info("document version restore requested", LogField.fileId(fileId), LogField.versionId(versionId),
+                LogField.param("if_match", ifMatch));
         return documents.restore(userId, fileId, versionId, DocumentController.revisionOf(ifMatch));
     }
 
@@ -56,6 +64,7 @@ public class VersionController {
             @CurrentUser UUID userId,
             @PathVariable UUID fileId,
             @PathVariable UUID versionId) {
+        AppLogger.current().info("document version delete requested", LogField.fileId(fileId), LogField.versionId(versionId));
         documents.deleteVersion(userId, fileId, versionId);
         return ResponseEntity.noContent().build();
     }

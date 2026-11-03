@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.stereotype.Service;
@@ -27,6 +29,7 @@ class ChatService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     ChatResponses.Snapshot snapshot(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("chat snapshot get", LogField.projectId(projectId));
         ChatResponses.Project project = repository.project(ownerUserId, projectId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND));
         Map<UUID, List<ChatResponses.Property>> properties = repository.properties(projectId);
@@ -40,6 +43,7 @@ class ChatService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     ChatResponses.ChatMap map(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("chat map get", LogField.projectId(projectId));
         ChatResponses.Project project = repository.project(ownerUserId, projectId)
                 .orElseThrow(() -> new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND));
         Map<UUID, List<ChatResponses.Property>> properties = repository.properties(projectId);
@@ -52,6 +56,9 @@ class ChatService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     ChatResponses.Documents documents(UUID ownerUserId, UUID projectId, ChatResponses.DocumentsRequest request) {
+        AppLogger.current().info("chat documents get", LogField.projectId(projectId),
+                LogField.param("document_ids", request == null ? null : request.documentIds()),
+                LogField.param("memo_ids", request == null ? null : request.memoIds()));
         List<UUID> documentIds = distinct(request == null ? null : request.documentIds());
         List<UUID> memoIds = distinct(request == null ? null : request.memoIds());
         if (documentIds.size() + memoIds.size() > DOCUMENTS_LIMIT) {
@@ -80,6 +87,9 @@ class ChatService {
                 missing.add(id);
             }
         }
+        // 찾지 못한(지워졌거나 다른 프로젝트의) 문서·메모 개수
+        AppLogger.current().info("chat documents get completed", LogField.projectId(projectId),
+                LogField.result("missing", missing));
         return new ChatResponses.Documents(manuscripts, settings, memos, missing);
     }
 
@@ -96,6 +106,7 @@ class ChatService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     ChatResponses.Size size(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("chat size get", LogField.projectId(projectId));
         if (!repository.projectExists(ownerUserId, projectId)) {
             throw new ContentFailure(ContentFailure.Reason.PROJECT_NOT_FOUND);
         }

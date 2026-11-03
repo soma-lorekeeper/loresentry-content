@@ -394,4 +394,32 @@ class OutboxPublisherTest extends KafkaTestSupport {
         assertThat(output.getOut()).contains(
                 "outbox events still failing: {org.apache.kafka.common.errors.TimeoutException=1}");
     }
+
+    /**
+     * 보낸 행마다 "outbox event published" 한 줄이 그 행을 만든 요청의 trace(행의 traceparent)로 남는다. 그래서 요청의 흐름
+     * 끝에서 이벤트가 언제 어느 offset 으로 나갔는지 보인다. 헤더의 traceparent 도 그 값이다(LOG_SCHEMA.md 7절 outbox).
+     */
+    @Test
+    void aPublishedRowIsLoggedWithTheTraceOfTheRequestThatStoredIt(CapturedOutput output) {
+        String trace = "5bf92f3577b34da6a3ce929d0e0e4736";
+        String traceparent = "00-" + trace + "-00f067aa0ba902b7-01";
+        String projectId = UUID.randomUUID().toString();
+        UUID id = insertFileChanged(projectId);
+        jdbcClient.sql("update outbox_events set traceparent = :traceparent where id = :id")
+                .param("traceparent", traceparent).param("id", id).update();
+
+        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
+
+        ConsumerRecord<String, String> record = awaitRecords(PROJECT_CHANGED, projectId, 1).getFirst();
+        assertThat(header(record, "traceparent")).isEqualTo(traceparent);
+        var published = output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> "outbox event published".equals(line.get("message").asString()))
+                .filter(line -> id.toString().equals(line.at("/loresentry/cloudevent/id").asString()))
+                .findFirst().orElseThrow();
+        assertThat(published.at("/trace/id").asString()).isEqualTo(trace);
+        assertThat(published.at("/loresentry/cloudevent/type").asString()).isEqualTo("FileChanged");
+        assertThat(published.at("/loresentry/kafka/topic").asString()).isEqualTo(PROJECT_CHANGED);
+        assertThat(published.at("/loresentry/kafka/offset").asLong()).isEqualTo(record.offset());
+        assertThat(published.at("/log/layer").asString()).isEqualTo("publisher");
+    }
 }

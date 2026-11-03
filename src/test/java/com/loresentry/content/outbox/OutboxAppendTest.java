@@ -15,6 +15,8 @@ import java.util.function.Supplier;
 
 import com.loresentry.content.support.ApiTestSupport;
 
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +35,9 @@ class OutboxAppendTest extends ApiTestSupport {
 
     @Autowired
     TransactionTemplate transaction;
+
+    @Autowired
+    Tracer tracer;
 
     private final ExecutorService pool = Executors.newFixedThreadPool(2);
 
@@ -184,5 +189,33 @@ class OutboxAppendTest extends ApiTestSupport {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
         }
+    }
+
+    /**
+     * 요청(또는 Kafka 레코드)을 처리하는 중에 쓴 행에는 그때의 traceparent 가 저장된다. relay 가 이 값을 헤더로 실어, 받는 서비스가
+     * 같은 trace 를 잇는다(LOG_SCHEMA.md 7절 outbox). span 이 없을 때 쓴 행은 비어 있다.
+     */
+    @Test
+    void storesTheTraceparentOfTheCurrentSpan() {
+        UUID traced = UUID.randomUUID();
+        Span span = tracer.nextSpan().name("request").start();
+        try (Tracer.SpanInScope scope = tracer.withSpan(span)) {
+            transaction.executeWithoutResult(status -> outbox.append(new OutboxRecord(
+                    "FileChanged", traced, "project-key", () -> new Sample("trace"))));
+        } finally {
+            span.end();
+        }
+        UUID untraced = UUID.randomUUID();
+        transaction.executeWithoutResult(status -> outbox.append(new OutboxRecord(
+                "FileChanged", untraced, "project-key", () -> new Sample("no trace"))));
+
+        // flags(마지막 두 글자)는 sampled 외에 random 비트가 켜질 수 있어 앞부분만 본다
+        assertThat(traceparent(traced)).startsWith("00-" + span.context().traceId() + "-" + span.context().spanId() + "-").hasSize(55);
+        assertThat(traceparent(untraced)).isNull();
+    }
+
+    private String traceparent(UUID aggregate) {
+        return jdbcClient.sql("select traceparent from outbox_events where aggregate_id = :id")
+                .param("id", aggregate).query(String.class).list().getFirst();
     }
 }

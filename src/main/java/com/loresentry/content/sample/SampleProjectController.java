@@ -1,8 +1,11 @@
 package com.loresentry.content.sample;
 
 import java.net.URI;
+import java.util.Set;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.project.Project;
 import com.loresentry.content.project.ProjectResponse;
 import com.loresentry.content.web.CurrentUser;
@@ -30,6 +33,8 @@ public class SampleProjectController {
     public ResponseEntity<ProjectResponse> create(
             @CurrentUser UUID userId,
             @RequestParam(name = "locale", required = false) String locale) {
+        // 로케일은 ko·en 이면 그대로, 아니면 other 로 남는다
+        AppLogger.current().info("sample project create requested", LogField.code("locale", locale, Set.of("ko", "en")));
         Project project = samples.create(userId, locale);
         return ResponseEntity.created(URI.create("/projects/" + project.id()))
                 .body(ProjectResponse.from(project));

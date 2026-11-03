@@ -3,7 +3,8 @@ package com.loresentry.content.web;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import org.slf4j.LoggerFactory;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import org.springframework.http.ResponseEntity;
 
 /**
@@ -82,28 +83,24 @@ public final class ErrorResponses {
         body.put("code", reason.name());
         body.put("message", contract.message());
         body.put("next_action", contract.nextAction());
+        // 문의 받은 값을 Kibana 에서 바로 찾도록 trace ID 를 싣는다(LOG_SCHEMA.md 7절 응답). gateway 의 trace 와 같은 값이다
+        String traceId = AppLogger.current().traceId();
+        if (traceId != null) {
+            body.put("trace_id", traceId);
+        }
         // 실패가 실어 온 상세 값(예: 맞추지 않은 작업본 목록)을 나란히 싣는다. 기본 세 칸은 덮어쓰지 않는다.
         if (content != null) {
             content.details().forEach(body::putIfAbsent);
         }
 
+        // 실패는 따로 찍지 않고 이유(우리 오류 코드)를 결과 줄(request completed)에 맡긴다. 그래서 실패 요청 하나의 결과는 한 줄이다
+        AppLogger.current().addToOutcome(LogField.errorType(reason.name()));
         if (reason == ContentFailure.Reason.INTERNAL_ERROR) {
-            logSafe(failure);
+            // 원인은 그 자리에서 warn 으로 남긴다. 예외 메시지·요청 값·SQL 은 의도적으로 기록하지 않는다 — 내부 구조와 사용자
+            // 데이터가 새어 나간다. 원인마다 클래스 이름과 프레임만 남긴다.
+            AppLogger.current().warn("request failed with an internal error",
+                    LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
         }
         return ResponseEntity.status(contract.status()).body(body);
-    }
-
-    /** 예외 메시지·요청 값·SQL은 의도적으로 기록하지 않는다. 내부 구조와 사용자 데이터가 새어 나간다. */
-    private static void logSafe(Throwable failure) {
-        StringBuilder diagnostic = new StringBuilder();
-        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            diagnostic.append(cause.getClass().getName()).append('\n');
-            java.util.Arrays.stream(cause.getStackTrace()).limit(30)
-                    .forEach(frame -> diagnostic.append("  at ").append(frame).append('\n'));
-            if (cause.getCause() == cause) {
-                break;
-            }
-        }
-        LoggerFactory.getLogger(ErrorResponses.class).error("Unhandled content error:\n{}", diagnostic);
     }
 }

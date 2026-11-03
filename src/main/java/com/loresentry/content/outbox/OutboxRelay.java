@@ -5,10 +5,13 @@ import java.time.Instant;
 import java.time.InstantSource;
 import java.util.function.Supplier;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogLayer;
+import com.loresentry.content.logging.SkipEntryLog;
 import com.loresentry.content.outbox.Round.Outcome;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.ContextClosedEvent;
@@ -37,16 +40,17 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @ConditionalOnProperty(name = "kafka.producer.relay.enabled", havingValue = "true", matchIfMissing = true)
+@LogLayer("scheduler")
 class OutboxRelay {
-
-    /** 로그를 남기는 도구. 개수와 예외의 종류만 적는다 — 행의 내용과 예외 메시지는 적지 않는다. */
-    private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     /**
      * 평소 주기(밀리초). 앞 호출이 끝난 뒤 이만큼 지나면 다시 불린다. 이벤트가 outbox 에 들어간 뒤 Kafka 로
      * 나가기까지의 최대 대기 시간이기도 하다. 처리량은 이 값이 아니라 "더 있는 동안 이어서 도는 것"이 정한다.
      */
     static final long PERIOD_MILLIS = 1_000;
+
+    /** 로그의 작업 이름(loresentry.schedule.name). 행마다의 발행 줄({@link OutboxPublisher})에도 붙인다. */
+    static final String SCHEDULE = "outbox-relay";
 
     /** 처음 실패했을 때 쉬는 시간. 평소 주기와 같아서, 한 번의 실패는 평소와 다르지 않게 넘어간다. */
     static final Duration MIN_BACKOFF = Duration.ofSeconds(1);
@@ -103,65 +107,78 @@ class OutboxRelay {
      *
      * <p>예외를 밖으로 내보내지 않는다. 내보내면 스케줄러가 긴 오류 로그를 주기마다 찍는다. 받아서 실패한 회차처럼
      * 쉬는 시간을 늘린다.
+     *
+     * <p>로그에는 개수와 예외의 종류만 적는다 — 행의 내용과 예외 메시지는 적지 않는다. 회차 하나의 trace는 Spring 의 스케줄
+     * observation 이 열고, 보낸 행마다의 줄은 {@link OutboxPublisher} 가 그 행을 만든 요청의 trace 로 남긴다.
      */
     @Scheduled(fixedDelay = PERIOD_MILLIS)
+    @SkipEntryLog("Polls every second. Logs start and end lines only in rounds that have rows to send")
     void run() {
-        // 1. 아직 쉴 시간이면 곧바로 돌아간다. 쉬는 동안의 호출은 이 비교 한 번이 전부다.
-        Instant startedAt = clock.instant();
-        if (startedAt.isBefore(resumeAt)) {
-            return;
-        }
-
-        // 2. 회차가 "더 있다"고 하는 동안 이어서 돈다.
-        // 이번 호출에서 보낸 행, 격리한 행, 다시 보내야 할 행의 합계와 돈 회차 수. 요약 로그에 쓴다.
-        int published = 0;
-        int quarantined = 0;
-        int failed = 0;
-        int rounds = 0;
-        // 마지막 회차의 결과. MORE 로 시작해야 첫 회차를 돈다.
-        Outcome outcome = Outcome.MORE;
-        // 종료가 시작됐으면 다음 회차를 시작하지 않는다. 회차 도중에는 트랜잭션이 열려 있어 끊으면 rollback 되지만,
-        // 회차와 회차 사이에는 열려 있는 것이 없다. Spring 은 이 메서드가 끝나기를 기다렸다가 종료를 이어 간다.
-        while (outcome == Outcome.MORE && !stopping) {
-            Round result;
-            try {
-                result = round.get();
-            } catch (RuntimeException failure) {
-                // 회차가 결과를 돌려주지 못하고 예외로 끝났다(예: DB 에 닿지 못함). 그 회차는 rollback 됐으므로
-                // 개수에 더할 것이 없다. 실패한 회차처럼 다뤄 쉬게 한다. 이 문구로 로그를 찾는다.
-                log.error("outbox relay round threw: reason={}", failure.getClass().getName());
-                outcome = Outcome.FAILED;
-                break;
+        // 회차 하나의 시작점. 스케줄 observation 이 연 span 으로 로그 객체를 만들고 작업 이름을 붙여, 이 회차의 모든 줄(부른 repository 줄 포함)에 남게 한다
+        try (var bound = AppLogger.bind(TraceContext.newLogger().with(LogField.scheduleName(SCHEDULE)))) {
+            // 1. 아직 쉴 시간이면 곧바로 돌아간다. 쉬는 동안의 호출은 이 비교 한 번이 전부다.
+            Instant startedAt = clock.instant();
+            if (startedAt.isBefore(resumeAt)) {
+                return;
             }
-            rounds++;
-            published += result.published();
-            quarantined += result.quarantined();
-            failed += result.failed();
-            outcome = result.outcome();
-        }
 
-        // 3. 실패로 끝났으면 쉬는 시간을 늘리고, 지금부터 그만큼 쉰다. 호출을 시작한 시각이 아니라 지금 시각에서
-        // 잰다 — 실패하는 회차는 그 자체로 5초에서 20초가 걸려, 시작 시각에서 재면 쉬는 시간이 이미 지나 있다.
-        if (outcome == Outcome.FAILED) {
-            backoff = nextBackoff(backoff);
-            resumeAt = clock.instant().plus(backoff);
-        } else {
-            // 실패가 아니면 곧바로 평소 상태로 돌아간다. 문제가 풀렸는데 천천히 돌아갈 이유가 없다.
-            backoff = Duration.ZERO;
-        }
+            // 2. 회차가 "더 있다"고 하는 동안 이어서 돈다.
+            // 이번 호출에서 보낸 행, 격리한 행, 다시 보내야 할 행의 합계와 돈 회차 수. 요약 로그에 쓴다.
+            int published = 0;
+            int quarantined = 0;
+            int failed = 0;
+            int rounds = 0;
+            // 마지막 회차의 결과. MORE 로 시작해야 첫 회차를 돈다.
+            Outcome outcome = Outcome.MORE;
+            // 종료가 시작됐으면 다음 회차를 시작하지 않는다. 회차 도중에는 트랜잭션이 열려 있어 끊으면 rollback 되지만,
+            // 회차와 회차 사이에는 열려 있는 것이 없다. Spring 은 이 메서드가 끝나기를 기다렸다가 종료를 이어 간다.
+            while (outcome == Outcome.MORE && !stopping) {
+                Round result;
+                try {
+                    result = round.get();
+                } catch (RuntimeException failure) {
+                    // 회차가 결과를 돌려주지 못하고 예외로 끝났다(예: DB 에 닿지 못함). 그 회차는 rollback 됐으므로
+                    // 개수에 더할 것이 없다. 실패한 회차처럼 다뤄 쉬게 한다. 이 문구로 로그를 찾는다.
+                    AppLogger.current().error("outbox relay round threw: reason=" + failure.getClass().getName(),
+                            LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
+                    outcome = Outcome.FAILED;
+                    break;
+                }
+                rounds++;
+                published += result.published();
+                quarantined += result.quarantined();
+                failed += result.failed();
+                outcome = result.outcome();
+            }
 
-        // 4. 한 일이 있었을 때만 요약을 한 줄 남긴다. 주기마다 불리므로 매번 남기면 하루 수만 줄이 "0건"으로 찬다.
-        // 정상일 때의 흔적이기도 하다 — 이 줄이 없으면 "잘 보내는 중"과 "relay 가 멈춤"을 로그로 가릴 수 없다.
-        // 이 문구로 로그를 찾으므로, 바꾸면 조회와 알림이 함께 깨진다.
-        if (published + quarantined + failed > 0) {
-            long took = Duration.between(startedAt, clock.instant()).toMillis();
+            // 3. 실패로 끝났으면 쉬는 시간을 늘리고, 지금부터 그만큼 쉰다. 호출을 시작한 시각이 아니라 지금 시각에서
+            // 잰다 — 실패하는 회차는 그 자체로 5초에서 20초가 걸려, 시작 시각에서 재면 쉬는 시간이 이미 지나 있다.
             if (outcome == Outcome.FAILED) {
-                // 실패로 간격을 늘렸으면 그 간격도 함께 적는다.
-                log.info("outbox relay: published={}, quarantined={}, failed={}, rounds={}, took={}ms, backoff={}s",
-                        published, quarantined, failed, rounds, took, backoff.toSeconds());
+                backoff = nextBackoff(backoff);
+                resumeAt = clock.instant().plus(backoff);
             } else {
-                log.info("outbox relay: published={}, quarantined={}, failed={}, rounds={}, took={}ms",
-                        published, quarantined, failed, rounds, took);
+                // 실패가 아니면 곧바로 평소 상태로 돌아간다. 문제가 풀렸는데 천천히 돌아갈 이유가 없다.
+                backoff = Duration.ZERO;
+            }
+
+            // 4. 한 일이 있었을 때만 요약을 한 줄 남긴다. 주기마다 불리므로 매번 남기면 하루 수만 줄이 "0건"으로 찬다.
+            // 정상일 때의 흔적이기도 하다 — 이 줄이 없으면 "잘 보내는 중"과 "relay 가 멈춤"을 로그로 가릴 수 없다.
+            // 이 문구로 로그를 찾으므로, 바꾸면 조회와 알림이 함께 깨진다.
+            if (published + quarantined + failed > 0) {
+                Duration took = Duration.between(startedAt, clock.instant());
+                String summary = "outbox relay: published=" + published + ", quarantined=" + quarantined + ", failed=" + failed
+                        + ", rounds=" + rounds + ", took=" + took.toMillis() + "ms";
+                // 같은 값을 필드에도 넣어 Kibana 에서 개수로 거르고 더할 수 있게 한다
+                LogField[] counts = {LogField.result("published", published), LogField.result("quarantined", quarantined),
+                        LogField.result("failed", failed), LogField.result("rounds", rounds), LogField.duration(took)};
+                if (outcome == Outcome.FAILED) {
+                    // 실패로 간격을 늘렸으면 그 간격도 함께 적는다. 다시 보내야 할 행이 있으므로 warn 이다.
+                    AppLogger.current().warn(summary + ", backoff=" + backoff.toSeconds() + "s", counts);
+                } else if (failed > 0) {
+                    AppLogger.current().warn(summary, counts);
+                } else {
+                    AppLogger.current().info(summary, counts);
+                }
             }
         }
     }
@@ -192,6 +209,7 @@ class OutboxRelay {
      */
     @EventListener(ContextClosedEvent.class)
     void stop() {
+        AppLogger.current().info("outbox relay stop");
         stopping = true;
     }
 }

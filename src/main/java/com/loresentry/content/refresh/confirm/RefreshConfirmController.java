@@ -2,6 +2,8 @@ package com.loresentry.content.refresh.confirm;
 
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.CurrentUser;
 
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +26,7 @@ public class RefreshConfirmController {
     @PostMapping("/projects/{projectId}/graph-refresh/{requestId}/confirm")
     public ConfirmResponses.Confirmed confirm(@CurrentUser UUID userId, @PathVariable UUID projectId,
             @PathVariable UUID requestId) {
+        AppLogger.current().info("graph refresh confirm requested", LogField.projectId(projectId), LogField.refreshRequestId(requestId));
         return confirm.confirm(userId, projectId, requestId);
     }
 }

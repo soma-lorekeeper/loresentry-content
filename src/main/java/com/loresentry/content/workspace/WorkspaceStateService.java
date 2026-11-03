@@ -3,6 +3,8 @@ package com.loresentry.content.workspace;
 import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.web.ContentFailure;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -31,6 +33,7 @@ public class WorkspaceStateService {
 
     @Transactional(readOnly = true)
     public State load(UUID ownerUserId, UUID projectId) {
+        AppLogger.current().info("workspace state get", LogField.projectId(projectId));
         requireProject(ownerUserId, projectId);
 
         return jdbcClient
@@ -46,6 +49,8 @@ public class WorkspaceStateService {
     /** 사용자당 프로젝트당 한 행이므로 upsert 다. 저장 요청이 서로를 덮어쓰는 것이 의도된 동작이다. */
     @Transactional
     public void save(UUID ownerUserId, UUID projectId, State state) {
+        AppLogger.current().info("workspace state save", LogField.projectId(projectId),
+                LogField.param("layout", state == null ? null : state.layout()));
         requireProject(ownerUserId, projectId);
         if (state == null || state.layout() == null || state.layout().isNull()) {
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
