@@ -169,6 +169,9 @@ public final class LogFlow {
         AppLogger.Binding bound = AppLogger.bind(logger);
         try {
             flow.runScheduled(body, () -> began[0]);
+            // 줄이 하나도 없던 빈 회차(실패도 줄을 남기므로 여기 오지 않는다). 로그처럼 span도 남지 않도록 이 회차의 span에
+            // 표시를 달아 collector가 버리게 한다
+            if (!began[0]) TraceContext.markIdlePolling();
         } finally {
             flow.closeBindings();
             bound.close();
