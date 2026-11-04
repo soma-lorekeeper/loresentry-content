@@ -3,6 +3,9 @@ package com.loresentry.content.outbox;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -417,7 +420,9 @@ class OutboxPublisherTest extends KafkaTestSupport {
 
     /**
      * 보낸 행마다 "outbox event published" 한 줄이 그 행을 만든 요청의 trace(행의 traceparent)로 남는다. 그래서 요청의 흐름
-     * 끝에서 이벤트가 언제 어느 offset 으로 나갔는지 보인다. 헤더의 traceparent 도 그 값이다(LOG_SCHEMA.md 7절 outbox).
+     * 끝에서 이벤트가 언제 어느 offset 으로 나갔는지 보인다. 보낸 레코드의 traceparent 도 relay 회차가 아니라 그 trace 를 잇는다. 발행 계측
+     * (운영에서는 EDOT agent, 테스트에서는 AgentLikeTracing)은 보내는 순간의 지금 문맥으로 헤더를 넣으므로 행의 범위 안에서 보내야 한다
+     * (LOG_SCHEMA.md 7절 "Kafka 발행"). 회차 span 을 지금 문맥으로 둔 채 불러, 범위 밖에서 보냈다면 회차의 trace 가 실렸을 상황을 만든다.
      */
     @Test
     void aPublishedRowIsLoggedWithTheTraceOfTheRequestThatStoredIt(CapturedOutput output) {
@@ -428,10 +433,16 @@ class OutboxPublisherTest extends KafkaTestSupport {
         jdbcClient.sql("update outbox_events set traceparent = :traceparent where id = :id")
                 .param("traceparent", traceparent).param("id", id).update();
 
-        assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
+        Span round = SdkTracerProvider.builder().build().get("test").spanBuilder("OutboxRelay.run").startSpan();
+        try (Scope ignored = round.makeCurrent()) {
+            assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.MORE);
+        } finally {
+            round.end();
+        }
 
         ConsumerRecord<String, String> record = awaitRecords(PROJECT_CHANGED, projectId, 1).getFirst();
-        assertThat(header(record, "traceparent")).isEqualTo(traceparent);
+        assertThat(record.headers().headers("traceparent")).hasSize(1);
+        assertThat(header(record, "traceparent")).startsWith("00-" + trace + "-").doesNotContain(round.getSpanContext().getTraceId());
         var published = output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
                 .filter(line -> "outbox event published".equals(line.get("message").asString()))
                 .filter(line -> id.toString().equals(line.at("/loresentry/cloudevent/id").asString()))

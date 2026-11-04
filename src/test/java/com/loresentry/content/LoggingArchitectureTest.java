@@ -47,6 +47,13 @@ class LoggingArchitectureTest {
             .because("로그는 com.loresentry.content.logging.AppLogger로만 찍는다");
 
     @ArchTest
+    static final ArchRule onlyTheLoggingPackageUsesTracingLibraries = noClasses()
+            .that().resideOutsideOfPackage("..logging..")
+            .should().dependOnClassesThat().resideInAnyPackage("io.opentelemetry..", "io.micrometer.tracing..", "io.micrometer.context..")
+            .because("span을 열고 지금 문맥을 바꾸는 일은 EDOT agent와 로깅 팩토리가 맡는다. 서비스 코드는 할 일(람다)과 값만 넘기고, traceparent "
+                    + "헤더도 직접 넣지 않는다(LOG_SCHEMA.md 5절 \"만들기\", 7절)");
+
+    @ArchTest
     static final ArchRule nothingWritesToStandardStreams = noClasses()
             .that().resideOutsideOfPackage("..logging..")
             .should(GeneralCodingRules.ACCESS_STANDARD_STREAMS)

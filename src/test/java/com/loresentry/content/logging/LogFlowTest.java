@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,14 +15,20 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.testing.junit5.OpenTelemetryExtension;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -34,10 +41,27 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
  *   <li>종료 줄에 걸린 시간(event.duration, 나노초 숫자)과 결과 값이 붙는다</li>
  *   <li>시작·종료 줄의 위치는 흐름을 연 서비스 메서드다(log.layer·log.origin.function)</li>
  *   <li>진행 중에 알게 된 대상 ID(with)와 사용자(identify)가 이후 줄과 종료 줄에 붙는다</li>
+ *   <li>외부 호출·작업·outbox 행·Kafka 에러 처리는 로깅 팩토리가 span을 열고, 그 줄이 그 span 안에서 찍힌다(LOG_SCHEMA.md 7절)</li>
  * </ul>
  */
 class LogFlowTest {
-    private final ListAppender<ILoggingEvent> events = new ListAppender<>();
+    /**
+     * 로깅 팩토리가 여는 span을 받는 OpenTelemetry SDK. 운영에서는 agent의 SDK가 받는다. 이 테스트 클래스 동안 GlobalOpenTelemetry가 되고,
+     * 테스트마다 받은 span을 비운다.
+     */
+    @RegisterExtension
+    static final OpenTelemetryExtension OTEL = OpenTelemetryExtension.create();
+
+    /** 줄을 찍은 순간의 지금 span. formatter는 줄을 쓰는 순간 이 span으로 trace.id·span.id를 채운다. */
+    private final Map<ILoggingEvent, SpanContext> spanAtLine = new IdentityHashMap<>();
+
+    private final ListAppender<ILoggingEvent> events = new ListAppender<>() {
+        @Override
+        protected void append(ILoggingEvent event) {
+            spanAtLine.put(event, Span.current().getSpanContext());
+            super.append(event);
+        }
+    };
     private final Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
 
     @BeforeEach void attach() { events.start(); root.addAppender(events); }
@@ -197,8 +221,11 @@ class LogFlowTest {
         })).isInstanceOf(IllegalArgumentException.class);
         ILoggingEvent processed = line("user deleted event processed");
         assertThat(processed.getLevel().toString()).isEqualTo("WARN");
+        // 실패 종료 줄에도 메시지 없는 스택이 붙는다(warn·error 줄에는 언제나 스택이 있다, LOG_SCHEMA.md 5절)
         assertThat(pairs(processed)).containsEntry("loresentry.result.outcome", "FAILED")
-                .containsEntry("error.type", "java.lang.IllegalArgumentException").doesNotContainKey("error.stack_trace");
+                .containsEntry("error.type", "java.lang.IllegalArgumentException");
+        assertThat((String) pairs(processed).get("error.stack_trace")).startsWith("java.lang.IllegalArgumentException\n")
+                .doesNotContain("bad payload");
     }
 
     @Test
@@ -255,7 +282,7 @@ class LogFlowTest {
         UUID project = UUID.randomUUID();
         try (var row = LogScope.outboxEvent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", "outbox-relay", id,
                 "FileChanged", file, LogField.projectKey(project.toString()))) {
-            AppLogger.current().info("outbox event published");
+            row.run(() -> AppLogger.current().info("outbox event published"));
         }
         ILoggingEvent published = line("outbox event published");
         assertThat(published.getMDCPropertyMap()).containsEntry("trace.id", "0af7651916cd43dd8448eb211c80319c");
@@ -264,5 +291,101 @@ class LogFlowTest {
                 .containsEntry("loresentry.schedule.name", "outbox-relay").containsEntry("loresentry.project_id", project.toString());
         // UUID가 아닌 event key는 project_id로 남기지 않는다
         assertThat(LogField.projectKey("not-a-uuid")).isNull();
+    }
+
+    @Test
+    void anOutboxRowContinuesTheStoredTraceInItsOwnSpan() {
+        // outbox 행에 저장해 둔 traceparent를 부모로 행의 span을 연다. 행의 줄은 그 span 안에서 찍히고, relay 회차와 다른 trace라 회차
+        // span을 link로 남긴다(LOG_SCHEMA.md 7절 "저장했다 나중에 처리")
+        Span round = OTEL.getOpenTelemetry().getTracer("test").spanBuilder("OutboxRelay.run").startSpan();
+        try (Scope ignored = round.makeCurrent();
+             var row = LogScope.outboxEvent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", "outbox-relay",
+                     UUID.randomUUID(), "FileChanged", UUID.randomUUID())) {
+            row.run(() -> AppLogger.current().info("outbox event published"));
+        } finally {
+            round.end();
+        }
+        SpanData span = span("outbox FileChanged");
+        assertThat(span.getTraceId()).isEqualTo("0af7651916cd43dd8448eb211c80319c");
+        assertThat(span.getParentSpanId()).isEqualTo("b7ad6b7169203331");
+        assertThat(span.getKind()).isEqualTo(SpanKind.INTERNAL);
+        assertThat(span.getLinks()).extracting(link -> link.getSpanContext().getSpanId())
+                .containsExactly(round.getSpanContext().getSpanId());
+        assertThat(span.getInstrumentationScopeInfo().getName()).isEqualTo(TraceContext.INSTRUMENTATION_SCOPE);
+        assertThat(spanAtLine.get(line("outbox event published")).getSpanId()).isEqualTo(span.getSpanId());
+    }
+
+    @Test
+    void anOutboxRowWithoutAStoredTraceStartsItsOwnTrace() {
+        // 추적을 붙이기 전에 쌓인 행(값 없음)이나 형식이 틀린 값은 그 행만 새 trace로 시작한다. relay 회차의 trace를 빌려 쓰지 않는다
+        Span round = OTEL.getOpenTelemetry().getTracer("test").spanBuilder("OutboxRelay.run").startSpan();
+        try (Scope ignored = round.makeCurrent()) {
+            for (String stored : new String[]{null, "not-a-traceparent"}) {
+                LogScope.outboxEvent(stored, "outbox-relay", UUID.randomUUID(), "FileChanged", UUID.randomUUID()).close();
+            }
+        } finally {
+            round.end();
+        }
+        assertThat(OTEL.getSpans()).filteredOn(s -> s.getName().equals("outbox FileChanged")).hasSize(2).allSatisfy(s -> {
+            assertThat(s.getParentSpanContext().isValid()).isFalse();
+            assertThat(s.getTraceId()).isNotEqualTo(round.getSpanContext().getTraceId());
+        });
+    }
+
+    @Test
+    void aKafkaErrorHandlerScopeContinuesTheRecordTrace() {
+        // 에러 처리기는 listener의 span 밖에서 불릴 수 있다. 레코드의 traceparent 헤더를 부모로 span을 열고 그 안에서 줄을 찍는다. 그 안에서
+        // DLQ로 보내면 DLQ 레코드의 헤더도 보낸 쪽의 trace를 잇는다
+        var record = new ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 3L, "k", "v");
+        record.headers().add("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".getBytes(StandardCharsets.UTF_8));
+        record.headers().add("ce_type", "UserDeleted".getBytes(StandardCharsets.UTF_8));
+        try (var scope = LogScope.kafkaRecord(record, Set.of("UserDeleted"))) {
+            scope.fail("SAMPLE_FAILED");
+            scope.run(() -> AppLogger.current().error("inbox event dead-lettered"));
+        }
+        SpanData span = span("auth.user.deleted.v1 recover");
+        assertThat(span.getTraceId()).isEqualTo("4bf92f3577b34da6a3ce929d0e0e4736");
+        assertThat(span.getParentSpanId()).isEqualTo("00f067aa0ba902b7");
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+        ILoggingEvent dead = line("inbox event dead-lettered");
+        assertThat(spanAtLine.get(dead).getSpanId()).isEqualTo(span.getSpanId());
+        assertThat(pairs(dead)).containsEntry("loresentry.kafka.topic", "auth.user.deleted.v1")
+                .containsEntry("loresentry.cloudevent.type", "UserDeleted");
+    }
+
+    @Test
+    void aCallOpensASpanAndWritesItsResultLineInsideIt() throws IOException {
+        // 외부 호출 결과 줄의 span.id가 호출을 감싸는 span이다. AWS SDK 계측의 CLIENT span은 그 자식이 된다(LOG_SCHEMA.md 7절 "외부 호출")
+        String[] inside = new String[1];
+        LogFlow.call("s3", call -> {
+            inside[0] = Span.current().getSpanContext().getSpanId();
+            return call.status(200);
+        });
+        SpanData s3 = span("s3 call");
+        assertThat(inside[0]).isEqualTo(s3.getSpanId());
+        assertThat(s3.getStatus().getStatusCode()).isEqualTo(StatusCode.UNSET);
+        assertThat(spanAtLine.get(line("s3 call completed")).getSpanId()).isEqualTo(s3.getSpanId());
+
+        assertThatThrownBy(() -> LogFlow.call("kms", call -> {
+            throw new IOException("key arn:secret");
+        })).isInstanceOf(IOException.class);
+        SpanData kms = span("kms call");
+        assertThat(kms.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+        assertThat(kms.getStatus().getDescription()).isEqualTo("java.io.IOException");
+        assertThat(spanAtLine.get(line("kms call failed")).getSpanId()).isEqualTo(kms.getSpanId());
+    }
+
+    @Test
+    void aTaskOpensItsOwnSpan() {
+        LogFlow.task("media cleanup", task -> AppLogger.current().info("sample step"));
+        SpanData cleanup = span("media cleanup");
+        assertThat(spanAtLine.get(line("sample step")).getSpanId()).isEqualTo(cleanup.getSpanId());
+        assertThat(spanAtLine.get(line("media cleanup completed")).getSpanId()).isEqualTo(cleanup.getSpanId());
+    }
+
+    /** 이 테스트에서 끝난 span 가운데 그 이름의 것. */
+    private static SpanData span(String name) {
+        return OTEL.getSpans().stream().filter(s -> s.getName().equals(name)).findFirst()
+                .orElseThrow(() -> new AssertionError("no span named " + name));
     }
 }

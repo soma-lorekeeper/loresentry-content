@@ -56,10 +56,9 @@ final class OutboxMessages {
         // 종류를 보고 가려 붙이면 relay 가 이벤트의 뜻을 알아야 한다. 쓰지 않는 소비자는 무시하면 된다.
         header(record, "ce_sequence", Long.toString(event.seq()));
         header(record, "content-type", "application/json");
-        // 추적을 붙이기 전까지는 값이 없다. 빈 header 를 보내지 않고 아예 붙이지 않는다.
-        if (event.traceparent() != null) {
-            header(record, "traceparent", event.traceparent());
-        }
+        // traceparent 는 여기서 넣지 않는다. Kafka 발행 계측(EDOT agent)이 보내는 순간의 지금 문맥으로 넣고, 같은 이름의 헤더가
+        // 있으면 지우고 다시 넣는다. OutboxPublisher 가 행에 저장된 traceparent 의 범위 안에서 보내므로 그 값이 요청의 trace 를 잇는다
+        // (LOG_SCHEMA.md 7절 "Kafka 발행").
         return record;
     }
 

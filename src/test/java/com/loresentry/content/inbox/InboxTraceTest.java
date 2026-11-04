@@ -1,5 +1,10 @@
 package com.loresentry.content.inbox;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Scope;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -26,7 +31,8 @@ import tools.jackson.databind.JsonNode;
 /**
  * Kafka 로 받은 이벤트가 보낸 쪽의 trace 를 잇는지 확인한다(LOG_SCHEMA.md 7절 Kafka 소비·outbox).
  *
- * <p>auth 의 회원 탈퇴 요청(trace T)이 outbox 행에 traceparent 를 저장하고, relay 가 그것을 헤더로 실어 보낸 상황을 흉내 낸다.
+ * <p>auth 의 회원 탈퇴 요청(trace T)이 outbox 행에 traceparent 를 저장하고, relay 가 그 행의 범위(trace T 를 잇는 span) 안에서 보낸 상황을
+ * 흉내 낸다. 헤더는 Kafka 발행 계측(테스트에서는 AgentLikeTracing)이 보내는 순간의 지금 문맥으로 넣는다.
  * <ul>
  *   <li>content listener 가 그 레코드를 처리하는 줄(listener → service → repository)이 모두 trace T 와 topic·offset·이벤트 ID 를 갖는다</li>
  *   <li>그 처리가 content outbox 에 쓴 ProjectDeleted 행에도 trace T 가 저장된다. 그래서 다음 서비스(graph-rag)까지 같은 trace 로 이어진다</li>
@@ -54,8 +60,12 @@ class InboxTraceTest extends KafkaTestSupport {
         header(record, "ce_subject", user.toString());
         header(record, "ce_time", OffsetDateTime.now(ZoneOffset.UTC).toString());
         header(record, "content-type", "application/json");
-        header(record, "traceparent", "00-" + AUTH_TRACE + "-00f067aa0ba902b7-01");
-        kafkaTemplate.send(record).get();
+        // auth relay 의 행 범위 흉내: trace T 를 지금 문맥으로 두고 보낸다. 발행 계측이 그 문맥으로 traceparent 헤더를 넣는다
+        Span authRow = Span.wrap(SpanContext.createFromRemoteParent(AUTH_TRACE, "00f067aa0ba902b7", TraceFlags.getSampled(),
+                TraceState.getDefault()));
+        try (Scope ignored = authRow.makeCurrent()) {
+            kafkaTemplate.send(record).get();
+        }
 
         // 처리가 끝나 ProjectDeleted 가 outbox 에 쓰일 때까지 기다린다
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(outboxTraceparents()).hasSize(1));

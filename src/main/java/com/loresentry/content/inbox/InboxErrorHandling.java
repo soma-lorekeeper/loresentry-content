@@ -98,7 +98,28 @@ class InboxErrorHandling {
             replace(headers, KafkaHeaders.DLT_EXCEPTION_MESSAGE, message);
         });
 
-        DefaultErrorHandler errorHandler = new DefaultErrorHandler(deadLetters, inboxBackOff);
+        // DLQ 로 보내는 일은 그 레코드의 범위 안에서 한다. 범위는 레코드의 traceparent 헤더(보낸 쪽의 trace)를 잇는 span 을 연다. Kafka 발행
+        // 계측은 보내는 순간의 지금 문맥으로 traceparent 헤더를 덮어쓰므로, 범위 밖에서 보내면 DLQ 레코드가 보낸 쪽의 trace 를 잃는다
+        // (LOG_SCHEMA.md 7절 "저장했다 나중에 처리"). 보낸 결과 줄(보냄, 못 보냄)도 같은 범위에서 남겨 레코드마다 span 이 하나다.
+        // 보내지 못하면 예외를 다시 던진다 — spring-kafka 가 partition 을 멈추고 처음부터 다시 시도한다.
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler((record, failure) -> {
+            try (LogScope scope = LogScope.kafkaRecord(record, InboxMessages.TYPES)) {
+                scope.fail(reason(failure));
+                scope.run(() -> {
+                    try {
+                        deadLetters.accept(record, failure);
+                    } catch (RuntimeException sendFailure) {
+                        // DLQ 로 보내지 못했다. 이유는 보내기 쪽의 예외다.
+                        AppLogger.current().error("inbox event dead-letter failed",
+                                LogField.errorType(deepest(sendFailure).getClass().getName()), LogField.safeStackTrace(sendFailure));
+                        throw sendFailure;
+                    }
+                    // DLQ 로 보냈다. 이 줄을 알림의 근거로 쓴다 — 사람이 원인을 보고 재투입해야 한다.
+                    AppLogger.current().error("inbox event dead-lettered", LogField.errorType(reason(failure)),
+                            LogField.result("check", check(failure)), LogField.safeStackTrace(unwrap(failure)));
+                });
+            }
+        }, inboxBackOff);
         // 계약에 맞지 않는 메시지는 다시 해도 같다. spring-kafka 는 껍데기와 원인 사슬을 벗겨 가며 이 클래스를 찾는다.
         errorHandler.addNotRetryableExceptions(InvalidEventException.class);
         errorHandler.setRetryListeners(new RetryListener() {
@@ -106,30 +127,13 @@ class InboxErrorHandling {
             /** 처리가 실패할 때마다 한 번. 다시 시도하지 않는 예외도 첫 실패에 한 번 불린다. */
             @Override
             public void failedDelivery(ConsumerRecord<?, ?> record, Exception failure, int deliveryAttempt) {
-                // listener 의 span 이 닫힌 뒤에도 불리므로, 레코드의 traceparent 로 원래 흐름의 trace 를 잇는다.
+                // listener 의 span 밖에서 불릴 수 있으므로, 레코드의 traceparent 로 원래 흐름의 trace 를 잇는 범위에서 남긴다.
                 // topic·partition·offset·이벤트 필드는 LogScope 가 붙인다
-                try (var scope = LogScope.kafkaRecord(record, InboxMessages.TYPES)) {
-                    AppLogger.current().warn("inbox event failed", LogField.param("attempt", deliveryAttempt),
+                try (LogScope scope = LogScope.kafkaRecord(record, InboxMessages.TYPES)) {
+                    scope.fail(reason(failure));
+                    scope.run(() -> AppLogger.current().warn("inbox event failed", LogField.param("attempt", deliveryAttempt),
                             LogField.errorType(reason(failure)), LogField.result("check", check(failure)),
-                            LogField.safeStackTrace(unwrap(failure)));
-                }
-            }
-
-            /** DLQ 로 보냈다. 이 줄을 알림의 근거로 쓴다 — 사람이 원인을 보고 재투입해야 한다. */
-            @Override
-            public void recovered(ConsumerRecord<?, ?> record, Exception failure) {
-                try (var scope = LogScope.kafkaRecord(record, InboxMessages.TYPES)) {
-                    AppLogger.current().error("inbox event dead-lettered", LogField.errorType(reason(failure)),
-                            LogField.result("check", check(failure)), LogField.safeStackTrace(unwrap(failure)));
-                }
-            }
-
-            /** DLQ 로 보내지 못했다. partition 이 멈추고 처음부터 다시 시도한다. 이유는 보내기 쪽의 예외다. */
-            @Override
-            public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
-                try (var scope = LogScope.kafkaRecord(record, InboxMessages.TYPES)) {
-                    AppLogger.current().error("inbox event dead-letter failed",
-                            LogField.errorType(deepest(failure).getClass().getName()), LogField.safeStackTrace(failure));
+                            LogField.safeStackTrace(unwrap(failure))));
                 }
             }
         });
