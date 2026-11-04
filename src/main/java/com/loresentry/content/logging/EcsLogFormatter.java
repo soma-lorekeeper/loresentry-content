@@ -1,12 +1,18 @@
 package com.loresentry.content.logging;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
-import ch.qos.logback.classic.spi.ThrowableProxyUtil;
+import ch.qos.logback.classic.spi.StackTraceElementProxy;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import org.slf4j.Marker;
 import org.slf4j.event.KeyValuePair;
 import org.springframework.boot.logging.structured.StructuredLogFormatter;
@@ -25,13 +31,17 @@ import tools.jackson.databind.json.JsonMapper;
  * <ul>
  *   <li>항상: {@code @timestamp}, {@code log.level}, {@code log.logger}, {@code message}, {@code service.name},
  *       {@code service.version}, {@code process.thread.name}, {@code ecs.version}</li>
- *   <li>trace: AppLogger가 MDC에 넣은 {@code trace.id}·{@code span.id}. 없으면 Micrometer Tracing이 넣은 현재 span
- *       ({@code traceId}·{@code spanId})을 쓴다.</li>
+ *   <li>trace: 줄을 쓰는 순간의 지금 span({@code Span.current()}, EDOT agent가 연 span이나 로깅 팩토리가 연 우리 span)이다. AppLogger가
+ *       MDC에 넣은 흐름의 {@code trace.id}가 있는데 지금 span이 없거나 다른 trace면 흐름의 {@code trace.id}·{@code span.id}를 쓴다
+ *       (LOG_SCHEMA.md 7절 "로그 필드"). Logback은 줄을 찍은 스레드에서 바로 이 formatter를 부르므로 지금 span이 그 줄의 span이다.</li>
  *   <li>사용자: MDC {@code user.id}</li>
  *   <li>key-value: AppLogger가 LogField로 넘긴 값(점 이름을 중첩 객체로)</li>
  *   <li>문맥 필드: AppLogger가 바인딩하며 MDC에 넣은 {@link AppLogger#MDC_CONTEXT_KEYS}(요청의 경로·경로 템플릿·메서드, 스케줄 이름,
  *       Kafka 레코드의 topic·partition·offset, 이벤트의 ID·종류·대상). 같은 스레드의 프레임워크 줄에도 붙는다. 그 밖의 MDC 값은 내보내지 않는다.</li>
- *   <li>예외: {@code error.type}(클래스), {@code error.message}, {@code error.stack_trace}</li>
+ *   <li>예외: {@code error.type}(클래스), {@code error.stack_trace}(원인 사슬의 메시지 없는 스택). 예외 메시지에는 SQL·받은 값이 섞일 수
+ *       있어 {@code error.message}는 쓰지 않는다(LOG_SCHEMA.md 4절)</li>
+ *   <li>예외 없는 warn·error(우리 줄, 프레임워크 줄): 줄을 쓰는 순간의 호출 위치 스택을 {@code error.stack_trace}에 남긴다. 로그만 보고 어느
+ *       경로에서 나온 줄인지 알 수 있게 한다(LOG_SCHEMA.md 5절 "warn·error 스택")</li>
  *   <li>SLF4J marker: {@code tags}</li>
  * </ul>
  *
@@ -43,6 +53,20 @@ public final class EcsLogFormatter implements StructuredLogFormatter<ILoggingEve
     /** Spring의 commons-logging 연결이 모든 프레임워크 줄에 붙이는 marker. 분류가 아니라서 tags에 넣지 않는다. */
     private static final String COMMONS_LOGGING_MARKER = "COMMONS-LOGGING";
     private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** 메시지 없는 스택에 담는 원인 단계와 단계마다의 프레임 수. LogField.safeStackTrace(우리 줄의 예외 스택)와 같다. */
+    private static final int MAX_CAUSES = 8;
+    private static final int MAX_FRAMES = 30;
+
+    /**
+     * 호출 위치 스택에서 맨 위(가장 최근)부터 건너뛰는 프레임: 이 formatter와 로깅 라이브러리, 로그 패키지. 그 아래 첫 프레임이 줄을 찍은 곳이다.
+     * 우리 줄은 서비스 메서드(LogFlow 줄이면 흐름을 연 메서드), 프레임워크 줄은 그 라이브러리의 메서드다.
+     */
+    private static final List<String> LOGGING_FRAMES = List.of("com.loresentry.content.logging.", "ch.qos.logback.", "org.slf4j.",
+            "org.springframework.boot.logging.", "org.springframework.core.log.", "org.apache.commons.logging.", "org.apache.juli.",
+            "org.jboss.logging.", "io.netty.util.internal.logging.", "io.opentelemetry.javaagent.", "java.util.logging.");
+
+    private static final StackWalker WALKER = StackWalker.getInstance();
 
     private final String serviceName;
     private final String serviceVersion;
@@ -75,15 +99,22 @@ public final class EcsLogFormatter implements StructuredLogFormatter<ILoggingEve
         root.put("message", event.getFormattedMessage());
 
         Map<String, String> mdc = mdc(event);
-        put(root, "trace.id", first(mdc.get(AppLogger.TRACE_ID), mdc.get("traceId")));
-        put(root, "span.id", first(mdc.get(AppLogger.SPAN_ID), mdc.get("spanId")));
+        // 줄을 쓰는 순간의 지금 span. 흐름(MDC trace.id)과 같은 trace일 때만 쓰고, 지금 span이 없거나 다른 trace면 흐름의 값이다
+        String flowTrace = mdc.get(AppLogger.TRACE_ID);
+        SpanContext current = Span.current().getSpanContext();
+        if (current.isValid() && (flowTrace == null || flowTrace.equals(current.getTraceId()))) {
+            put(root, "trace.id", current.getTraceId());
+            put(root, "span.id", current.getSpanId());
+        } else {
+            put(root, "trace.id", flowTrace);
+            put(root, "span.id", mdc.get(AppLogger.SPAN_ID));
+        }
         put(root, "user.id", mdc.get(AppLogger.USER_ID));
 
         IThrowableProxy throwable = event.getThrowableProxy();
         if (throwable != null) {
             put(root, "error.type", throwable.getClassName());
-            put(root, "error.message", throwable.getMessage());
-            put(root, "error.stack_trace", ThrowableProxyUtil.asString(throwable));
+            put(root, "error.stack_trace", messageFreeStack(throwable));
         }
         put(root, "ecs.version", ECS_VERSION);
         // key-value는 마지막에 넣는다. 이미 들어간 이름(log.level, ecs.version, 예외의 error.type 등)은 바꾸지 못한다.
@@ -97,6 +128,12 @@ public final class EcsLogFormatter implements StructuredLogFormatter<ILoggingEve
         for (String key : AppLogger.MDC_CONTEXT_KEYS) {
             String value = mdc.get(key);
             put(root, key, AppLogger.MDC_NUMBER_KEYS.contains(key) ? number(value) : value);
+        }
+        // warn·error 줄에는 언제나 스택이 있다. 예외 스택(위의 throwable, 우리 줄이 넘긴 메시지 없는 스택)이 없으면 호출 위치 스택이다.
+        // 첫 줄은 그 줄의 error.type(없으면 logger 이름)이라 예외 스택과 구별된다
+        if (event.getLevel().isGreaterOrEqual(Level.WARN) && get(root, "error.stack_trace") == null) {
+            Object label = get(root, "error.type");
+            put(root, "error.stack_trace", logSiteStack(label != null ? label : event.getLoggerName()));
         }
         List<Marker> markers = event.getMarkerList();
         if (markers != null && !markers.isEmpty()) {
@@ -151,8 +188,53 @@ public final class EcsLogFormatter implements StructuredLogFormatter<ILoggingEve
         }
     }
 
-    private static String first(String preferred, String fallback) {
-        return preferred != null ? preferred : fallback;
+    /** 점 이름으로 이미 넣은 값을 읽는다. 없으면 null. */
+    @SuppressWarnings("unchecked")
+    static Object get(Map<String, Object> root, String dottedName) {
+        Object node = root;
+        for (String part : dottedName.split("\\.")) {
+            if (!(node instanceof Map)) return null;
+            node = ((Map<String, Object>) node).get(part);
+        }
+        return node;
+    }
+
+    /**
+     * 예외의 원인 사슬을 메시지 없이 적는다. 단계마다 클래스 이름 한 줄과 프레임({@code   at 클래스.메서드(파일:줄)})이다. 같은 예외를 두 번
+     * 돌지 않는다. 우리 줄이 넘기는 LogField.safeStackTrace와 같은 모양이다.
+     */
+    static String messageFreeStack(IThrowableProxy failure) {
+        StringBuilder trace = new StringBuilder();
+        Set<IThrowableProxy> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (IThrowableProxy cause = failure; cause != null && visited.size() < MAX_CAUSES && visited.add(cause);
+                cause = cause.getCause()) {
+            trace.append(cause.getClassName()).append('\n');
+            StackTraceElementProxy[] frames = cause.getStackTraceElementProxyArray();
+            if (frames == null) continue;
+            for (int i = 0; i < frames.length && i < MAX_FRAMES; i++) {
+                trace.append("  at ").append(frames[i].getStackTraceElement()).append('\n');
+            }
+        }
+        return trace.toString();
+    }
+
+    /**
+     * 줄을 쓰는 순간의 호출 위치 스택. 맨 위의 이 formatter·로깅 라이브러리·로그 패키지 프레임을 건너뛰고 그 아래 30프레임까지 적는다. 첫 줄은
+     * {@code log site: <label>}이다.
+     */
+    static String logSiteStack(Object label) {
+        StringBuilder trace = new StringBuilder("log site: ").append(label).append('\n');
+        WALKER.walk(frames -> {
+            frames.dropWhile(frame -> loggingFrame(frame.getClassName())).limit(MAX_FRAMES)
+                    .forEach(frame -> trace.append("  at ").append(frame.toStackTraceElement()).append('\n'));
+            return null;
+        });
+        return trace.toString();
+    }
+
+    private static boolean loggingFrame(String className) {
+        for (String prefix : LOGGING_FRAMES) if (className.startsWith(prefix)) return true;
+        return false;
     }
 
     /** 정상 경로가 실패했을 때 쓰는 최소 줄. 값은 문자열 연결이 아니라 Jackson으로 이스케이프한다. */

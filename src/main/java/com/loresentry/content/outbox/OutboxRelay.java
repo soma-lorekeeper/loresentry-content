@@ -110,8 +110,8 @@ class OutboxRelay {
      * <p>예외를 밖으로 내보내지 않는다. 내보내면 스케줄러가 긴 오류 로그를 주기마다 찍는다. 받아서 실패한 회차처럼
      * 쉬는 시간을 늘린다.
      *
-     * <p>로그에는 개수와 예외의 종류만 적는다 — 행의 내용과 예외 메시지는 적지 않는다. 회차 하나의 trace는 Spring 의 스케줄
-     * observation 이 열고, 보낸 행마다의 줄은 {@link OutboxPublisher} 가 그 행을 만든 요청의 trace 로 남긴다.
+     * <p>로그에는 개수와 예외의 종류만 적는다 — 행의 내용과 예외 메시지는 적지 않는다. 회차 하나의 trace는 EDOT agent 의
+     * Spring Scheduling 계측이 열고, 보낸 행마다의 줄은 {@link OutboxPublisher} 가 그 행을 만든 요청의 trace 로 남긴다.
      */
     @Scheduled(fixedDelay = PERIOD_MILLIS)
     @SkipEntryLog("Polls every second. Logs start and end lines only in rounds that have rows to send")

@@ -117,7 +117,7 @@ class AppLoggerLocationTest {
         known.headers().add("ce_id", event.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         known.headers().add("ce_type", "UserDeleted".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         known.headers().add("ce_subject", subject.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        try (var bound = AppLogger.bind(TraceContext.forRecord(known, java.util.Set.of("UserDeleted")))) {
+        try (var bound = AppLogger.bind(TraceContext.forRecord(io.opentelemetry.api.trace.SpanContext.getInvalid(), known, java.util.Set.of("UserDeleted")))) {
             new SampleListener().receive();
         }
         assertThat(pairs()).containsEntry("loresentry.cloudevent.id", event.toString())
@@ -127,7 +127,7 @@ class AppLoggerLocationTest {
         var unknown = new org.apache.kafka.clients.consumer.ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 8L, "k", "v");
         unknown.headers().add("ce_type", "someone@example.com".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         unknown.headers().add("ce_subject", "not-a-uuid".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        try (var bound = AppLogger.bind(TraceContext.forRecord(unknown, java.util.Set.of("UserDeleted")))) {
+        try (var bound = AppLogger.bind(TraceContext.forRecord(io.opentelemetry.api.trace.SpanContext.getInvalid(), unknown, java.util.Set.of("UserDeleted")))) {
             new SampleListener().receive();
         }
         assertThat(pairs()).containsEntry("loresentry.cloudevent.type", "other")
@@ -135,11 +135,14 @@ class AppLoggerLocationTest {
     }
 
     @Test
-    void aStoredTraceparentBecomesTheTraceOfTheLine() {
-        // outbox 행·Kafka 헤더에 저장해 둔 traceparent로 원래 흐름의 trace를 잇는다(LOG_SCHEMA.md 7절)
-        AppLogger stored = TraceContext.fromTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
-        assertThat(stored.traceId()).isEqualTo("0af7651916cd43dd8448eb211c80319c");
-        assertThat(TraceContext.fromTraceparent("not-a-traceparent").traceId()).isNull();
-        assertThat(TraceContext.fromTraceparent(null).traceId()).isNull();
+    void aStoredTraceparentIsReadAsTheSpanOfTheOriginalRequest() {
+        // outbox 행·Kafka 헤더에 저장해 둔 traceparent를 원래 요청의 span 문맥으로 읽는다. 로깅 팩토리가 이것을 부모로 span을 연다
+        // (LOG_SCHEMA.md 7절 "저장했다 나중에 처리"). 값이 없거나 형식이 틀리면 유효하지 않은 문맥이다
+        var stored = TraceContext.stored("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+        assertThat(stored.getTraceId()).isEqualTo("0af7651916cd43dd8448eb211c80319c");
+        assertThat(stored.getSpanId()).isEqualTo("b7ad6b7169203331");
+        assertThat(stored.isRemote()).isTrue();
+        assertThat(TraceContext.stored("not-a-traceparent").isValid()).isFalse();
+        assertThat(TraceContext.stored(null).isValid()).isFalse();
     }
 }

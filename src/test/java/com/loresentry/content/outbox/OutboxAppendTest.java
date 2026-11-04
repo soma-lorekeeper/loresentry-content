@@ -15,8 +15,10 @@ import java.util.function.Supplier;
 
 import com.loresentry.content.support.ApiTestSupport;
 
-import io.micrometer.tracing.Span;
-import io.micrometer.tracing.Tracer;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,8 +38,9 @@ class OutboxAppendTest extends ApiTestSupport {
     @Autowired
     TransactionTemplate transaction;
 
-    @Autowired
-    Tracer tracer;
+    /** 요청의 서버 span 흉내(운영에서는 agent가 연다). 내보내는 곳이 없는 SDK tracer다. */
+
+    private final Tracer tracer = SdkTracerProvider.builder().build().get("test");
 
     private final ExecutorService pool = Executors.newFixedThreadPool(2);
 
@@ -198,8 +201,8 @@ class OutboxAppendTest extends ApiTestSupport {
     @Test
     void storesTheTraceparentOfTheCurrentSpan() {
         UUID traced = UUID.randomUUID();
-        Span span = tracer.nextSpan().name("request").start();
-        try (Tracer.SpanInScope scope = tracer.withSpan(span)) {
+        Span span = tracer.spanBuilder("request").startSpan();
+        try (Scope scope = span.makeCurrent()) {
             transaction.executeWithoutResult(status -> outbox.append(new OutboxRecord(
                     "FileChanged", traced, "project-key", () -> new Sample("trace"))));
         } finally {
@@ -210,7 +213,7 @@ class OutboxAppendTest extends ApiTestSupport {
                 "FileChanged", untraced, "project-key", () -> new Sample("no trace"))));
 
         // flags(마지막 두 글자)는 sampled 외에 random 비트가 켜질 수 있어 앞부분만 본다
-        assertThat(traceparent(traced)).startsWith("00-" + span.context().traceId() + "-" + span.context().spanId() + "-").hasSize(55);
+        assertThat(traceparent(traced)).startsWith("00-" + span.getSpanContext().getTraceId() + "-" + span.getSpanContext().getSpanId() + "-").hasSize(55);
         assertThat(traceparent(untraced)).isNull();
     }
 

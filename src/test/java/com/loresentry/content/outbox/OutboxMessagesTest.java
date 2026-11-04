@@ -98,12 +98,16 @@ class OutboxMessagesTest {
                 "ce_time")).isEqualTo("2026-09-30T10:00:00.000Z");
     }
 
+    /**
+     * traceparent 헤더는 레코드를 만들 때 넣지 않는다. 행에 값이 있어도 그렇다. 발행 계측(EDOT agent)이 보내는 순간의 지금 문맥으로 넣고,
+     * OutboxPublisher 가 행의 범위 안에서 보내 그 값이 원래 요청의 trace 를 잇는다(OutboxPublisherTest 가 확인한다).
+     */
     @Test
-    void addsTheTraceHeaderOnlyWhenTheRowHasOne() {
+    void leavesTheTraceHeaderToTheKafkaInstrumentation() {
         String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
         assertThat(OutboxMessages.toRecord(event("FileChanged")).headers().lastHeader("traceparent")).isNull();
-        assertThat(header(OutboxMessages.toRecord(event("FileChanged", "2026-09-30T10:00:00.123Z", traceparent)),
-                "traceparent")).isEqualTo(traceparent);
+        assertThat(OutboxMessages.toRecord(event("FileChanged", "2026-09-30T10:00:00.123Z", traceparent)).headers()
+                .lastHeader("traceparent")).isNull();
     }
 }

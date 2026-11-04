@@ -17,13 +17,13 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * 로그·trace 배선. LOG_SCHEMA.md 5·7절.
  *
  * <ul>
- *   <li>요청 시작점·접근 로그 필터(HIGHEST_PRECEDENCE + 2). 서버 span을 여는 Spring observation 필터는 +1이다.</li>
+ *   <li>요청 시작점·접근 로그 필터(HIGHEST_PRECEDENCE + 2). 서버 span은 EDOT agent의 Tomcat 계측이 필터보다 먼저 연다.</li>
  *   <li>헬스체크도 다른 요청처럼 span과 로그를 남긴다. 정상 헬스체크의 info 줄은 Logstash가 tags: health로 버린다.</li>
  *   <li>Boot 기본 오류 응답(/error)에도 trace_id를 싣는다.</li>
  * </ul>
  *
- * <p>Kafka 레코드의 trace는 listener observation(application.yaml)이 잇고, 스케줄 작업 1회의 trace는 Spring의 스케줄
- * observation이 연다. 둘 다 여기서 배선할 것이 없다.
+ * <p>Kafka 레코드의 trace는 EDOT agent의 Spring Kafka 계측이 잇고, 스케줄 작업 1회의 trace는 Spring Scheduling 계측이 연다.
+ * 둘 다 여기서 배선할 것이 없다.
  */
 @Configuration(proxyBeanMethods = false)
 public class LoggingConfiguration {

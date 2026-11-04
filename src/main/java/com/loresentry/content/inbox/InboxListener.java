@@ -72,7 +72,7 @@ class InboxListener {
     /**
      * kafka.consumer.topics.user-deleted({@code auth.user.deleted.v1})에서 받은 메시지 하나를 처리한다.
      *
-     * <p>레코드 하나의 흐름이다. listener observation 이 연 span(보낸 쪽 traceparent 를 이은 것)으로 로그 객체를 만들어, 이 레코드를
+     * <p>레코드 하나의 흐름이다. EDOT agent 의 Spring Kafka 계측이 연 span(보낸 쪽 traceparent 를 이은 것)으로 로그 객체를 만들어, 이 레코드를
      * 처리하는 모든 줄에 같은 trace 와 topic·partition·offset·이벤트 필드가 붙는다. 시작·종료 줄(결과, 걸린 시간)은 LogFlow 가 남긴다.
      * 예외는 종료 줄을 남긴 뒤 그대로 나가, 에러 처리기({@link InboxErrorHandling})가 다시 시도하거나 DLQ 로 보낸다.
      */

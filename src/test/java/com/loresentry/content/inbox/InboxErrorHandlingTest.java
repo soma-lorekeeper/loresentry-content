@@ -8,6 +8,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Scope;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -168,6 +173,30 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
                 assertThat(line.at("/loresentry/kafka/topic").asString()).isEqualTo(USER_DELETED);
             });
         });
+    }
+
+    /**
+     * DLQ 레코드의 traceparent 는 원래 레코드를 보낸 쪽의 trace 를 잇는다. 에러 처리기가 레코드의 traceparent 로 범위를 열고 그 안에서 DLQ 로
+     * 보내므로, Kafka 발행 계측(테스트에서는 AgentLikeTracing)이 그 범위의 문맥으로 헤더를 다시 넣는다(LOG_SCHEMA.md 7절 "저장했다 나중에
+     * 처리"). 헤더는 하나다. 이 테스트에는 agent 의 SDK 가 없어 범위의 span 이 저장된 문맥을 그대로 감싸므로, 부모 span 까지 다시 만들어졌는지는
+     * LogFlowTest(SDK tracer)가 본다.
+     */
+    @Test
+    void theDeadLetterContinuesTheTraceOfTheSender() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        String trace = "7bf92f3577b34da6a3ce929d0e0e4736";
+        Span sender = Span.wrap(SpanContext.createFromRemoteParent(trace, "00f067aa0ba902b7", TraceFlags.getSampled(),
+                TraceState.getDefault()));
+        // 대상(ce_subject)을 다른 유저로 적어 계약 위반으로 곧바로 DLQ 로 가게 한다
+        try (Scope ignored = sender.makeCurrent()) {
+            send(USER_DELETED, userId.toString(), eventId, "UserDeleted", "/auth", UUID.randomUUID(),
+                    "{\"user_id\": \"" + userId + "\"}");
+        }
+
+        ConsumerRecord<String, String> dead = awaitRecords(USER_DELETED_DLQ, userId.toString(), 1).getFirst();
+        assertThat(dead.headers().headers("traceparent")).hasSize(1);
+        assertThat(text(dead, "traceparent")).startsWith("00-" + trace + "-");
     }
 
     /**

@@ -20,7 +20,7 @@ import org.springframework.web.util.ServletRequestPathUtils;
 /**
  * gateway가 부른 요청 하나의 시작점. 요청마다 {@link AppLogger}를 만들어 바인딩하고 접근 로그를 남긴다.
  *
- * <p>순서: Spring observation 필터(HIGHEST_PRECEDENCE + 1)가 gateway가 보낸 traceparent를 이어 서버 span을 연 뒤 이 필터(+2)가
+ * <p>순서: EDOT agent의 Tomcat 계측이 필터보다 먼저 gateway가 보낸 traceparent를 이어 서버 span을 열고, 이 필터(+2)가 그 안에서
  * 돈다. 그래서 이 요청의 모든 줄이 gateway 줄과 같은 trace.id를 갖는다.
  *
  * <p>하는 일
