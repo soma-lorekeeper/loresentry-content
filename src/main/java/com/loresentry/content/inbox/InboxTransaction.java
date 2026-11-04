@@ -69,8 +69,7 @@ class InboxTransaction {
             return true;
         } else {
             // 이미 있었다: 이 처리기가 처리를 마친 이벤트가 다시 왔다. 처리하지 않고, 다시 왔다는 것만 남긴다.
-            AppLogger.current().info("inbox event already processed: consumer=" + consumerName + ", event=" + eventId,
-                    LogField.cloudeventId(eventId));
+            AppLogger.current().info("inbox event already processed", LogField.cloudeventId(eventId));
             return false;
         }
     }

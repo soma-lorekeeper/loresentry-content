@@ -11,8 +11,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogFlow;
 import org.flywaydb.core.api.migration.BaseJavaMigration;
 import org.flywaydb.core.api.migration.Context;
 import org.springframework.stereotype.Component;
@@ -32,29 +32,37 @@ public class V19__EncryptManuscripts extends BaseJavaMigration {
         this.wrapper = wrapper;
     }
 
+    /**
+     * 원고를 모두 암호화하고 평문 열을 NOT NULL 로 묶는다. migration 하나라 시작·종료 줄(manuscript encryption start·completed,
+     * 암호화한 행 수, 걸린 시간)은 LogFlow 가 남긴다. 예외로 끝나면 실패 줄(manuscript encryption failed, 예외 종류와 메시지 없는
+     * 스택)을 남기고 그대로 던져 Flyway 가 이 migration 을 되돌린다.
+     */
     @Override
     public void migrate(Context context) throws Exception {
-        Connection connection = context.getConnection();
-        Map<UUID, byte[]> keys = projectKeys(connection);
-        int documents = documents(connection, keys);
-        int versions = versions(connection, keys);
-        int drafts = drafts(connection, keys);
-        int results = results(connection, keys);
-        int events = outbox(connection, keys);
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("""
-                    ALTER TABLE document
-                        ALTER COLUMN body_text_enc SET NOT NULL,
-                        ALTER COLUMN body_text_mac SET NOT NULL,
-                        ALTER COLUMN body_text_length SET NOT NULL,
-                        ADD CONSTRAINT ck_document_body_enc CHECK (body_json_enc IS NOT NULL OR body_md_enc IS NOT NULL)
-                    """);
-            statement.execute("ALTER TABLE document_versions ALTER COLUMN snapshot_enc SET NOT NULL");
-            statement.execute("ALTER TABLE refresh_results ALTER COLUMN payload_enc SET NOT NULL");
-        }
-        AppLogger.current().info("manuscript encryption completed", LogField.result("projects", keys.size()),
-                LogField.result("documents", documents), LogField.result("versions", versions),
-                LogField.result("drafts", drafts), LogField.result("results", results), LogField.result("events", events));
+        LogFlow.task("manuscript encryption", task -> {
+            Connection connection = context.getConnection();
+            Map<UUID, byte[]> keys = projectKeys(connection);
+            int documents = documents(connection, keys);
+            int versions = versions(connection, keys);
+            int drafts = drafts(connection, keys);
+            int results = results(connection, keys);
+            int events = outbox(connection, keys);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        ALTER TABLE document
+                            ALTER COLUMN body_text_enc SET NOT NULL,
+                            ALTER COLUMN body_text_mac SET NOT NULL,
+                            ALTER COLUMN body_text_length SET NOT NULL,
+                            ADD CONSTRAINT ck_document_body_enc CHECK (body_json_enc IS NOT NULL OR body_md_enc IS NOT NULL)
+                        """);
+                statement.execute("ALTER TABLE document_versions ALTER COLUMN snapshot_enc SET NOT NULL");
+                statement.execute("ALTER TABLE refresh_results ALTER COLUMN payload_enc SET NOT NULL");
+            }
+            // 종료 줄의 결과 값. 키를 둔 프로젝트 수와 표마다 암호화한 행 수다
+            task.result(LogField.result("projects", keys.size()), LogField.result("documents", documents),
+                    LogField.result("versions", versions), LogField.result("drafts", drafts),
+                    LogField.result("results", results), LogField.result("events", events));
+        });
     }
 
     private Map<UUID, byte[]> projectKeys(Connection connection) throws SQLException {

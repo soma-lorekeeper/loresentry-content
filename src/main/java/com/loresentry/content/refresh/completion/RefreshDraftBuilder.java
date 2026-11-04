@@ -214,7 +214,8 @@ class RefreshDraftBuilder {
         }
         if (malformedDocuments + malformedRelations + malformedNew > 0) {
             // graph-rag 가 계약에 맞지 않는 모양을 보냈다. 위 건너뛴 개수에 이미 들어 있고, 그중 모양 문제만 센 것이다
-            AppLogger.current().warn("graph refresh proposals malformed", LogField.refreshRequestId(runId),
+            AppLogger.current().warn("graph refresh proposals malformed", LogField.projectId(projectId),
+                    LogField.refreshRequestId(runId), LogField.errorType("PROPOSAL_MALFORMED"),
                     LogField.result("malformed_document_proposals", malformedDocuments),
                     LogField.result("malformed_relation_proposals", malformedRelations),
                     LogField.result("malformed_new_document_proposals", malformedNew));

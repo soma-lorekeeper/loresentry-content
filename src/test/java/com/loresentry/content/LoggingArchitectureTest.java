@@ -6,6 +6,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import java.util.List;
 import java.util.Set;
 import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.logging.SkipEntryLog;
 import com.tngtech.archunit.base.DescribedPredicate;
@@ -35,6 +36,8 @@ class LoggingArchitectureTest {
     /** 진입 로그를 남겨야 하는 레이어 클래스의 이름 끝(LOG_SCHEMA.md 5절 레이어 표의 업무 레이어). */
     private static final List<String> LAYER_SUFFIXES = List.of("Controller", "Service", "Client", "Repository", "Store", "Listener", "Consumer", "Publisher");
     private static final Set<String> LOG_METHODS = Set.of("info", "warn", "error");
+    /** 그 메서드 자리에 시작 줄을 남기는 LogFlow 흐름. 이 흐름으로 감싼 메서드는 진입 줄이 있는 것으로 본다(외부 호출 call은 결과 줄만 남기므로 뺀다). */
+    private static final Set<String> FLOW_METHODS = Set.of("schedule", "kafkaRecord", "task");
 
     @ArchTest
     static final ArchRule onlyTheLoggingPackageUsesLoggingLibraries = noClasses()
@@ -64,14 +67,18 @@ class LoggingArchitectureTest {
                 && (type.isAnnotatedWith(LogLayer.class) || LAYER_SUFFIXES.stream().anyMatch(type.getSimpleName()::endsWith)));
     }
 
-    /** 메서드 본문이 AppLogger의 info·warn·error를 직접 부르는지. 컴파일러가 만든 bridge·synthetic 메서드는 건너뛴다. */
+    /**
+     * 메서드 본문이 AppLogger의 info·warn·error를 직접 부르거나, 시작 줄을 남기는 LogFlow 흐름(schedule·kafkaRecord·task)으로
+     * 감싸는지. 컴파일러가 만든 bridge·synthetic 메서드는 건너뛴다.
+     */
     private static ArchCondition<JavaMethod> callAppLogger() {
-        return new ArchCondition<>("call AppLogger.info, warn or error") {
+        return new ArchCondition<>("call AppLogger.info, warn or error, or open a LogFlow") {
             @Override
             public void check(JavaMethod method, ConditionEvents events) {
                 if (method.getModifiers().contains(JavaModifier.BRIDGE) || method.getModifiers().contains(JavaModifier.SYNTHETIC)) return;
                 boolean logs = method.getMethodCallsFromSelf().stream().anyMatch(call ->
-                        call.getTargetOwner().isEquivalentTo(AppLogger.class) && LOG_METHODS.contains(call.getName()));
+                        (call.getTargetOwner().isEquivalentTo(AppLogger.class) && LOG_METHODS.contains(call.getName()))
+                                || (call.getTargetOwner().isEquivalentTo(LogFlow.class) && FLOW_METHODS.contains(call.getName())));
                 if (!logs) events.add(SimpleConditionEvent.violated(method, method.getFullName() + " does not log through AppLogger"));
             }
         };

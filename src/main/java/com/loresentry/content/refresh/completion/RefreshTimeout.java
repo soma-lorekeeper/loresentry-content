@@ -3,7 +3,6 @@ package com.loresentry.content.refresh.completion;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -11,7 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
-import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.logging.SkipEntryLog;
 import com.loresentry.content.refresh.GraphRefreshRepository;
@@ -61,7 +60,7 @@ class RefreshTimeout {
     }
 
     /**
-     * 스케줄러가 정해진 간격으로 부른다. 끝낸 run 이 있을 때만 한 줄 남긴다(1분마다 도는 작업이라 빈 줄은 소음이다).
+     * 스케줄러가 정해진 간격으로 부른다. 끝낸 run 이 있는 회차에만 시작·종료 줄을 남긴다(1분마다 도는 작업이라 빈 줄은 소음이다).
      *
      * <p>예외를 밖으로 내보내지 않는다. 스케줄러가 찍는 오류에는 예외 메시지와 SQL 이 들어가는데, 이 저장소는 그것을
      * 로그에 남기지 않는다. 다음 간격에 다시 확인한다.
@@ -69,38 +68,26 @@ class RefreshTimeout {
     @Scheduled(fixedDelayString = "${graph-refresh.timeout-check-interval:1m}")
     @SkipEntryLog("Polls every minute. Logs start and end lines only in rounds that have runs to expire")
     void run() {
-        // 회차 하나의 시작점. 스케줄 observation 이 연 span 으로 로그 객체를 만들고 작업 이름을 붙여, 이 회차의 모든 줄(부른 repository 줄 포함)에 남게 한다
-        try (var bound = AppLogger.bind(TraceContext.newLogger().with(LogField.scheduleName(SCHEDULE)))) {
+        // 회차 하나의 흐름(LogFlow.polling). 끝낼 run 이 있어 줄이 찍힌 회차에서만 시작·종료 줄(끝낸 수, 걸린 시간)이 남는다.
+        // 실패해도 예외를 밖으로 내보내지 않고 실패 줄만 남긴다. 다음 간격에 다시 확인한다.
+        LogFlow.polling(SCHEDULE, run -> {
             if (!enabled) {
                 return;
             }
-            long startedAt = System.nanoTime();
-            try {
-                int expired = expireOverdue();
-                if (expired > 0) {
-                    // 종료 줄. 이 문구로 로그를 찾는다. 로그에는 개수와 예외의 종류만 적는다.
-                    AppLogger.current().info("graph refresh timeout: expired=" + expired, LogField.result("expired", expired),
-                            LogField.duration(Duration.ofNanos(System.nanoTime() - startedAt)));
-                }
-            } catch (RuntimeException failure) {
-                AppLogger.current().error("graph refresh timeout failed: reason=" + failure.getClass().getName(),
-                        LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
-            }
-        }
+            run.result(LogField.result("expired", expireOverdue()));
+        });
     }
 
     /** 시간 제한이 지난 GENERATING run 을 모두 실패로 끝낸다. 끝낸 개수를 돌려준다. */
-    @SkipEntryLog("Called by the 1-minute poll (run). Start and end lines are logged only in rounds that have runs to expire")
+    @SkipEntryLog("Called by the 1-minute poll (run). Lines are logged only in batches that have runs to expire")
     int expireOverdue() {
         int expired = 0;
-        // 시작 줄을 남겼는가. 끝낼 run 이 처음 나온 배치에서 한 번만 남긴다(1분 폴링이라 빈 회차는 줄을 남기지 않는다)
-        AtomicBoolean started = new AtomicBoolean();
         while (true) {
             Integer done = transaction.execute(status -> {
                 List<UUID> overdue = runs.lockOverdue(timeout, BATCH);
-                if (!overdue.isEmpty() && started.compareAndSet(false, true)) {
-                    // 시작 줄. 시작할 때 아는 값(첫 배치에서 고른 run 수와 시간 제한)을 함께 남긴다
-                    AppLogger.current().info("graph refresh timeout start", LogField.param("overdue_runs", overdue.size()),
+                if (!overdue.isEmpty()) {
+                    // 끝낼 run 이 있는 배치마다 고른 수와 시간 제한을 남긴다. 회차의 첫 줄이라 이 앞에 시작 줄이 남는다(빈 배치는 줄이 없다)
+                    AppLogger.current().info("graph refresh overdue runs found", LogField.param("overdue_runs", overdue.size()),
                             LogField.param("timeout_minutes", timeout.toMinutes()));
                 }
                 for (UUID runId : overdue) {

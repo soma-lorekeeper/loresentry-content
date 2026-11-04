@@ -33,6 +33,7 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import tools.jackson.databind.JsonNode;
 
 /**
  * listener 를 켠 앱에 실제 Kafka 로 메시지를 보내, 받은 것이 처리 기록과 함께 Service 까지 가는지 확인한다. topic 이름,
@@ -113,6 +114,13 @@ class InboxListenerTest extends KafkaTestSupport {
                 .single();
     }
 
+    /** 그 이벤트(ce_id)의 줄 중 그 문구의 줄. 로그는 ECS JSON 한 줄씩이다. */
+    private List<JsonNode> lines(CapturedOutput output, UUID eventId, String message) {
+        return output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> eventId.toString().equals(line.at("/loresentry/cloudevent/id").asString()))
+                .filter(line -> message.equals(line.get("message").asString())).toList();
+    }
+
     /**
      * 처리 기록이 생길 때까지 기다린다. 기록은 Service 가 돌아온 뒤 commit 되므로, 기록이 보이면 Service 는 이미
      * 불렸다. 처음에는 listener 가 group 에 합류하는 시간이 있어 넉넉히 기다린다.
@@ -171,8 +179,11 @@ class InboxListenerTest extends KafkaTestSupport {
         // 처음 온 것 한 번과 표지 한 번이다. 다시 온 것까지 불렸다면 세 번이다.
         verify(userDeleted, times(2)).handle(new UserDeletedEvent(userId));
         assertThat(recorded(USER_DELETED_CONSUMER, duplicated)).isEqualTo(1);
-        assertThat(output.getOut())
-                .contains("inbox event already processed: consumer=" + USER_DELETED_CONSUMER + ", event=" + duplicated);
+        // 다시 온 것은 처리 기록에 걸렸다는 줄과, 결과가 DUPLICATE 인 종료 줄을 남긴다
+        assertThat(lines(output, duplicated, "inbox event already processed")).hasSize(1);
+        assertThat(lines(output, duplicated, "user deleted event processed"))
+                .extracting(line -> line.at("/loresentry/result/outcome").asString())
+                .containsExactlyInAnyOrder("PROCESSED", "DUPLICATE");
     }
 
     /** topic 에 우리가 처리하지 않는 종류가 오면 건너뛴다. 처리 기록도 남기지 않는다. */
@@ -189,7 +200,15 @@ class InboxListenerTest extends KafkaTestSupport {
         // 표지 한 번뿐이다.
         verify(userDeleted, times(1)).handle(new UserDeletedEvent(userId));
         assertThat(recorded(USER_DELETED_CONSUMER, unknown)).isZero();
-        assertThat(output.getOut()).contains("inbox event skipped: topic=" + USER_DELETED).contains("type=UserRenamed");
+        // 건너뛴 줄에는 레코드의 topic 과 이유가 붙는다. 처리하지 않는 종류라 ce_type 은 other 로 남는다
+        assertThat(lines(output, unknown, "inbox event skipped")).singleElement().satisfies(line -> {
+            assertThat(line.at("/log/level").asString()).isEqualTo("WARN");
+            assertThat(line.at("/error/type").asString()).isEqualTo("UNKNOWN_EVENT_TYPE");
+            assertThat(line.at("/loresentry/kafka/topic").asString()).isEqualTo(USER_DELETED);
+            assertThat(line.at("/loresentry/cloudevent/type").asString()).isEqualTo("other");
+        });
+        assertThat(lines(output, unknown, "user deleted event processed")).singleElement()
+                .satisfies(line -> assertThat(line.at("/loresentry/result/outcome").asString()).isEqualTo("SKIPPED"));
     }
 
     /** 설정에서 읽은 listener id 로 두 listener 를 찾을 수 있고, 같은 값이 group id 로 쓰이며, 켜 둔 대로 돌고 있다. */

@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 
 import software.amazon.awssdk.core.SdkBytes;
@@ -31,11 +32,12 @@ final class KmsKeyWrapper implements KeyWrapper, AutoCloseable {
     public Generated generate(UUID projectId) {
         // 키 캐시에 없을 때만 불린다. 그래서 이 줄이 있으면 KMS 를 실제로 부른 것이다. 키(평문·감싼 것)는 남기지 않는다
         AppLogger.current().info("kms data key generate call", LogField.projectId(projectId));
-        GenerateDataKeyResponse response = kms.generateDataKey(request -> request
+        // KMS 호출 하나. 결과 줄(kms call completed·failed, 걸린 시간, 실패면 예외 종류·응답 상태)은 LogFlow 가 남긴다
+        GenerateDataKeyResponse response = LogFlow.call("kms", call -> kms.generateDataKey(request -> request
                 .keyId(keyId)
                 .keySpec(DataKeySpec.AES_256)
                 .encryptionContext(context(projectId))
-                .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT)));
+                .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT))));
         return new Generated(response.plaintext().asByteArray(), response.ciphertextBlob().asByteArray());
     }
 
@@ -43,11 +45,12 @@ final class KmsKeyWrapper implements KeyWrapper, AutoCloseable {
     public byte[] unwrap(UUID projectId, byte[] wrapped) {
         // 키 캐시에 없을 때만 불린다. 감싼 키는 남기지 않는다
         AppLogger.current().info("kms data key unwrap call", LogField.projectId(projectId));
-        return kms.decrypt(request -> request
+        // KMS 호출 하나. 결과 줄은 LogFlow 가 남긴다(풀어낸 키는 결과 줄에도 없다)
+        return LogFlow.call("kms", call -> kms.decrypt(request -> request
                         .keyId(keyId)
                         .ciphertextBlob(SdkBytes.fromByteArray(wrapped))
                         .encryptionContext(context(projectId))
-                        .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT)))
+                        .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT))))
                 .plaintext()
                 .asByteArray();
     }

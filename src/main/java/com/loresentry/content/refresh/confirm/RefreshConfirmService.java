@@ -97,7 +97,8 @@ public class RefreshConfirmService {
                 .map(draft -> draft.id().toString()).toList();
         if (!unmatched.isEmpty()) {
             // 두 쪽이 아직 같지 않은 작업본이 있다(검증 실패)
-            AppLogger.current().warn("graph refresh confirm drafts unmatched", LogField.refreshRequestId(runId),
+            AppLogger.current().warn("graph refresh confirm drafts unmatched", LogField.projectId(projectId),
+                    LogField.refreshRequestId(runId), LogField.errorType("REFRESH_DRAFTS_UNMATCHED"),
                     LogField.result("unmatched", unmatched));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DRAFTS_UNMATCHED, Map.of("drafts", unmatched));
         }
@@ -112,7 +113,7 @@ public class RefreshConfirmService {
 
         Map<UUID, RefreshDocuments.Locked> locked = documents.lockForApply(
                 edits.stream().map(RefreshDraftRepository.ConfirmDraft::targetDocumentId).toList());
-        requireUnchanged(runId, edits, locked);
+        requireUnchanged(projectId, runId, edits, locked);
 
         RelationDelta.Plan plan = RelationDelta.merge(sides(edits, accepted));
         requireApplicable(projectId, runId, edits, accepted, declined, plan);
@@ -214,9 +215,9 @@ public class RefreshConfirmService {
 
     /**
      * 대상 문서가 이 run 의 잠금 아래 작업본을 뜰 때 그대로인지 확인한다. 잠금 때문에 정상 흐름에서는 바뀔 수 없지만,
-     * 어긋나 보이면 덮어쓰지 않는다.
+     * 어긋나 보이면 덮어쓰지 않는다. {@code projectId} 는 그 run 의 프로젝트로, 어긋남 줄에만 쓴다.
      */
-    private static void requireUnchanged(UUID runId, List<RefreshDraftRepository.ConfirmDraft> edits,
+    private static void requireUnchanged(UUID projectId, UUID runId, List<RefreshDraftRepository.ConfirmDraft> edits,
             Map<UUID, RefreshDocuments.Locked> locked) {
         List<Map<String, String>> changed = new ArrayList<>();
         for (RefreshDraftRepository.ConfirmDraft draft : edits) {
@@ -230,7 +231,8 @@ public class RefreshConfirmService {
         }
         if (!changed.isEmpty()) {
             // 잠금 아래에서는 생기지 않아야 하는 어긋남이다. 어긋난 문서 수만 남긴다(목록은 응답에 있다)
-            AppLogger.current().warn("graph refresh confirm documents changed", LogField.refreshRequestId(runId),
+            AppLogger.current().warn("graph refresh confirm documents changed", LogField.projectId(projectId),
+                    LogField.refreshRequestId(runId), LogField.errorType("REFRESH_DOCUMENTS_CHANGED"),
                     LogField.result("changed", changed));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DOCUMENTS_CHANGED, Map.of("documents", changed));
         }
@@ -292,7 +294,8 @@ public class RefreshConfirmService {
         }
         if (!problems.isEmpty()) {
             // 반영할 수 없는 문제 수만 남긴다. 문제마다의 대상(임시 이름에는 제목이 들어 있다)은 응답에만 싣는다
-            AppLogger.current().warn("graph refresh confirm drafts invalid", LogField.refreshRequestId(runId),
+            AppLogger.current().warn("graph refresh confirm drafts invalid", LogField.projectId(projectId),
+                    LogField.refreshRequestId(runId), LogField.errorType("REFRESH_DRAFTS_INVALID"),
                     LogField.result("problems", problems));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_DRAFTS_INVALID, Map.of("problems", problems));
         }

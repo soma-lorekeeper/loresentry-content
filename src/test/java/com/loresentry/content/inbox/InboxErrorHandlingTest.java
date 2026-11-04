@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
@@ -33,6 +34,7 @@ import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.util.backoff.BackOff;
 import org.springframework.util.backoff.FixedBackOff;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 처리하지 못한 메시지가 계약대로 DLQ 로 가는지 실제 Kafka 에서 확인한다. 계약에 맞지 않는 메시지는 곧바로, 처리가
@@ -111,6 +113,13 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
                 .single();
     }
 
+    /** 그 이벤트(ce_id)의 줄 중 그 문구의 줄. 로그는 ECS JSON 한 줄씩이다. */
+    private List<JsonNode> lines(CapturedOutput output, UUID eventId, String message) {
+        return output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> eventId.toString().equals(line.at("/loresentry/cloudevent/id").asString()))
+                .filter(line -> message.equals(line.get("message").asString())).toList();
+    }
+
     /**
      * 계약에 맞지 않는 메시지(ce_subject 와 payload 의 유저가 다름)는 다시 시도하지 않고 곧바로 DLQ 로 간다. DLQ
      * 메시지는 원래 내용과 header 를 그대로 갖고, 계약이 정한 실패 정보만 덧붙인다.
@@ -147,12 +156,18 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
         // 처리로 넘어가지 않았고, 처리 기록도 없다.
         verify(userDeleted, never()).handle(any());
         assertThat(recorded(eventId)).isZero();
-        // 한 번 실패하고 곧바로 DLQ 로 갔다. 로그는 DLQ 에 보인 직후에 찍힐 수 있어 잠시 기다린다.
-        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(output.getOut())
-                .contains("event=" + eventId + ", attempt=1, reason=" + InvalidEventException.class.getName())
-                .contains("inbox event dead-lettered: topic=" + USER_DELETED)
-                .contains("event=" + eventId + ", reason=" + InvalidEventException.class.getName())
-                .doesNotContain("event=" + eventId + ", attempt=2"));
+        // 한 번 실패하고(다시 시도하지 않았다) 곧바로 DLQ 로 갔다. 로그는 DLQ 에 보인 직후에 찍힐 수 있어 잠시 기다린다.
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertThat(lines(output, eventId, "inbox event failed")).singleElement().satisfies(line -> {
+                assertThat(line.at("/loresentry/param/attempt").asLong()).isEqualTo(1);
+                assertThat(line.at("/error/type").asString()).isEqualTo(InvalidEventException.class.getName());
+            });
+            assertThat(lines(output, eventId, "inbox event dead-lettered")).singleElement().satisfies(line -> {
+                assertThat(line.at("/log/level").asString()).isEqualTo("ERROR");
+                assertThat(line.at("/error/type").asString()).isEqualTo(InvalidEventException.class.getName());
+                assertThat(line.at("/loresentry/kafka/topic").asString()).isEqualTo(USER_DELETED);
+            });
+        });
     }
 
     /**
@@ -183,11 +198,16 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
         // 첫 시도와 다시 시도한 두 번, 모두 세 번 불렸다. 처리 기록은 매번 rollback 되었다.
         verify(userDeleted, times(3)).handle(new UserDeletedEvent(userId));
         assertThat(recorded(eventId)).isZero();
-        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(output.getOut())
-                .contains("event=" + eventId + ", attempt=1, reason=" + IllegalStateException.class.getName())
-                .contains("event=" + eventId + ", attempt=3, reason=" + IllegalStateException.class.getName())
-                .contains("event=" + eventId + ", reason=" + IllegalStateException.class.getName())
-                .doesNotContain(SECRET));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            // 시도마다 실패 줄이 남는다. 이유는 예외의 종류뿐이다
+            assertThat(lines(output, eventId, "inbox event failed"))
+                    .extracting(line -> line.at("/loresentry/param/attempt").asLong()).contains(1L, 3L);
+            assertThat(lines(output, eventId, "inbox event failed")).allSatisfy(line ->
+                    assertThat(line.at("/error/type").asString()).isEqualTo(IllegalStateException.class.getName()));
+            assertThat(lines(output, eventId, "inbox event dead-lettered")).singleElement().satisfies(line ->
+                    assertThat(line.at("/error/type").asString()).isEqualTo(IllegalStateException.class.getName()));
+            assertThat(output.getOut()).doesNotContain(SECRET);
+        });
     }
 
     /** 한 번 실패한 처리가 다시 시도에서 성공하면 그대로 처리되고 처리 기록이 남는다. DLQ 로 가지 않는다. */
@@ -203,10 +223,12 @@ class InboxErrorHandlingTest extends KafkaTestSupport {
         // 두 번째 시도에서 처리되어 기록이 생긴다.
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(recorded(eventId)).isEqualTo(1));
         verify(userDeleted, times(2)).handle(new UserDeletedEvent(userId));
-        assertThat(output.getOut())
-                .contains("event=" + eventId + ", attempt=1, reason=" + IllegalStateException.class.getName())
-                // DLQ 로 보냈다는 줄은 없다.
-                .doesNotContain("event=" + eventId + ", reason=");
+        assertThat(lines(output, eventId, "inbox event failed")).singleElement().satisfies(line -> {
+            assertThat(line.at("/loresentry/param/attempt").asLong()).isEqualTo(1);
+            assertThat(line.at("/error/type").asString()).isEqualTo(IllegalStateException.class.getName());
+        });
+        // DLQ 로 보냈다는 줄은 없다.
+        assertThat(lines(output, eventId, "inbox event dead-lettered")).isEmpty();
     }
 
     /** GraphRefreshCompleted 는 자기 topic 의 DLQ 로 간다. 소비자마다, topic 마다 DLQ 가 따로다. */

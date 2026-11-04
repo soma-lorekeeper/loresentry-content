@@ -66,8 +66,15 @@ class OutboxRelayEnabledTest extends KafkaTestSupport {
                     .optional()
                     .orElse(null);
             assertThat(publishedAt).isNotNull();
-            // 회차가 끝나면 relay 가 요약을 한 줄 남긴다. 운영에서 relay 가 돌고 있는지를 이 줄로 본다.
-            assertThat(output.getOut()).contains("outbox relay: published=1, quarantined=0, failed=0");
+            // 보낸 행이 있던 회차가 끝나면 relay 가 종료 줄(개수)을 남긴다. 운영에서 relay 가 돌고 있는지를 이 줄로 본다.
+            assertThat(output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree))
+                    .filteredOn(line -> "schedule run completed".equals(line.get("message").asString()))
+                    .filteredOn(line -> OutboxRelay.SCHEDULE.equals(line.at("/loresentry/schedule/name").asString()))
+                    .anySatisfy(line -> {
+                        assertThat(line.at("/loresentry/result/published").asLong()).isEqualTo(1);
+                        assertThat(line.at("/loresentry/result/quarantined").asLong()).isZero();
+                        assertThat(line.at("/loresentry/result/failed").asLong()).isZero();
+                    });
         });
     }
 }

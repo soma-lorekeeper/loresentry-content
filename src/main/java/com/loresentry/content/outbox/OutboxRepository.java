@@ -90,7 +90,11 @@ public class OutboxRepository {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void append(OutboxRecord... outboxRecords) {
-        AppLogger.current().info("outbox events append", LogField.param("records", outboxRecords.length));
+        // 메시지가 모두 한 프로젝트(event key)의 것이면 그 project_id. 여러 프로젝트가 섞였거나(회원 탈퇴 등) 메시지가 없으면 null 이라
+        // 줄에서 빠진다. 시작·결과 줄에 붙인다
+        LogField project = Arrays.stream(outboxRecords).map(OutboxRecord::key).distinct().count() == 1
+                ? LogField.projectKey(outboxRecords[0].key()) : null;
+        AppLogger.current().info("outbox events append", project, LogField.param("records", outboxRecords.length));
         // 이 요청(또는 Kafka 레코드)의 trace. 행에 저장하면 relay 가 그 값을 Kafka 헤더로 실어, 받는 서비스가 trace 를 잇는다
         // (LOG_SCHEMA.md 7절 outbox). span 이 없으면(테스트 등) null 로 남는다.
         String traceparent = TraceContext.traceparent();
@@ -125,7 +129,7 @@ public class OutboxRepository {
                     .update();
             appended++;
         }
-        AppLogger.current().info("outbox events append completed", LogField.result("appended", appended),
+        AppLogger.current().info("outbox events append completed", project, LogField.result("appended", appended),
                 LogField.result("skipped", skipped));
     }
 

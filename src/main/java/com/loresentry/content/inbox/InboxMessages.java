@@ -4,10 +4,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.inbox.InvalidEventException.Check;
 import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
@@ -40,6 +42,10 @@ import tools.jackson.databind.json.JsonMapper;
  * 로그의 {@code ce_type} 하나뿐이다.
  */
 final class InboxMessages {
+    /** 받아 처리하는 이벤트 종류(ce_type). 로그의 loresentry.cloudevent.type 은 이 목록 안의 값만 그대로 남는다(밖은 other). */
+    static final String USER_DELETED = "UserDeleted";
+    static final String GRAPH_REFRESH_COMPLETED = "GraphRefreshCompleted";
+    static final Set<String> TYPES = Set.of(USER_DELETED, GRAPH_REFRESH_COMPLETED);
 
 
     /**
@@ -62,7 +68,7 @@ final class InboxMessages {
      */
     static Optional<Received<UserDeletedEvent>> userDeleted(ConsumerRecord<String, String> record) {
         // 1. 우리가 처리하는 종류인가. 아니면 다른 것은 보지 않고 건너뛴다.
-        if (!isExpectedType(record, "UserDeleted")) {
+        if (!isExpectedType(record, USER_DELETED)) {
             return Optional.empty();
         }
         // 2. 나머지 필수 header. 이 topic 에는 authentication 서비스만 보낸다.
@@ -88,7 +94,7 @@ final class InboxMessages {
     static Optional<Received<GraphRefreshCompletedEvent>> graphRefreshCompleted(
             ConsumerRecord<String, String> record) {
         // 1. 우리가 처리하는 종류인가.
-        if (!isExpectedType(record, "GraphRefreshCompleted")) {
+        if (!isExpectedType(record, GRAPH_REFRESH_COMPLETED)) {
             return Optional.empty();
         }
         // 2. 나머지 필수 header. 이 topic 에는 graph-rag 서비스만 보낸다.
@@ -122,9 +128,9 @@ final class InboxMessages {
         if (expectedType.equals(type)) {
             return true;
         }
-        // 이 문구로 로그를 찾는다. 새 종류가 추가된 것인지 이름을 잘못 적은 것인지 볼 수 있게 받은 값을 적는다.
-        AppLogger.current().warn("inbox event skipped: topic=" + record.topic() + ", partition=" + record.partition()
-                + ", offset=" + record.offset() + ", type=" + type);
+        // 이 문구로 로그를 찾는다. topic·partition·offset 과 받은 종류(ce_type)는 listener 가 바인딩한 레코드 문맥이 붙인다.
+        // 이 서비스가 처리하는 종류면 그 이름이, 아니면 other 가 남는다(헤더 값은 보낸 쪽이 넣은 그대로라 모르는 값은 적지 않는다)
+        AppLogger.current().warn("inbox event skipped", LogField.errorType("UNKNOWN_EVENT_TYPE"));
         return false;
     }
 

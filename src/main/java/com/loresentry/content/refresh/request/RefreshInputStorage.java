@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.web.ContentFailure;
 
@@ -15,7 +16,6 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * 최신화 입력을 S3 에 올린다. bucket 과 key 를 정하는 곳은 여기뿐이다.
@@ -54,25 +54,24 @@ class RefreshInputStorage {
         AppLogger.current().info("s3 refresh input put call", LogField.projectId(projectId), LogField.refreshRequestId(requestId));
         if (bucket.isBlank()) {
             // 설정(graph-refresh.request-bucket)이 비어 있다. 응답은 503 이고, 원인은 이 줄로만 보인다
-            AppLogger.current().warn("graph refresh input bucket not configured");
+            AppLogger.current().warn("graph refresh input bucket not configured", LogField.projectId(projectId),
+                    LogField.refreshRequestId(requestId), LogField.errorType("REFRESH_UNAVAILABLE"));
             throw new ContentFailure(ContentFailure.Reason.REFRESH_UNAVAILABLE);
         }
         String key = "refresh/" + projectId + "/" + requestId + "/input.json";
         try {
-            s3.putObject(PutObjectRequest.builder()
+            // S3 호출 하나. 결과 줄(s3 call completed·failed, 걸린 시간)은 LogFlow 가 남긴다. 실패 줄에는 예외 종류, S3 가 답했으면
+            // 응답 코드, 메시지 없는 스택만 남는다(예외 메시지에는 bucket·key 가 들어 있다)
+            LogFlow.call("s3", call -> s3.putObject(PutObjectRequest.builder()
                             .bucket(bucket)
                             .key(key)
                             .ifNoneMatch("*")
                             .contentType("application/octet-stream")
                             .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT))
                             .build(),
-                    RequestBody.fromBytes(json));
+                    RequestBody.fromBytes(json)));
         } catch (SdkException failure) {
-            // 예외 메시지에는 bucket·key 가 들어 있어 종류와 프레임만 남긴다. 응답 코드는 S3 가 답했을 때(S3Exception)만 있다
-            AppLogger.current().warn("s3 refresh input put failed", LogField.projectId(projectId),
-                    LogField.refreshRequestId(requestId), LogField.errorType(failure.getClass().getName()),
-                    failure instanceof S3Exception s3 ? LogField.result("s3_status_code", s3.statusCode()) : null,
-                    LogField.safeStackTrace(failure));
+            // 실패 줄은 LogFlow 가 남겼다. 응답은 503 이다
             throw new ContentFailure(ContentFailure.Reason.REFRESH_UNAVAILABLE);
         }
         return new Location(bucket, key);

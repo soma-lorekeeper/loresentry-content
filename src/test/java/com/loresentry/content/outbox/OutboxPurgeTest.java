@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.scheduling.support.CronExpression;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 정리 작업이 지워야 할 행만 지우는지, 그리고 돌 때마다 흔적을 남기는지 확인한다. 스케줄러가 부르기를 기다리지 않고
@@ -77,6 +78,13 @@ class OutboxPurgeTest extends ApiTestSupport {
                 .single();
     }
 
+    /** 이 작업(OutboxPurge.SCHEDULE)이 남긴 줄 중 그 문구의 줄. 로그는 ECS JSON 한 줄씩이다. */
+    private List<JsonNode> lines(CapturedOutput output, String message) {
+        return output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> OutboxPurge.SCHEDULE.equals(line.at("/loresentry/schedule/name").asString()))
+                .filter(line -> message.equals(line.get("message").asString())).toList();
+    }
+
     /** 지금 outbox 에 남아 있는 행의 id. */
     private List<UUID> remaining() {
         return jdbcClient.sql("select id from outbox_events").query(UUID.class).list();
@@ -102,19 +110,24 @@ class OutboxPurgeTest extends ApiTestSupport {
 
         assertThat(remaining()).containsExactlyInAnyOrder(stillKept, pending, quarantined);
         assertThat(remaining()).doesNotContain(expired);
-        // 운영에서 이 문구로 정리 작업의 결과를 본다.
-        assertThat(output.getOut()).contains("outbox purge: deleted=1, took=");
+        // 운영에서 이 작업 이름과 종료 줄로 정리 작업의 결과를 본다. 지운 수와 걸린 시간이 붙는다.
+        assertThat(lines(output, "schedule run completed")).singleElement().satisfies(line -> {
+            assertThat(line.at("/loresentry/result/deleted").asLong()).isEqualTo(1);
+            assertThat(line.at("/event/duration").isNumber()).isTrue();
+        });
     }
 
     /**
-     * 지울 것이 없어도 한 줄을 남긴다. 하루 한 번 도는 작업이라, 줄이 없으면 "지울 것이 없었다"와 "돌지 않았다"를
+     * 지울 것이 없어도 시작·종료 줄을 남긴다. 하루 한 번 도는 작업이라, 줄이 없으면 "지울 것이 없었다"와 "돌지 않았다"를
      * 구분할 수 없다.
      */
     @Test
     void leavesALineEvenWhenThereWasNothingToDelete(CapturedOutput output) {
         purge.run();
 
-        assertThat(output.getOut()).contains("outbox purge: deleted=0, took=");
+        assertThat(lines(output, "schedule run start")).hasSize(1);
+        assertThat(lines(output, "schedule run completed")).singleElement()
+                .satisfies(line -> assertThat(line.at("/loresentry/result/deleted").asLong()).isZero());
     }
 
     /**
@@ -129,7 +142,10 @@ class OutboxPurgeTest extends ApiTestSupport {
         // 예외가 여기까지 올라오지 않는다.
         new OutboxPurge(broken).run();
 
-        assertThat(output.getOut()).contains("outbox purge failed: reason=java.lang.IllegalStateException");
+        assertThat(lines(output, "schedule run failed")).singleElement().satisfies(line -> {
+            assertThat(line.at("/log/level").asString()).isEqualTo("ERROR");
+            assertThat(line.at("/error/type").asString()).isEqualTo("java.lang.IllegalStateException");
+        });
         // 예외의 메시지는 로그에 적지 않는다.
         assertThat(output.getOut()).doesNotContain("database is down");
     }

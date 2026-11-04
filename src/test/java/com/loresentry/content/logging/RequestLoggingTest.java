@@ -46,6 +46,7 @@ class RequestLoggingTest extends ApiTestSupport {
             assertThat(line.at("/user/id").asString()).isEqualTo(owner.toString());
             assertThat(line.at("/url/path").asString()).isEqualTo("/projects/" + missing);
             assertThat(line.at("/http/route").asString()).isEqualTo("/projects/{projectId}");
+            assertThat(line.at("/http/request/method").asString()).isEqualTo("GET");
         });
         JsonNode completed = mine.stream().filter(line -> "request completed".equals(line.get("message").asString()))
                 .findFirst().orElseThrow();
@@ -70,6 +71,7 @@ class RequestLoggingTest extends ApiTestSupport {
         assertThat(health).allSatisfy(line -> {
             assertThat(line.get("tags").toString()).contains("health");
             assertThat(line.at("/http/route").asString()).isEqualTo("/health");
+            assertThat(line.at("/http/request/method").asString()).isEqualTo("GET");
             assertThat(line.has("user")).isFalse();
         });
     }

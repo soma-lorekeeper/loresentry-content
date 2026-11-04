@@ -16,14 +16,16 @@ import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent.Resu
 import com.loresentry.content.user.UserDeletedEvent;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletedEvent;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.boot.test.system.CapturedOutput;
-import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.slf4j.LoggerFactory;
 
 /**
  * 받은 record 가 계약대로 받아들여지고, 건너뛰어지고, 거부되는지 확인한다. Kafka 도 DB 도 Spring 도 쓰지 않는다 —
@@ -34,10 +36,9 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
  * <p>거부 메시지는 글자 전체를 비교한다. 메시지는 DLQ 로 간 record 에 실려 사람이 읽는 것이고, 받은 값이 섞여
  * 들어가지 않았다는 것도 함께 확인된다.
  *
- * <p>{@link OutputCaptureExtension} 은 테스트가 도는 동안 찍힌 로그를 모아 준다. 건너뜀 로그의 문구는 운영에서
- * 로그를 찾는 기준이라, 바뀌면 테스트가 알아채게 한다.
+ * <p>건너뜀 로그는 logback 의 {@link ListAppender} 로 받아 본다. 문구는 운영에서 로그를 찾는 기준이라, 바뀌면 테스트가
+ * 알아채게 한다.
  */
-@ExtendWith(OutputCaptureExtension.class)
 class InboxMessagesTest {
 
     private static final String USER_DELETED_TOPIC = "auth.user.deleted.v1";
@@ -151,18 +152,34 @@ class InboxMessagesTest {
      * 검사해서 DLQ 로 보내지 않기 위해서다. 무엇이 왔는지는 로그 한 줄로 남는다.
      */
     @Test
-    void skipsATypeItDoesNotHandleAndLeavesALine(CapturedOutput output) {
+    void skipsATypeItDoesNotHandleAndLeavesALine() {
         ConsumerRecord<String, String> record = userDeleted();
         set(record, "ce_type", "UserRestored");
         // 이 종류를 처리한다면 거부됐을 record 다.
         record.headers().remove("ce_time");
 
-        Optional<Received<UserDeletedEvent>> result = InboxMessages.userDeleted(record);
+        // 찍힌 줄을 모은다. 이 테스트는 Spring 없이 돌아 출력 형식이 ECS JSON 이 아닐 수 있어 logback 에서 직접 받는다
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        events.start();
+        root.addAppender(events);
+        Optional<Received<UserDeletedEvent>> result;
+        try {
+            result = InboxMessages.userDeleted(record);
+        } finally {
+            root.detachAppender(events);
+        }
 
         assertThat(result).isEmpty();
-        // 운영에서 이 문구로 건너뛴 메시지를 찾는다.
-        assertThat(output.getOut()).contains(
-                "inbox event skipped: topic=auth.user.deleted.v1, partition=0, offset=42, type=UserRestored");
+        // 운영에서 이 문구로 건너뛴 메시지를 찾는다. topic·offset·종류는 listener 가 바인딩한 레코드 문맥이 붙인다
+        assertThat(events.list).filteredOn(event -> "inbox event skipped".equals(event.getFormattedMessage()))
+                .singleElement().satisfies(event -> {
+                    assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                    assertThat(event.getKeyValuePairs()).anySatisfy(pair -> {
+                        assertThat(pair.key).isEqualTo("error.type");
+                        assertThat(pair.value).isEqualTo("UNKNOWN_EVENT_TYPE");
+                    });
+                });
     }
 
     /** 종류를 적은 header 가 아예 없으면 건너뛰지 않고 거부한다. 무엇인지 모르는 메시지를 조용히 넘기지 않는다. */

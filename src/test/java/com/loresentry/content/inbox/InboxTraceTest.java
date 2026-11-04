@@ -71,6 +71,9 @@ class InboxTraceTest extends KafkaTestSupport {
         assertThat(received.at("/loresentry/kafka/topic").asString()).isEqualTo(USER_DELETED);
         assertThat(received.at("/loresentry/kafka/offset").isNumber()).isTrue();
         assertThat(received.at("/loresentry/cloudevent/id").asString()).isEqualTo(eventId.toString());
+        // 보낸 쪽 outbox 줄과 같은 cloudevent 필드: 종류(처리하는 종류라 그대로)와 대상
+        assertThat(received.at("/loresentry/cloudevent/type").asString()).isEqualTo("UserDeleted");
+        assertThat(received.at("/loresentry/cloudevent/subject").asString()).isEqualTo(user.toString());
 
         // 종료 줄: 결과(outcome)와 걸린 시간, 진행 중에 알게 된 대상(삭제된 사용자)이 붙는다
         JsonNode processed = lines.stream().filter(line -> "user deleted event processed".equals(line.get("message").asString()))

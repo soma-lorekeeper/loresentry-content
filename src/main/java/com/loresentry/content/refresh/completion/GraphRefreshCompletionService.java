@@ -1,7 +1,6 @@
 package com.loresentry.content.refresh.completion;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -74,10 +73,21 @@ public class GraphRefreshCompletionService {
         AppLogger.current().info("graph refresh result fetch", LogField.projectId(event.projectId()),
                 LogField.refreshRequestId(event.requestId()), LogField.param("outcome", event.outcome()));
         var run = repository.peek(event.requestId());
-        if (run.isEmpty() || !run.get().projectId().equals(event.projectId())
-                || !"GENERATING".equals(run.get().status())) {
-            // 없거나 다른 프로젝트이거나 이미 끝난 run 이라 결과 파일을 읽지 않는다
-            logSkipped("graph refresh result fetch skipped", event, run);
+        if (run.isEmpty() || (run.get().projectId().equals(event.projectId())
+                && ALREADY_COMPLETED.contains(run.get().status()))) {
+            // 흔한 경우라 info 다: run 이 없거나(프로젝트 삭제) 이미 반영한 결과가 한 번 더 왔다. 결과 파일을 읽지 않는다
+            AppLogger.current().info("graph refresh result fetch skipped", LogField.refreshRequestId(event.requestId()),
+                    LogField.result("run_found", run.isPresent()),
+                    LogField.resultCode("run_status", run.map(GraphRefreshRepository.RunRow::status).orElse(null), RUN_STATUSES));
+            return new ResultFetch.Skip();
+        }
+        if (!run.get().projectId().equals(event.projectId()) || !"GENERATING".equals(run.get().status())) {
+            // 예상 밖이라 warn 이다: 다른 프로젝트의 run 이거나, 이미 실패(시간 초과 등)·취소한 run 에 늦게 온 결과다.
+            // 결과 파일을 읽지 않는다
+            AppLogger.current().warn("graph refresh result for unexpected run",
+                    LogField.projectId(event.projectId()), LogField.refreshRequestId(event.requestId()),
+                    LogField.errorType(run.get().projectId().equals(event.projectId()) ? "RUN_NOT_GENERATING" : "RUN_PROJECT_MISMATCH"),
+                    LogField.resultCode("run_status", run.get().status(), RUN_STATUSES));
             return new ResultFetch.Skip();
         }
         GraphRefreshCompletedEvent.Result location = event.result();
@@ -155,25 +165,6 @@ public class GraphRefreshCompletionService {
     }
 
     /**
-     * 결과를 기다리는 run 이 아니라서 건너뛴 줄. run 상태와 프로젝트가 맞는지를 함께 남긴다.
-     *
-     * <p>run 이 없거나(프로젝트 삭제) 이미 반영한 결과의 중복은 흔해서 info 다. 다른 프로젝트의 run 이거나, 이미 실패
-     * (시간 초과 등)·취소한 run 에 늦게 온 결과는 예상 밖이라 warn 이다.
-     */
-    private static void logSkipped(String message, GraphRefreshCompletedEvent event,
-            Optional<GraphRefreshRepository.RunRow> run) {
-        boolean projectMismatch = run.isPresent() && !run.get().projectId().equals(event.projectId());
-        String status = run.map(GraphRefreshRepository.RunRow::status).orElse(null);
-        LogField[] fields = {LogField.refreshRequestId(event.requestId()), LogField.result("run_found", run.isPresent()),
-                LogField.resultCode("run_status", status, RUN_STATUSES), LogField.result("project_mismatch", projectMismatch)};
-        if (projectMismatch || (status != null && !ALREADY_COMPLETED.contains(status))) {
-            AppLogger.current().warn(message, fields);
-        } else {
-            AppLogger.current().info(message, fields);
-        }
-    }
-
-    /**
      * 최신화 완료 이벤트 하나를 반영한다. 결과 파일은 {@link #fetchResult} 가 미리 가져왔다.
      *
      * <p>Kafka 에서 받는 쪽(inbox package 의 listener)이 처리 기록과 같은 트랜잭션 안에서 부른다. 그래서
@@ -198,10 +189,22 @@ public class GraphRefreshCompletionService {
         AppLogger.current().info("graph refresh complete", LogField.projectId(event.projectId()),
                 LogField.refreshRequestId(event.requestId()), LogField.param("outcome", event.outcome()));
         var locked = repository.lockRun(event.requestId());
-        if (locked.isEmpty() || !locked.get().projectId().equals(event.projectId())
-                || !"GENERATING".equals(locked.get().status())) {
-            // 결과를 기다리는 run 이 아니다(중복·늦은 이벤트 등). 아무것도 바꾸지 않는다
-            logSkipped("graph refresh complete skipped", event, locked);
+        if (locked.isEmpty() || (locked.get().projectId().equals(event.projectId())
+                && ALREADY_COMPLETED.contains(locked.get().status()))) {
+            // 흔한 경우라 info 다: run 이 없거나(프로젝트 삭제) 이미 반영한 결과의 중복이다. 아무것도 바꾸지 않는다
+            AppLogger.current().info("graph refresh complete skipped", LogField.refreshRequestId(event.requestId()),
+                    LogField.result("run_found", locked.isPresent()),
+                    LogField.resultCode("run_status", locked.map(GraphRefreshRepository.RunRow::status).orElse(null),
+                            RUN_STATUSES));
+            return;
+        }
+        if (!locked.get().projectId().equals(event.projectId()) || !"GENERATING".equals(locked.get().status())) {
+            // 예상 밖이라 warn 이다: 다른 프로젝트의 run 이거나, 이미 실패(시간 초과 등)·취소한 run 에 늦게 온 결과다.
+            // 아무것도 바꾸지 않는다
+            AppLogger.current().warn("graph refresh complete for unexpected run",
+                    LogField.projectId(event.projectId()), LogField.refreshRequestId(event.requestId()),
+                    LogField.errorType(locked.get().projectId().equals(event.projectId()) ? "RUN_NOT_GENERATING" : "RUN_PROJECT_MISMATCH"),
+                    LogField.resultCode("run_status", locked.get().status(), RUN_STATUSES));
             return;
         }
         UUID runId = locked.get().id();
@@ -212,49 +215,52 @@ public class GraphRefreshCompletionService {
 
         if (event.outcome() == GraphRefreshCompletedEvent.Outcome.FAILED) {
             GraphRefreshCompletedEvent.ErrorDetail error = event.error();
-            fail(runId, error == null || error.code() == null ? "GRAPH_RAG_FAILED" : error.code(),
+            fail(event.projectId(), runId, error == null || error.code() == null ? "GRAPH_RAG_FAILED" : error.code(),
                     error == null ? null : error.message());
             return;
         }
         switch (fetched) {
-            case ResultFetch.Unusable unusable -> fail(runId, unusable.code(), unusable.message());
+            case ResultFetch.Unusable unusable -> fail(event.projectId(), runId, unusable.code(), unusable.message());
             // 성공 이벤트는 결과 위치 없이 오지 않는다(fetchResult 가 Unusable 로 바꾼다). 미리 본 run 상태와 지금이
             // 다를 수 없으므로 Skip 도 올 수 없지만, 오면 아무것도 바꾸지 않는다.
-            case ResultFetch.NoResult none -> fail(runId, "RESULT_MISSING", "Succeeded without a result location");
+            case ResultFetch.NoResult none -> fail(event.projectId(), runId, "RESULT_MISSING",
+                    "Succeeded without a result location");
             case ResultFetch.Skip skip -> {
             }
             case ResultFetch.Read read -> {
                 RefreshResult result = read.result();
                 switch (result.outcome()) {
-                    case "FAILED" -> fail(runId,
+                    case "FAILED" -> fail(event.projectId(), runId,
                             result.error() == null || result.error().code() == null ? "GRAPH_RAG_FAILED"
                                     : result.error().code(),
                             result.error() == null ? null : result.error().message());
                     case "PROPOSED" -> {
                         if (builder.build(runId, event.projectId(), result)) {
                             repository.markReady(runId);
-                            AppLogger.current().info("graph refresh run ready", LogField.refreshRequestId(runId));
+                            AppLogger.current().info("graph refresh run ready", LogField.projectId(event.projectId()),
+                                    LogField.refreshRequestId(runId));
                         } else {
-                            end(runId, "NO_CHANGE");
+                            end(event.projectId(), runId, "NO_CHANGE");
                         }
                     }
-                    default -> end(runId, "NO_CHANGE");
+                    default -> end(event.projectId(), runId, "NO_CHANGE");
                 }
             }
         }
     }
 
-    /** run 을 실패로 끝내고 정리한다. */
-    private void fail(UUID runId, String code, String message) {
+    /** run 을 실패로 끝내고 정리한다. {@code projectId} 는 그 run 의 프로젝트로, 줄에만 쓴다. */
+    private void fail(UUID projectId, UUID runId, String code, String message) {
         // 실패 코드만 남긴다. graph-rag 가 준 메시지에는 문서 내용이 섞일 수 있어 남기지 않는다
-        AppLogger.current().warn("graph refresh run failed", LogField.refreshRequestId(runId), LogField.errorType(code));
+        AppLogger.current().warn("graph refresh run failed", LogField.projectId(projectId), LogField.refreshRequestId(runId),
+                LogField.errorType(code));
         cleanup.release(runId);
         repository.markEnded(runId, "FAILED", code, message);
     }
 
-    /** run 을 실패가 아닌 상태로 끝내고 정리한다. */
-    private void end(UUID runId, String status) {
-        AppLogger.current().info("graph refresh run ended", LogField.refreshRequestId(runId),
+    /** run 을 실패가 아닌 상태로 끝내고 정리한다. {@code projectId} 는 그 run 의 프로젝트로, 줄에만 쓴다. */
+    private void end(UUID projectId, UUID runId, String status) {
+        AppLogger.current().info("graph refresh run ended", LogField.projectId(projectId), LogField.refreshRequestId(runId),
                 LogField.resultCode("status", status, Set.of("NO_CHANGE")));
         cleanup.release(runId);
         repository.markEnded(runId, status, null, null);

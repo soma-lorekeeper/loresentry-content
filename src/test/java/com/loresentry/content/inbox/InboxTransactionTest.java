@@ -66,8 +66,11 @@ class InboxTransactionTest extends ApiTestSupport {
 
         assertThat(runs).hasValue(1);
         assertThat(recorded(CONSUMER, eventId)).isEqualTo(1);
-        assertThat(output.getOut())
-                .contains("inbox event already processed: consumer=" + CONSUMER + ", event=" + eventId);
+        // 운영에서 이 문구로 다시 온 이벤트를 찾는다. 이벤트 ID 는 필드로 붙는다
+        assertThat(output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree))
+                .filteredOn(line -> "inbox event already processed".equals(line.get("message").asString()))
+                .filteredOn(line -> eventId.toString().equals(line.at("/loresentry/cloudevent/id").asString()))
+                .hasSize(1);
     }
 
     /**

@@ -155,8 +155,8 @@ public class DocumentService {
                 return repository.contentOf(current);
             }
             // 다른 탭·기기가 먼저 저장했다(409). 클라이언트가 보낸 revision 과 지금 revision 을 남긴다
-            AppLogger.current().warn("document save conflict", LogField.fileId(fileId), LogField.param("expected_revision", expectedRevision),
-                    LogField.result("current_revision", current.revisionNo()));
+            AppLogger.current().warn("document save conflict", LogField.fileId(fileId), LogField.errorType("DOCUMENT_CONFLICT"),
+                    LogField.param("expected_revision", expectedRevision), LogField.result("current_revision", current.revisionNo()));
             throw new DocumentConflict(repository.contentOf(current),
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
@@ -251,7 +251,8 @@ public class DocumentService {
         }
         if (updated.isEmpty()) {
             AppLogger.current().warn("document version restore conflict", LogField.fileId(fileId), LogField.versionId(versionId),
-                    LogField.param("expected_revision", expectedRevision), LogField.result("current_revision", current.revisionNo()));
+                    LogField.errorType("DOCUMENT_CONFLICT"), LogField.param("expected_revision", expectedRevision),
+                    LogField.result("current_revision", current.revisionNo()));
             throw new DocumentConflict(current,
                     repository.snapshotAtRevision(fileId, expectedRevision).orElse(null));
         }
@@ -345,7 +346,7 @@ public class DocumentService {
 
     private DocumentSnapshot validate(UUID projectId, UUID fileId, DocumentSnapshot incoming) {
         if (incoming == null) {
-            AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.fileId(fileId),
                     LogField.resultCode("rule", "SNAPSHOT_MISSING", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
@@ -361,7 +362,7 @@ public class DocumentService {
                 incoming.properties() == null ? List.of() : incoming.properties();
         for (DocumentSnapshot.TextProperty property : properties) {
             if (property.key() == null || property.key().isBlank() || property.value() == null) {
-                AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+                AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.fileId(fileId),
                         LogField.resultCode("rule", "PROPERTY_INVALID", BODY_RULES));
                 throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
             }
@@ -373,7 +374,7 @@ public class DocumentService {
             // relation_key 는 받되 쓰지 않는다 — 키는 대상 문서의 분류에서 나온다(V10). 보내온 키가
             // 틀렸다고 막는 것은 시늉이다. 어차피 버릴 값이고, 막으면 옛 클라이언트만 못 쓰게 된다.
             if (relation.targetDocumentId() == null) {
-                AppLogger.current().warn("document body rejected", LogField.fileId(fileId),
+                AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.fileId(fileId),
                         LogField.resultCode("rule", "RELATION_TARGET_MISSING", BODY_RULES));
                 throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
             }
@@ -421,28 +422,28 @@ public class DocumentService {
         // 아래 거절 줄에는 file_id 가 없다. 이 메서드는 문서 저장과 최신화 작업본 저장이 함께 쓰고, 대상 id 는 같은 요청의
         // 앞 줄(부른 쪽의 진입 줄)에 있다
         if (body == null || !body.isObject()) {
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "NOT_OBJECT", BODY_RULES));
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "NOT_OBJECT", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         JsonNode doc = body.get("doc");
         if (doc == null || !"doc".equals(doc.path("type").asString(""))) {
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "DOC_MISSING", BODY_RULES));
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "DOC_MISSING", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         if (body.path("schema_version").asInt(0) != BODY_SCHEMA_VERSION) {
             // 클라이언트가 보낸 판 번호(숫자가 아니면 0)
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "SCHEMA_VERSION", BODY_RULES),
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "SCHEMA_VERSION", BODY_RULES),
                     LogField.param("schema_version", body.path("schema_version").asInt(0)));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         checkNode(doc);
         if (json.writeValueAsString(body).getBytes(StandardCharsets.UTF_8).length
                 > BODY_JSON_BYTES_MAX) {
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "TOO_LARGE", BODY_RULES));
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "TOO_LARGE", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         if (BodyText.extract(doc).length() > BODY_MAX) {
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "TEXT_TOO_LONG", BODY_RULES));
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "TEXT_TOO_LONG", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         return body;
@@ -451,14 +452,14 @@ public class DocumentService {
     private void checkNode(JsonNode node) {
         if (!NODES.contains(node.path("type").asString(""))) {
             // 모르는 노드 이름은 사용자가 보낸 글자라 남기지 않는다
-            AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "UNKNOWN_NODE", BODY_RULES));
+            AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "UNKNOWN_NODE", BODY_RULES));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }
         JsonNode marks = node.get("marks");
         if (marks != null && marks.isArray()) {
             for (JsonNode mark : marks) {
                 if (!MARKS.contains(mark.path("type").asString(""))) {
-                    AppLogger.current().warn("document body rejected", LogField.resultCode("rule", "UNKNOWN_MARK", BODY_RULES));
+                    AppLogger.current().warn("document body rejected", LogField.errorType("INVALID_REQUEST"), LogField.resultCode("rule", "UNKNOWN_MARK", BODY_RULES));
                     throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
                 }
             }

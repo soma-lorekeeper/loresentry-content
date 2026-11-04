@@ -18,6 +18,9 @@ public class MemoService {
 
     static final int TITLE_MAX = 200;
 
+    /** 메모의 범위(scope) 값. 로그의 scope 는 이 목록 안이면 그대로, 밖이면 other 로 남는다. */
+    static final Set<String> SCOPES = Set.of("PROJECT", "FILE");
+
     private final MemoRepository repository;
 
     private final ProjectActivity activity;
@@ -31,7 +34,7 @@ public class MemoService {
     public MemoDtos.MemoList list(UUID ownerUserId, UUID projectId, String scope, UUID documentId) {
         // scope 는 대문자로 맞춘 값이 PROJECT·FILE 이면 그대로, 아니면 other 로 남는다
         AppLogger.current().info("memo list", LogField.projectId(projectId), LogField.documentId(documentId),
-                LogField.code("scope", normalizeScope(scope), Set.of("PROJECT", "FILE")));
+                LogField.code("scope", normalizeScope(scope), SCOPES));
         requireProject(ownerUserId, projectId);
 
         return new MemoDtos.MemoList(switch (normalizeScope(scope)) {
@@ -49,7 +52,7 @@ public class MemoService {
         // 메모가 붙을 문서는 메모의 범위라 전용 필드(document_id)다. 제목·본문은 길이만 남는다
         AppLogger.current().info("memo create", LogField.projectId(projectId),
                 LogField.documentId(request == null ? null : request.documentId()),
-                LogField.code("scope", request == null ? null : normalizeScope(request.scope()), Set.of("PROJECT", "FILE")),
+                LogField.code("scope", request == null ? null : normalizeScope(request.scope()), SCOPES),
                 LogField.param("title", request == null ? null : request.title()),
                 LogField.param("body", request == null ? null : request.body()));
         requireProject(ownerUserId, projectId);
