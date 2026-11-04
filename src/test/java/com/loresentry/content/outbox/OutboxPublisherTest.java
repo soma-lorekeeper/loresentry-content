@@ -20,6 +20,7 @@ import com.loresentry.content.support.KafkaTestSupport;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -289,7 +290,8 @@ class OutboxPublisherTest extends KafkaTestSupport {
         String projectId = UUID.randomUUID().toString();
         // 압축하면 아주 작아지지만 한도는 압축 전 크기로 잰다. send() 가 그 자리에서 거절한다.
         String body = "a".repeat(6 * 1024 * 1024 + 1);
-        UUID tooLarge = insert("FileChanged", projectId, UUID.randomUUID(), "{\"body\":\"" + body + "\"}");
+        UUID file = UUID.randomUUID();
+        UUID tooLarge = insert("FileChanged", projectId, file, "{\"body\":\"" + body + "\"}");
         UUID next = insertFileChanged(projectId);
 
         // 격리는 다시 보낼 실패가 아니므로 MORE 다. 뒤의 행 하나를 보냈고 하나를 격리했다.
@@ -302,8 +304,21 @@ class OutboxPublisherTest extends KafkaTestSupport {
         assertThat((String) row.get("last_error")).contains("RecordTooLargeException");
         // 뒤의 행은 막히지 않고 나갔다.
         assertThat(publishedAt(next)).isNotNull();
-        // 운영에서 이 문구로 격리를 찾는다.
-        assertThat(output.getOut()).contains("outbox event quarantined: id=" + tooLarge + ", type=FileChanged");
+        // 격리 줄과 저장소의 격리 기록 줄이 같은 행의 줄로, 이벤트의 ID·종류·대상과 relay 작업 이름을 갖는다
+        var rowLines = output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> tooLarge.toString().equals(line.at("/loresentry/cloudevent/id").asString())).toList();
+        assertThat(rowLines).extracting(line -> line.get("message").asString())
+                .contains("outbox event quarantine", "outbox event quarantined");
+        // 운영에서 이 문구로 격리를 찾는다. 행의 id·종류는 필드에 있고, 이유는 예외의 종류만 남는다
+        var quarantinedLine = rowLines.stream()
+                .filter(line -> "outbox event quarantined".equals(line.get("message").asString())).findFirst().orElseThrow();
+        assertThat(quarantinedLine.at("/log/level").asString()).isEqualTo("ERROR");
+        assertThat(quarantinedLine.at("/error/type").asString()).isEqualTo(RecordTooLargeException.class.getName());
+        assertThat(rowLines).allSatisfy(line -> {
+            assertThat(line.at("/loresentry/cloudevent/type").asString()).isEqualTo("FileChanged");
+            assertThat(line.at("/loresentry/cloudevent/subject").asString()).isEqualTo(file.toString());
+            assertThat(line.at("/loresentry/schedule/name").asString()).isEqualTo("outbox-relay");
+        });
         // 격리된 행은 다음 회차가 다시 고르지 않는다.
         assertThat(publisher.publishBatch().outcome()).isEqualTo(Outcome.IDLE);
     }
@@ -390,9 +405,14 @@ class OutboxPublisherTest extends KafkaTestSupport {
         assertThat(row.get("published_at")).isNull();
         // 첫 행에서 멈췄으므로 둘째 행은 시도하지 않았다. 시도하지 않은 행의 횟수는 올리지 않는다.
         assertThat(row(second).get("attempts")).isEqualTo(0);
-        // 운영에서 이 문구로 반복 실패를 찾는다. 뒤에는 이유별 개수가 붙는다 — 시도한 행이 하나뿐이라 1 이다.
-        assertThat(output.getOut()).contains(
-                "outbox events still failing: {org.apache.kafka.common.errors.TimeoutException=1}");
+        // 운영에서 이 문구로 반복 실패를 찾는다. 이유마다 한 줄이고 그 이유의 행 수가 붙는다 — 시도한 행이 하나뿐이라 1 이다.
+        var stillFailing = output.getOut().lines().filter(line -> line.startsWith("{")).map(json::readTree)
+                .filter(line -> "outbox events still failing".equals(line.get("message").asString())).toList();
+        assertThat(stillFailing).singleElement().satisfies(line -> {
+            assertThat(line.at("/log/level").asString()).isEqualTo("WARN");
+            assertThat(line.at("/error/type").asString()).isEqualTo("org.apache.kafka.common.errors.TimeoutException");
+            assertThat(line.at("/loresentry/result/rows").asLong()).isEqualTo(1);
+        });
     }
 
     /**
@@ -418,6 +438,8 @@ class OutboxPublisherTest extends KafkaTestSupport {
                 .findFirst().orElseThrow();
         assertThat(published.at("/trace/id").asString()).isEqualTo(trace);
         assertThat(published.at("/loresentry/cloudevent/type").asString()).isEqualTo("FileChanged");
+        // 대상(ce_subject)도 받는 쪽 inbox 줄과 같은 필드로 남는다
+        assertThat(published.at("/loresentry/cloudevent/subject").asString()).isEqualTo(header(record, "ce_subject"));
         assertThat(published.at("/loresentry/kafka/topic").asString()).isEqualTo(PROJECT_CHANGED);
         assertThat(published.at("/loresentry/kafka/offset").asLong()).isEqualTo(record.offset());
         assertThat(published.at("/log/layer").asString()).isEqualTo("publisher");

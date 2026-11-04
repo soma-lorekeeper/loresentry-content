@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.HexFormat;
 
 import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -81,7 +82,9 @@ class RefreshResultStorage {
                 .key(key)
                 .overrideConfiguration(config -> config.apiCallTimeout(TIMEOUT))
                 .build();
-        try (ResponseInputStream<GetObjectResponse> object = s3.getObject(request)) {
+        // S3 호출 하나. 결과 줄(s3 call completed·failed)은 LogFlow 가 남긴다. 걸린 시간은 응답 머리가 올 때까지이고, 본문은
+        // 아래에서 읽는다. 없는 객체(NoSuchKeyException)도 실패 줄로 남은 뒤 아래 catch 로 온다
+        try (ResponseInputStream<GetObjectResponse> object = LogFlow.call("s3", call -> s3.getObject(request))) {
             Long length = object.response().contentLength();
             if (length != null && length > maxBytes) {
                 object.abort();

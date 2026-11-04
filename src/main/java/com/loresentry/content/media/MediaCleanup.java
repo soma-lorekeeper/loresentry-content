@@ -5,11 +5,11 @@ import java.util.List;
 
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * 행을 지운 뒤 S3 객체를 지운다.
@@ -48,27 +48,27 @@ public class MediaCleanup {
         });
     }
 
-    /** 키에는 프로젝트 id 가 들어 있으므로 기록하지 않는다. 개수와 예외 종류만 남긴다. */
+    /**
+     * 객체를 하나씩 지운다. 커밋 뒤 정리 작업 하나라 시작·종료 줄(media cleanup start·completed, 키 수와 지운·못 지운 수,
+     * 걸린 시간)은 LogFlow 가 남긴다. 키에는 프로젝트 id 가 들어 있으므로 기록하지 않는다. 객체마다의 실패 줄(예외 종류, 응답 코드)은
+     * S3 호출({@link MediaStorageService#delete})이 남긴다.
+     */
     void deleteNow(List<String> keys) {
-        AppLogger.current().info("media cleanup delete", LogField.param("keys", keys));
-        int failed = 0;
-        String lastFailure = null;
-        // 마지막 실패가 S3 응답(S3Exception)이었으면 그 응답 코드. 연결 실패처럼 응답이 없으면 null 이라 줄에서 빠진다
-        Integer lastStatus = null;
-        for (String key : keys) {
-            try {
-                storage.delete(key);
-            } catch (RuntimeException failure) {
-                failed++;
-                lastFailure = failure.getClass().getName();
-                lastStatus = failure instanceof S3Exception s3 ? s3.statusCode() : null;
+        LogFlow.task("media cleanup", task -> {
+            // 지우지 못한 객체 수. 종료 줄의 결과 값이고, 하나라도 있으면 이 작업은 실패다
+            int failed = 0;
+            for (String key : keys) {
+                try {
+                    storage.delete(key);
+                } catch (RuntimeException failure) {
+                    failed++;
+                }
             }
-        }
-        if (failed > 0) {
-            // 지우지 못한 객체는 S3 에 남는다(고아 객체). 개수와 마지막 예외 종류만 남긴다
-            AppLogger.current().warn("media objects left orphaned", LogField.result("failed", failed),
-                    LogField.result("total", keys.size()), LogField.errorType(lastFailure),
-                    LogField.result("s3_status_code", lastStatus));
-        }
+            task.result(LogField.result("deleted", keys.size() - failed), LogField.result("failed", failed));
+            if (failed > 0) {
+                // 지우지 못한 객체는 S3 에 남는다(고아 객체). 종료 줄이 media cleanup failed(warn)가 된다
+                task.fail("MEDIA_DELETE_FAILED");
+            }
+        }, LogField.param("keys", keys));
     }
 }

@@ -84,6 +84,57 @@ class AppLoggerLocationTest {
     }
 
     @Test
+    void contextFieldsStayInMdcWhileBoundSoFrameworkLinesGetThem() {
+        // 바인딩한 동안 같은 스레드에서 프레임워크가 찍는 줄(여기서는 SLF4J logger를 직접 쓴 줄)의 MDC에 흐름의 문맥 필드가 있다.
+        // 예: Kafka 레코드 하나를 처리하는 listener, 스케줄 회차 하나
+        org.slf4j.Logger framework = LoggerFactory.getLogger("org.springframework.sample.Framework");
+        java.util.UUID event = java.util.UUID.randomUUID();
+        AppLogger record = new AppLogger("a".repeat(32), "b".repeat(16), null).with(LogField.kafkaTopic("auth.user.deleted.v1"),
+                LogField.kafkaPartition(3), LogField.kafkaOffset(42L), LogField.cloudeventId(event),
+                LogField.scheduleName("outbox-relay"), LogField.projectId(java.util.UUID.randomUUID()));
+        try (var bound = AppLogger.bind(record)) {
+            framework.warn("framework line");
+            assertThat(events.list.getLast().getMDCPropertyMap()).containsEntry("loresentry.kafka.topic", "auth.user.deleted.v1")
+                    .containsEntry("loresentry.kafka.partition", "3").containsEntry("loresentry.kafka.offset", "42")
+                    .containsEntry("loresentry.cloudevent.id", event.toString())
+                    .containsEntry("loresentry.schedule.name", "outbox-relay").containsEntry("trace.id", "a".repeat(32))
+                    // MDC_CONTEXT_KEYS 밖의 문맥 필드는 MDC에 넣지 않는다(우리 줄에만 붙는다)
+                    .doesNotContainKey("loresentry.project_id");
+        }
+        // 바인딩이 끝나면 MDC에서 빠진다(listener·스케줄 스레드를 다시 쓰는 다음 흐름에 남지 않는다)
+        framework.warn("after record");
+        assertThat(events.list.getLast().getMDCPropertyMap()).doesNotContainKeys("loresentry.kafka.topic",
+                "loresentry.kafka.offset", "loresentry.cloudevent.id", "loresentry.schedule.name", "trace.id");
+    }
+
+    @Test
+    void aRecordPutsItsEventFieldsOnEveryLineAndUnknownTypesBecomeOther() {
+        // Kafka 레코드 하나의 줄에는 이벤트의 ID·종류·대상이 붙는다. 헤더는 보낸 쪽 값 그대로라 처리하는 종류 밖은 other,
+        // UUID 가 아닌 ID·대상은 남기지 않는다
+        java.util.UUID event = java.util.UUID.randomUUID();
+        java.util.UUID subject = java.util.UUID.randomUUID();
+        var known = new org.apache.kafka.clients.consumer.ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 7L, "k", "v");
+        known.headers().add("ce_id", event.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        known.headers().add("ce_type", "UserDeleted".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        known.headers().add("ce_subject", subject.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try (var bound = AppLogger.bind(TraceContext.forRecord(known, java.util.Set.of("UserDeleted")))) {
+            new SampleListener().receive();
+        }
+        assertThat(pairs()).containsEntry("loresentry.cloudevent.id", event.toString())
+                .containsEntry("loresentry.cloudevent.type", "UserDeleted")
+                .containsEntry("loresentry.cloudevent.subject", subject.toString());
+
+        var unknown = new org.apache.kafka.clients.consumer.ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 8L, "k", "v");
+        unknown.headers().add("ce_type", "someone@example.com".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        unknown.headers().add("ce_subject", "not-a-uuid".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try (var bound = AppLogger.bind(TraceContext.forRecord(unknown, java.util.Set.of("UserDeleted")))) {
+            new SampleListener().receive();
+        }
+        assertThat(pairs()).containsEntry("loresentry.cloudevent.type", "other")
+                .doesNotContainKeys("loresentry.cloudevent.subject", "loresentry.cloudevent.id");
+    }
+
+    @Test
     void aStoredTraceparentBecomesTheTraceOfTheLine() {
         // outbox 행·Kafka 헤더에 저장해 둔 traceparent로 원래 흐름의 trace를 잇는다(LOG_SCHEMA.md 7절)
         AppLogger stored = TraceContext.fromTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");

@@ -45,6 +45,9 @@ public class SampleProjectService {
 
     private static final String ENGLISH = "en";
 
+    /** 예시를 만드는 언어(locale) 값. 로그의 locale 은 이 목록 안이면 그대로, 밖이면 other 로 남는다. */
+    static final Set<String> LOCALES = Set.of("ko", ENGLISH);
+
     private final ProjectService projects;
 
     private final FileService files;
@@ -66,7 +69,7 @@ public class SampleProjectService {
     @Transactional
     public Project create(UUID ownerUserId, String locale) {
         // 로케일은 ko·en 이면 그대로, 아니면 other 로 남는다
-        AppLogger.current().info("sample project create", LogField.code("locale", locale, Set.of("ko", "en")));
+        AppLogger.current().info("sample project create", LogField.code("locale", locale, LOCALES));
         SampleSeed seed = seedFor(locale);
         Project project = projects.create(ownerUserId,
                 new CreateProjectRequest(freeName(ownerUserId, seed.name()), seed.description()));

@@ -14,7 +14,7 @@ import java.util.concurrent.TimeoutException;
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
 import com.loresentry.content.logging.SkipEntryLog;
-import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogScope;
 import com.loresentry.content.outbox.Round.Outcome;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -92,14 +92,21 @@ class OutboxPublisher {
     }
 
     /**
-     * 보낸 행 하나의 줄. 그 행을 만든 요청의 trace(행에 저장된 traceparent)로 남겨, 요청의 흐름 끝에 이 이벤트가 언제 어느
-     * offset 으로 나갔는지 보이게 한다(LOG_SCHEMA.md 7절 outbox). traceparent 가 없는 행(추적 전에 쌓인 행)은 relay 회차의 trace 다.
+     * 행 하나의 줄(발행, 실패 기록, 격리)을 남기는 범위. 그 행을 만든 요청의 trace(행에 저장된 traceparent)로 남겨, 요청의
+     * 흐름 끝에 이 이벤트가 어떻게 됐는지 보이게 한다(LOG_SCHEMA.md 7절 outbox). 행의 모든 줄에 relay 작업 이름과 이벤트의
+     * ID·종류·대상(ce_id·ce_type·ce_subject), 이벤트 key 인 프로젝트가 붙는다. 받는 서비스의 inbox 줄과 같은 cloudevent 필드라,
+     * 이벤트 ID 하나로 보낸 줄과 받은 줄을 함께 찾는다.
      */
+    private static LogScope rowScope(OutboxEvent event) {
+        return LogScope.outboxEvent(event.traceparent(), OutboxRelay.SCHEDULE, event.id(), event.eventType(), event.aggregateId(),
+                LogField.projectKey(event.eventKey()));
+    }
+
+    /** 보낸 행 하나의 줄. 이 이벤트가 언제 어느 topic·offset 으로 나갔는지 남긴다. */
     private static void logPublished(OutboxEvent event, SendResult<String, String> result) {
-        try (var bound = AppLogger.bind(TraceContext.fromTraceparent(event.traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
+        try (var row = rowScope(event)) {
             var metadata = result == null ? null : result.getRecordMetadata();
-            AppLogger.current().info("outbox event published", LogField.cloudeventId(event.id()),
-                    LogField.cloudeventType(event.eventType()),
+            AppLogger.current().info("outbox event published",
                     metadata == null ? null : LogField.kafkaTopic(metadata.topic()),
                     metadata == null ? null : LogField.kafkaPartition(metadata.partition()),
                     metadata == null ? null : LogField.kafkaOffset(metadata.offset()));
@@ -224,41 +231,35 @@ class OutboxPublisher {
             String error = failure.cause().toString();
             // 로그에 남길 이유. 예외 메시지는 로그에 적지 않으므로 클래스 이름만 쓴다.
             String reason = failure.cause().getClass().getName();
-            if (failure.quarantine()) {
-                quarantined++;
-                repository.quarantine(id, error);
-                // 이 문구로 로그를 찾는다. 바꾸면 조회와 알림이 함께 깨진다. 그 행을 만든 요청의 trace 로 남긴다.
-                // 로그에는 행의 id 와 종류, 예외의 종류만 적는다 — payload 와 예외 메시지는 적지 않는다.
-                try (var bound = AppLogger.bind(TraceContext.fromTraceparent(failure.event().traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
-                    AppLogger.current().error("outbox event quarantined: id=" + id + ", type=" + failure.event().eventType()
-                                    + ", reason=" + reason, LogField.cloudeventId(id),
-                            LogField.cloudeventType(failure.event().eventType()), LogField.errorType(reason));
-                }
-            } else {
-                retrying++;
-                failed = true;
-                int attempts = repository.markFailed(id, error);
-                if (attempts == 1) {
-                    // 이 행의 첫 실패만 행마다 한 줄 남긴다. 그 행을 만든 요청의 trace 로 남겨, 요청의 흐름 끝에서 발행이
-                    // 실패한 것이 보인다. 이어지는 실패는 relay 요약 줄의 failed 개수로, 5번 이상이면 아래 still failing 줄로 센다.
-                    try (var bound = AppLogger.bind(TraceContext.fromTraceparent(failure.event().traceparent()).with(LogField.scheduleName(OutboxRelay.SCHEDULE)))) {
-                        AppLogger.current().warn("outbox event send failed", LogField.cloudeventId(id),
-                                LogField.cloudeventType(failure.event().eventType()), LogField.errorType(reason),
+            // 그 행의 줄(저장소의 기록 줄 포함)은 모두 그 행을 만든 요청의 trace 와 이벤트 필드로 남긴다
+            try (var row = rowScope(failure.event())) {
+                if (failure.quarantine()) {
+                    quarantined++;
+                    repository.quarantine(id, error);
+                    // 이 문구로 격리를 찾는다. 행의 id·종류는 범위가 붙이고, 예외는 종류만 적는다 — payload 와 예외 메시지는 적지 않는다.
+                    AppLogger.current().error("outbox event quarantined", LogField.errorType(reason));
+                } else {
+                    retrying++;
+                    failed = true;
+                    int attempts = repository.markFailed(id, error);
+                    if (attempts == 1) {
+                        // 이 행의 첫 실패만 행마다 한 줄 남긴다. 요청의 흐름 끝에서 발행이 실패한 것이 보인다. 이어지는
+                        // 실패는 relay 요약 줄의 failed 개수로, 5번 이상이면 아래 still failing 줄로 센다.
+                        AppLogger.current().warn("outbox event send failed", LogField.errorType(reason),
                                 LogField.result("attempts", attempts));
                     }
-                }
-                if (attempts >= WARN_AFTER_ATTEMPTS) {
-                    // 이 이유의 개수를 1 올린다. 처음 나온 이유면 1 로 시작한다.
-                    stuck.merge(reason, 1, Integer::sum);
+                    if (attempts >= WARN_AFTER_ATTEMPTS) {
+                        // 이 이유의 개수를 1 올린다. 처음 나온 이유면 1 로 시작한다.
+                        stuck.merge(reason, 1, Integer::sum);
+                    }
                 }
             }
         }
-        // 행마다 찍으면 broker 장애 때 회차당 수십 줄이 되므로, 회차에 한 줄로 줄여 알린다. 대표 한 건이 아니라
-        // 이유별 개수를 싣는다 — 서로 다른 문제가 겹쳤을 때 한쪽이 가려지지 않는다. 어느 행인지는 DB 의
-        // attempts 와 last_error 로 찾는다. 이 문구로 로그를 찾으므로, 바꾸면 조회와 알림이 함께 깨진다.
-        if (!stuck.isEmpty()) {
-            AppLogger.current().warn("outbox events still failing: " + stuck, LogField.result("stuck", stuck));
-        }
+        // 행마다 찍으면 broker 장애 때 회차당 수십 줄이 되므로, 이유마다 한 줄로 줄여 알린다. 대표 한 건이 아니라
+        // 이유별로 남긴다 — 서로 다른 문제가 겹쳤을 때 한쪽이 가려지지 않는다. 어느 행인지는 DB 의 attempts 와
+        // last_error 로 찾는다. 이 문구로 로그를 찾는다.
+        stuck.forEach((reason, rows) -> AppLogger.current().warn("outbox events still failing", LogField.errorType(reason),
+                LogField.result("rows", rows)));
         // 다시 보내야 할 실패나 종료 신호가 있었으면 FAILED, 없었으면 MORE 다. 여기까지 왔다면 읽은 행이 있었으므로
         // IDLE 은 아니다.
         return new Round(failed ? Outcome.FAILED : Outcome.MORE, published.size(), quarantined, retrying);

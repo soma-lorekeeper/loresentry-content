@@ -341,7 +341,8 @@ public class FileService {
         } catch (DuplicateKeyException usedElsewhere) {
             // 다른 문서가 이미 쓰는 이미지다. 그 문서의 이미지를 바꾸면 이쪽이 깨진다.
             // 결과 줄의 이유는 INVALID_REQUEST 하나라 이 줄로 가른다
-            AppLogger.current().warn("file image already attached elsewhere", LogField.fileId(fileId),
+            AppLogger.current().warn("file image already attached elsewhere", LogField.projectId(document.projectId()),
+                    LogField.fileId(fileId), LogField.errorType("INVALID_REQUEST"),
                     LogField.param("attached_image_id", request.imageId()));
             throw new ContentFailure(ContentFailure.Reason.INVALID_REQUEST);
         }

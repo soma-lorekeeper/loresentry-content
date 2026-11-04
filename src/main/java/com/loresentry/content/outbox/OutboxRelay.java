@@ -7,7 +7,7 @@ import java.util.function.Supplier;
 
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
-import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.LogLayer;
 import com.loresentry.content.logging.SkipEntryLog;
 import com.loresentry.content.outbox.Round.Outcome;
@@ -51,6 +51,8 @@ class OutboxRelay {
 
     /** 로그의 작업 이름(loresentry.schedule.name). 행마다의 발행 줄({@link OutboxPublisher})에도 붙인다. */
     static final String SCHEDULE = "outbox-relay";
+    /** 다시 보내야 할 행이 남아 쉬는 시간을 늘린 회차의 error.type. 종료 줄(schedule run failed)에 붙는다. */
+    static final String RELAY_FAILED = "OUTBOX_SEND_FAILED";
 
     /** 처음 실패했을 때 쉬는 시간. 평소 주기와 같아서, 한 번의 실패는 평소와 다르지 않게 넘어간다. */
     static final Duration MIN_BACKOFF = Duration.ofSeconds(1);
@@ -114,16 +116,17 @@ class OutboxRelay {
     @Scheduled(fixedDelay = PERIOD_MILLIS)
     @SkipEntryLog("Polls every second. Logs start and end lines only in rounds that have rows to send")
     void run() {
-        // 회차 하나의 시작점. 스케줄 observation 이 연 span 으로 로그 객체를 만들고 작업 이름을 붙여, 이 회차의 모든 줄(부른 repository 줄 포함)에 남게 한다
-        try (var bound = AppLogger.bind(TraceContext.newLogger().with(LogField.scheduleName(SCHEDULE)))) {
+        // 회차 하나의 흐름(LogFlow.polling). 보낼 행이 있어 줄이 찍힌 회차에서만 시작·종료 줄(개수, 걸린 시간)이 남는다. 주기마다
+        // 불리므로 빈 회차까지 남기면 하루 수만 줄이 "0건"으로 찬다. 종료 줄은 정상일 때의 흔적이기도 하다 — 이 줄이 없으면 "잘 보내는
+        // 중"과 "relay 가 멈춤"을 로그로 가릴 수 없다. 예외는 LogFlow 가 받아 실패 줄로 남기고 밖으로 내보내지 않는다.
+        LogFlow.polling(SCHEDULE, run -> {
             // 1. 아직 쉴 시간이면 곧바로 돌아간다. 쉬는 동안의 호출은 이 비교 한 번이 전부다.
-            Instant startedAt = clock.instant();
-            if (startedAt.isBefore(resumeAt)) {
+            if (clock.instant().isBefore(resumeAt)) {
                 return;
             }
 
             // 2. 회차가 "더 있다"고 하는 동안 이어서 돈다.
-            // 이번 호출에서 보낸 행, 격리한 행, 다시 보내야 할 행의 합계와 돈 회차 수. 요약 로그에 쓴다.
+            // 이번 호출에서 보낸 행, 격리한 행, 다시 보내야 할 행의 합계와 돈 회차 수. 종료 줄의 결과 값이다.
             int published = 0;
             int quarantined = 0;
             int failed = 0;
@@ -138,9 +141,9 @@ class OutboxRelay {
                     result = round.get();
                 } catch (RuntimeException failure) {
                     // 회차가 결과를 돌려주지 못하고 예외로 끝났다(예: DB 에 닿지 못함). 그 회차는 rollback 됐으므로
-                    // 개수에 더할 것이 없다. 실패한 회차처럼 다뤄 쉬게 한다. 이 문구로 로그를 찾는다.
-                    AppLogger.current().error("outbox relay round threw: reason=" + failure.getClass().getName(),
-                            LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure));
+                    // 개수에 더할 것이 없다. 실패한 회차처럼 다뤄 쉬게 한다. 로그에는 예외의 종류와 메시지 없는 스택만 적는다.
+                    AppLogger.current().error("outbox relay round failed", LogField.errorType(failure.getClass().getName()),
+                            LogField.safeStackTrace(failure));
                     outcome = Outcome.FAILED;
                     break;
                 }
@@ -156,31 +159,16 @@ class OutboxRelay {
             if (outcome == Outcome.FAILED) {
                 backoff = nextBackoff(backoff);
                 resumeAt = clock.instant().plus(backoff);
+                // 다시 보내야 할 행이 남았다. 종료 줄이 warn 이 되고 늘린 쉬는 시간을 함께 남긴다
+                run.fail(RELAY_FAILED).result(LogField.result("backoff_seconds", backoff.toSeconds()));
             } else {
                 // 실패가 아니면 곧바로 평소 상태로 돌아간다. 문제가 풀렸는데 천천히 돌아갈 이유가 없다.
                 backoff = Duration.ZERO;
             }
-
-            // 4. 한 일이 있었을 때만 요약을 한 줄 남긴다. 주기마다 불리므로 매번 남기면 하루 수만 줄이 "0건"으로 찬다.
-            // 정상일 때의 흔적이기도 하다 — 이 줄이 없으면 "잘 보내는 중"과 "relay 가 멈춤"을 로그로 가릴 수 없다.
-            // 이 문구로 로그를 찾으므로, 바꾸면 조회와 알림이 함께 깨진다.
-            if (published + quarantined + failed > 0) {
-                Duration took = Duration.between(startedAt, clock.instant());
-                String summary = "outbox relay: published=" + published + ", quarantined=" + quarantined + ", failed=" + failed
-                        + ", rounds=" + rounds + ", took=" + took.toMillis() + "ms";
-                // 같은 값을 필드에도 넣어 Kibana 에서 개수로 거르고 더할 수 있게 한다
-                LogField[] counts = {LogField.result("published", published), LogField.result("quarantined", quarantined),
-                        LogField.result("failed", failed), LogField.result("rounds", rounds), LogField.duration(took)};
-                if (outcome == Outcome.FAILED) {
-                    // 실패로 간격을 늘렸으면 그 간격도 함께 적는다. 다시 보내야 할 행이 있으므로 warn 이다.
-                    AppLogger.current().warn(summary + ", backoff=" + backoff.toSeconds() + "s", counts);
-                } else if (failed > 0) {
-                    AppLogger.current().warn(summary, counts);
-                } else {
-                    AppLogger.current().info(summary, counts);
-                }
-            }
-        }
+            // 4. 종료 줄의 결과 값. Kibana 에서 개수로 거르고 더할 수 있다
+            run.result(LogField.result("published", published), LogField.result("quarantined", quarantined),
+                    LogField.result("failed", failed), LogField.result("rounds", rounds));
+        });
     }
 
     /**
@@ -209,7 +197,8 @@ class OutboxRelay {
      */
     @EventListener(ContextClosedEvent.class)
     void stop() {
-        AppLogger.current().info("outbox relay stop");
+        // 스케줄 회차 밖(종료 이벤트)에서 불린다. 어느 작업의 줄인지 작업 이름을 함께 남긴다
+        AppLogger.current().info("outbox relay stop", LogField.scheduleName(SCHEDULE));
         stopping = true;
     }
 }

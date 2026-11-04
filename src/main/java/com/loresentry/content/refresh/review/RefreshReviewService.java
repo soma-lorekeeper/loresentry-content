@@ -128,8 +128,9 @@ public class RefreshReviewService {
                 .orElseThrow(() -> {
                     RefreshDraftRepository.Current current = drafts.current(draftId);
                     // 보낸 draft_revision 이 지금 값과 다르다(409)
-                    AppLogger.current().warn("graph refresh draft save conflict", LogField.refreshDraftId(draftId),
-                            LogField.param("draft_revision", request.draftRevision()),
+                    AppLogger.current().warn("graph refresh draft save conflict", LogField.projectId(projectId),
+                            LogField.refreshRequestId(runId), LogField.refreshDraftId(draftId),
+                            LogField.errorType("REFRESH_DRAFT_CONFLICT"), LogField.param("draft_revision", request.draftRevision()),
                             LogField.result("current_draft_revision", current.draftRevision()));
                     // 다른 탭·기기가 먼저 저장했다. 지금 모습을 돌려줘 화면이 다시 맞추게 한다.
                     Map<String, Object> latest = new LinkedHashMap<>();

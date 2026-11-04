@@ -6,6 +6,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+import com.loresentry.content.logging.AppLogger;
+import com.loresentry.content.logging.LogField;
 import com.loresentry.content.manuscript.Manuscripts;
 import com.loresentry.content.manuscript.Purpose;
 import com.loresentry.content.outbox.OutboxRecord;
@@ -46,6 +48,9 @@ public class GraphRefreshMessages {
      * @param fileIds 보낼 문서. 그사이 휴지통에 들어가거나 지워진 문서는 입력에서 빠진다
      */
     public PreparedInput input(UUID projectId, UUID requestId, List<UUID> fileIds) {
+        // 문서 id 는 개수만 남긴다. 입력 내용(제목·본문)은 남기지 않는다
+        AppLogger.current().info("graph refresh input build", LogField.projectId(projectId), LogField.refreshRequestId(requestId),
+                LogField.param("file_ids", fileIds));
         List<RefreshInput.Document> documents = repository.documents(projectId, fileIds);
         byte[] bytes = manuscripts.sealBytes(projectId, requestId, Purpose.REFRESH_INPUT,
                 json.writeValueAsBytes(new RefreshInput(RefreshInput.SCHEMA_VERSION, documents)));

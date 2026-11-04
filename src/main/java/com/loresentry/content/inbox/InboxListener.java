@@ -1,12 +1,8 @@
 package com.loresentry.content.inbox;
 
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.UUID;
-
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
-import com.loresentry.content.logging.TraceContext;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
 import com.loresentry.content.user.UserDeletedService;
 
@@ -73,109 +69,60 @@ class InboxListener {
         this.graphRefreshCompletedConsumer = graphRefreshCompletedConsumer;
     }
 
-    /** kafka.consumer.topics.user-deleted({@code auth.user.deleted.v1})에서 받은 메시지 하나를 처리한다. */
+    /**
+     * kafka.consumer.topics.user-deleted({@code auth.user.deleted.v1})에서 받은 메시지 하나를 처리한다.
+     *
+     * <p>레코드 하나의 흐름이다. listener observation 이 연 span(보낸 쪽 traceparent 를 이은 것)으로 로그 객체를 만들어, 이 레코드를
+     * 처리하는 모든 줄에 같은 trace 와 topic·partition·offset·이벤트 필드가 붙는다. 시작·종료 줄(결과, 걸린 시간)은 LogFlow 가 남긴다.
+     * 예외는 종료 줄을 남긴 뒤 그대로 나가, 에러 처리기({@link InboxErrorHandling})가 다시 시도하거나 DLQ 로 보낸다.
+     */
     @KafkaListener(id = "${kafka.consumer.groups.user-deleted}",
             groupId = "${kafka.consumer.groups.user-deleted}",
             topics = "${kafka.consumer.topics.user-deleted}",
             autoStartup = "${kafka.consumer.enabled.user-deleted}")
     void receiveUserDeleted(ConsumerRecord<String, String> record) {
-        // 레코드 하나의 시작점. listener observation 이 연 span(보낸 쪽 traceparent 를 이은 것)으로 로그 객체를 만들어,
-        // 이 레코드를 처리하는 모든 줄에 같은 trace 와 topic·partition·offset·이벤트 ID 가 붙게 한다.
-        try (var bound = AppLogger.bind(TraceContext.forRecord(record))) {
-            // 시작 줄. 시작할 때 아는 값(topic·partition·offset·이벤트 ID)은 바인딩한 로그 객체가 붙인다
-            AppLogger.current().info("user deleted event received");
-            long started = System.nanoTime();
-            // 진행 중에 알게 되는 값. 종료 줄에 붙인다
-            UUID deletedUser = null;
-            Outcome outcome = Outcome.SKIPPED;
-            try {
-                // 처리하지 않는 종류면 빈 값이라 아무것도 하지 않는다. 계약에 맞지 않으면 여기서 예외가 나간다.
-                var received = InboxMessages.userDeleted(record);
-                if (received.isPresent()) {
-                    deletedUser = received.get().event().userId();
-                    // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다. 이미 처리한 이벤트면 false 다.
-                    boolean processed = inbox.runOnce(userDeletedConsumer, received.get().eventId(),
-                            () -> userDeleted.handle(received.get().event()));
-                    outcome = processed ? Outcome.PROCESSED : Outcome.DUPLICATE;
-                }
-            } catch (RuntimeException failure) {
-                finished(AppLogger.current().withUser(deletedUser), "user deleted event processed", Outcome.FAILED, started,
-                        failure);
-                throw failure;
+        LogFlow.kafkaRecord(record, InboxMessages.TYPES, "user deleted", flow -> {
+            // 처리하지 않는 종류면 빈 값이라 아무것도 하지 않는다. 계약에 맞지 않으면 여기서 예외가 나간다.
+            var received = InboxMessages.userDeleted(record);
+            if (received.isEmpty()) {
+                flow.outcome(LogFlow.Outcome.SKIPPED);
+                return;
             }
-            // 삭제된 사용자는 이 이벤트의 대상이라 user.id 로 남긴다
-            finished(AppLogger.current().withUser(deletedUser), "user deleted event processed", outcome, started, null);
-        }
+            // 삭제된 사용자는 이 이벤트의 대상이라, 이후 모든 줄(service·repository 줄과 종료 줄)에 user.id 로 남긴다
+            AppLogger.current().identify(received.get().event().userId());
+            // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다. 이미 처리한 이벤트면 false 다.
+            boolean processed = inbox.runOnce(userDeletedConsumer, received.get().eventId(),
+                    () -> userDeleted.handle(received.get().event()));
+            flow.outcome(processed ? LogFlow.Outcome.PROCESSED : LogFlow.Outcome.DUPLICATE);
+        });
     }
 
     /**
      * kafka.consumer.topics.graph-refresh-completed({@code graph-rag.graph-refresh.completed.v1})에서 받은 메시지
-     * 하나를 처리한다.
+     * 하나를 처리한다. 흐름은 {@link #receiveUserDeleted}와 같다.
      */
     @KafkaListener(id = "${kafka.consumer.groups.graph-refresh-completed}",
             groupId = "${kafka.consumer.groups.graph-refresh-completed}",
             topics = "${kafka.consumer.topics.graph-refresh-completed}",
             autoStartup = "${kafka.consumer.enabled.graph-refresh-completed}")
     void receiveGraphRefreshCompleted(ConsumerRecord<String, String> record) {
-        // 레코드 하나의 시작점. receiveUserDeleted 와 같다.
-        try (var bound = AppLogger.bind(TraceContext.forRecord(record))) {
-            // 시작 줄. 시작할 때 아는 값(topic·partition·offset·이벤트 ID)은 바인딩한 로그 객체가 붙인다
-            AppLogger.current().info("graph refresh completed event received");
-            long started = System.nanoTime();
-            // 진행 중에 알게 되는 값(최신화 요청과 그 프로젝트). 종료 줄에 붙인다
-            UUID projectId = null;
-            UUID requestId = null;
-            Outcome outcome = Outcome.SKIPPED;
-            try {
-                // 처리하지 않는 종류면 빈 값이라 아무것도 하지 않는다. 계약에 맞지 않으면 여기서 예외가 나간다.
-                var received = InboxMessages.graphRefreshCompleted(record);
-                if (received.isPresent()) {
-                    projectId = received.get().event().projectId();
-                    requestId = received.get().event().requestId();
-                    // 결과 파일(S3)은 트랜잭션을 열기 전에 읽는다. 읽는 동안 DB connection 을 잡지 않으려는 것이다. S3 일시
-                    // 장애면 여기서 예외가 나가 다시 받는다. 이미 끝난 run 이면 S3 를 읽지 않는다.
-                    var fetched = graphRefresh.fetchResult(received.get().event());
-                    // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다. 이미 처리한 이벤트면 false 다.
-                    boolean processed = inbox.runOnce(graphRefreshCompletedConsumer, received.get().eventId(),
-                            () -> graphRefresh.complete(received.get().event(), fetched));
-                    outcome = processed ? Outcome.PROCESSED : Outcome.DUPLICATE;
-                }
-            } catch (RuntimeException failure) {
-                finished(AppLogger.current(), "graph refresh completed event processed", Outcome.FAILED, started, failure,
-                        LogField.projectId(projectId), LogField.refreshRequestId(requestId));
-                throw failure;
+        LogFlow.kafkaRecord(record, InboxMessages.TYPES, "graph refresh completed", flow -> {
+            // 처리하지 않는 종류면 빈 값이라 아무것도 하지 않는다. 계약에 맞지 않으면 여기서 예외가 나간다.
+            var received = InboxMessages.graphRefreshCompleted(record);
+            if (received.isEmpty()) {
+                flow.outcome(LogFlow.Outcome.SKIPPED);
+                return;
             }
-            finished(AppLogger.current(), "graph refresh completed event processed", outcome, started, null,
-                    LogField.projectId(projectId), LogField.refreshRequestId(requestId));
-        }
-    }
-
-    /** 레코드 하나의 처리 결과. 종료 줄의 result.outcome 이다. */
-    enum Outcome {
-        /** 처음 온 이벤트라 처리했다. */
-        PROCESSED,
-        /** 이미 처리한 이벤트가 다시 와서 건너뛰었다(inbox 처리 기록). */
-        DUPLICATE,
-        /** 이 listener 가 처리하지 않는 종류라 건너뛰었다. */
-        SKIPPED,
-        /** 처리 중 예외가 났다. 에러 처리기가 다시 시도하거나 DLQ 로 보낸다. */
-        FAILED
-    }
-
-    /**
-     * 레코드 하나의 종료 줄. HTTP 요청의 request completed 처럼 결과(outcome)와 걸린 시간을 남긴다. 실패면 warn 이고 예외 종류를
-     * error.type 에 붙인다. 실패의 원인 줄(재시도·DLQ)은 에러 처리기(InboxErrorHandling)가 남긴다.
-     *
-     * @param logger 진행 중에 알게 된 사용자를 더한 로그 객체(없으면 지금 바인딩된 것)
-     * @param fields 진행 중에 알게 된 도메인 ID
-     */
-    private static void finished(AppLogger logger, String message, Outcome outcome, long started, RuntimeException failure,
-                                 LogField... fields) {
-        LogField[] all = Arrays.copyOf(fields, fields.length + 3);
-        all[fields.length] = LogField.result("outcome", outcome);
-        all[fields.length + 1] = LogField.duration(Duration.ofNanos(System.nanoTime() - started));
-        all[fields.length + 2] = failure == null ? null : LogField.errorType(failure.getClass().getName());
-        if (failure == null) logger.info(message, all);
-        else logger.warn(message, all);
+            // 진행 중에 알게 된 대상(최신화 요청과 그 프로젝트). 이후 모든 줄(inbox·service·repository 줄과 종료 줄)에 붙는다
+            flow.with(LogField.projectId(received.get().event().projectId()),
+                    LogField.refreshRequestId(received.get().event().requestId()));
+            // 결과 파일(S3)은 트랜잭션을 열기 전에 읽는다. 읽는 동안 DB connection 을 잡지 않으려는 것이다. S3 일시
+            // 장애면 여기서 예외가 나가 다시 받는다. 이미 끝난 run 이면 S3 를 읽지 않는다.
+            var fetched = graphRefresh.fetchResult(received.get().event());
+            // Service 를 부르는 일을 넘긴다. runOnce 가 트랜잭션을 연 채로 실행한다. 이미 처리한 이벤트면 false 다.
+            boolean processed = inbox.runOnce(graphRefreshCompletedConsumer, received.get().eventId(),
+                    () -> graphRefresh.complete(received.get().event(), fetched));
+            flow.outcome(processed ? LogFlow.Outcome.PROCESSED : LogFlow.Outcome.DUPLICATE);
+        });
     }
 }

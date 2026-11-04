@@ -5,7 +5,6 @@ import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 import com.loresentry.content.logging.AppLogger;
@@ -84,7 +83,7 @@ public class MemoRepository {
     MemoDtos.Memo insert(UUID projectId, String scope, UUID documentId, String title, String body) {
         // 메모 제목·본문은 남기지 않는다
         AppLogger.current().info("memo insert", LogField.projectId(projectId), LogField.documentId(documentId),
-                LogField.code("scope", scope, Set.of("PROJECT", "FILE")));
+                LogField.code("scope", scope, MemoService.SCOPES));
         return jdbcClient
                 .sql("insert into memo (project_id, scope, document_id, title, body) "
                         + "values (:project, :scope, :document, :title, :body) returning " + COLUMNS)

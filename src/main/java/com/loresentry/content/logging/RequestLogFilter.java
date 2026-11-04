@@ -26,8 +26,9 @@ import org.springframework.web.util.ServletRequestPathUtils;
  * <p>하는 일
  * <ol>
  *   <li>지금 span의 traceId·spanId와 gateway가 확인해 보낸 사용자(X-User-Id)로 로그 객체를 만든다. 요청 하나의 모든 줄에
- *       이 서비스가 받은 경로({@code url.path})와 경로 템플릿({@code http.route})을 붙인다. 경로 템플릿은 Spring MVC가 나중에
- *       고를 것을 요청 시작 때 미리 찾는다.</li>
+ *       이 서비스가 받은 경로({@code url.path}), 경로 템플릿({@code http.route}), 메서드({@code http.request.method})를 붙인다.
+ *       경로 템플릿은 Spring MVC가 나중에 고를 것을 요청 시작 때 미리 찾는다. 이 값들은 MDC에도 들어가 같은 스레드의 프레임워크
+ *       줄(Spring, Hibernate 등)에도 붙는다.</li>
  *   <li>"request received"와 "request completed"(상태·걸린 시간)를 남긴다. 헬스체크도 같고, 그 요청의 모든 줄에
  *       {@code tags: health}가 붙어 정상(info) 줄은 Logstash가 버린다. 결과 줄에는 예외 처리기가
  *       {@link AppLogger#addToOutcome(LogField...)}로 맡긴 실패 이유(error.type)도 붙인다. 실패를 따로 찍지 않으므로 요청 하나의
@@ -54,13 +55,13 @@ public final class RequestLogFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         AppLogger logger = TraceContext.newLogger().withUser(user(request))
-                .with(LogField.urlPath(path), LogField.route(route(request)));
+                .with(LogField.urlPath(path), LogField.route(route(request)), LogField.httpMethod(request.getMethod()));
         // 헬스체크 흐름의 모든 줄에 tags: health를 붙인다. 정상(info) 줄은 Logstash가 버리고, 실패한 헬스체크의 warn·error는 남는다
         if (health(path)) logger = logger.withTag("health");
         if (logger.traceId() != null) request.setAttribute(TRACE_ATTRIBUTE, logger.traceId());
         long started = System.nanoTime();
         try (var bound = AppLogger.bind(logger)) {
-            logger.info("request received", LogField.httpMethod(request.getMethod()));
+            logger.info("request received");
             try {
                 chain.doFilter(request, response);
             } catch (IOException | ServletException | RuntimeException failure) {
@@ -69,21 +70,21 @@ public final class RequestLogFilter extends OncePerRequestFilter {
                 // 같은 이름은 먼저 넣은 값이 남으므로(EcsLogFormatter) error.type을 맡겨진 결과 필드보다 앞에 둔다
                 logger.error("request failed with an unhandled exception",
                         concat(new LogField[]{LogField.errorType(failure.getClass().getName()), LogField.safeStackTrace(failure),
-                                LogField.httpMethod(request.getMethod()), LogField.statusCode(500),
-                                LogField.duration(elapsed(started))}, logger.outcomeFields()));
+                                LogField.statusCode(500), LogField.duration(elapsed(started))}, logger.outcomeFields()));
                 throw failure;
             }
-            completed(logger, request, response.getStatus(), started);
+            completed(logger, response.getStatus(), started);
         }
     }
 
     /**
      * 결과 줄. 응답 상태로 레벨을 정한다: 5xx error, 4xx warn, 그 외 info. 2xx 헬스체크 줄은 Logstash가 버린다.
-     * 기본 필드(메서드, 상태, 걸린 시간) 뒤에 이 요청에 맡겨진 결과 필드를 그대로 붙인다. url.path·http.route는 문맥 필드로 이미 붙어 있다.
+     * 기본 필드(상태, 걸린 시간) 뒤에 이 요청에 맡겨진 결과 필드를 그대로 붙인다. url.path·http.route·http.request.method는
+     * 문맥 필드로 이미 붙어 있다.
      */
-    private static void completed(AppLogger logger, HttpServletRequest request, int status, long started) {
-        LogField[] fields = concat(new LogField[]{LogField.httpMethod(request.getMethod()), LogField.statusCode(status),
-                LogField.duration(elapsed(started))}, logger.outcomeFields());
+    private static void completed(AppLogger logger, int status, long started) {
+        LogField[] fields = concat(new LogField[]{LogField.statusCode(status), LogField.duration(elapsed(started))},
+                logger.outcomeFields());
         if (status >= 500) logger.error("request completed", fields);
         else if (status >= 400) logger.warn("request completed", fields);
         else logger.info("request completed", fields);

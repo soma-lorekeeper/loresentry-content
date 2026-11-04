@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.logging.LogField;
+import com.loresentry.content.logging.LogFlow;
 import com.loresentry.content.logging.SkipEntryLog;
 
 import org.springframework.stereotype.Service;
@@ -77,12 +78,13 @@ public class MediaStorageService {
         AppLogger.current().info("image object verify", LogField.param("expected_size_bytes", expectedSizeBytes));
         HeadObjectResponse head;
         try {
-            head = s3Client.headObject(HeadObjectRequest.builder()
+            // S3 호출 하나. 결과 줄(s3 call completed·failed, 걸린 시간, 실패면 예외 종류·응답 코드)은 LogFlow 가 남긴다
+            head = LogFlow.call("s3", call -> s3Client.headObject(HeadObjectRequest.builder()
                     .bucket(properties.bucket())
                     .key(key)
-                    .build());
+                    .build()));
         } catch (NoSuchKeyException exception) {
-            AppLogger.current().warn("image object not uploaded");
+            AppLogger.current().warn("image object not uploaded", LogField.errorType("OBJECT_NOT_UPLOADED"));
             throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
         } catch (S3Exception exception) {
             // HeadObject 는 본문 없는 404 를 돌려주므로 SDK 가 NoSuchKeyException 으로 매핑하지
@@ -93,19 +95,18 @@ public class MediaStorageService {
             // 넣어 404 를 받게 했지만(docs/aws/iam-content-media-policy.json), 정책이 아직 반영되지
             // 않은 환경에서도 이 경로가 500 이 되지 않아야 한다.
             if (exception.statusCode() == 404 || exception.statusCode() == 403) {
-                AppLogger.current().warn("image object not uploaded", LogField.result("s3_status_code", exception.statusCode()));
+                // 응답 코드(404·403)는 바로 앞의 s3 call failed 줄에 있다
+                AppLogger.current().warn("image object not uploaded", LogField.errorType("OBJECT_NOT_UPLOADED"));
                 throw new ObjectNotUploadedException("object " + key + " has not been uploaded");
             }
-            // 그 밖의 S3 오류는 500 으로 나간다. 결과 줄에는 응답 코드가 없어 여기서 남긴다(메시지에는 키가 들어 있어 남기지 않는다)
-            AppLogger.current().warn("image object verify failed", LogField.errorType(exception.getClass().getName()),
-                    LogField.result("s3_status_code", exception.statusCode()));
+            // 그 밖의 S3 오류는 500 으로 나간다. 예외 종류와 응답 코드는 s3 call failed 줄에 있다(메시지에는 키가 들어 있어 남기지 않는다)
             throw exception;
         }
 
         if (head.contentLength() == null || head.contentLength() != expectedSizeBytes) {
             // 브라우저가 선언한 크기와 실제로 올라온 객체의 크기가 다르다
-            AppLogger.current().warn("image object size mismatch", LogField.param("expected_size_bytes", expectedSizeBytes),
-                    LogField.result("size_bytes", head.contentLength()));
+            AppLogger.current().warn("image object size mismatch", LogField.errorType("OBJECT_NOT_UPLOADED"),
+                    LogField.param("expected_size_bytes", expectedSizeBytes), LogField.result("size_bytes", head.contentLength()));
             throw new ObjectNotUploadedException("object " + key + " size " + head.contentLength()
                     + " does not match the declared size " + expectedSizeBytes);
         }
@@ -116,10 +117,11 @@ public class MediaStorageService {
     public void delete(String key) {
         // 객체 키에는 프로젝트 id 가 들어 있어 남기지 않는다
         AppLogger.current().info("media object delete");
-        s3Client.deleteObject(DeleteObjectRequest.builder()
+        // S3 호출 하나. 결과 줄(s3 call completed·failed)은 LogFlow 가 남긴다. 실패하면 예외가 그대로 나간다
+        LogFlow.call("s3", call -> s3Client.deleteObject(DeleteObjectRequest.builder()
                 .bucket(properties.bucket())
                 .key(key)
-                .build());
+                .build()));
     }
 
     @SkipEntryLog("Called once per document with an image while building file tree and graph responses. It only builds a URL, so a line adds nothing to the flow")

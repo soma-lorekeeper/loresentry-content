@@ -5,15 +5,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+import com.loresentry.content.logging.AppLogger;
 import com.loresentry.content.outbox.Round.Outcome;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +38,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.slf4j.LoggerFactory;
 
 /**
  * relay 가 언제 돌고 언제 쉬는지를 확인한다. 회차가 실제로 무엇을 하는지는 {@link OutboxPublisherTest} 가 보므로,
@@ -59,13 +69,47 @@ class OutboxRelayTest {
         return new Round(Outcome.FAILED, 0, 0, failed);
     }
 
-    /** 넘겨받은 결과를 불릴 때마다 하나씩 차례로 돌려주는 가짜 회차. 불린 횟수도 센다. */
+    /**
+     * 넘겨받은 결과를 불릴 때마다 하나씩 차례로 돌려주는 가짜 회차. 불린 횟수도 센다. 실제 회차({@link OutboxPublisher})처럼
+     * 할 일이 있던 회차(IDLE 이 아닌 결과)만 줄을 하나 남긴다. relay 회차의 시작 줄은 그 회차의 첫 줄 앞에 남는다.
+     */
     private Supplier<Round> scripted(Round... results) {
         Iterator<Round> remaining = List.of(results).iterator();
         return () -> {
             calls++;
-            return remaining.next();
+            Round result = remaining.next();
+            if (result.outcome() != Outcome.IDLE) {
+                AppLogger.current().info("outbox relay batch start");
+            }
+            return result;
         };
+    }
+
+    /** relay 가 남긴 줄을 모은다. 테스트마다 root logger 에 붙였다 뗀다. */
+    private final ListAppender<ILoggingEvent> events = new ListAppender<>();
+    private final Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+
+    @BeforeEach
+    void attach() {
+        events.start();
+        root.addAppender(events);
+    }
+
+    @AfterEach
+    void detach() {
+        root.detachAppender(events);
+    }
+
+    /** 그 문구로 찍힌 줄들. */
+    private List<ILoggingEvent> lines(String message) {
+        return events.list.stream().filter(event -> message.equals(event.getFormattedMessage())).toList();
+    }
+
+    /** 줄 하나의 key-value 필드(loresentry.result.published 등). */
+    private static Map<String, Object> fields(ILoggingEvent event) {
+        Map<String, Object> out = new HashMap<>();
+        if (event.getKeyValuePairs() != null) event.getKeyValuePairs().forEach(pair -> out.putIfAbsent(pair.key, pair.value));
+        return out;
     }
 
     /** 가짜 회차와 가짜 시계를 끼운 relay. */
@@ -164,7 +208,7 @@ class OutboxRelayTest {
 
     /**
      * 회차가 예외로 끝나도(예: DB 에 닿지 못함) relay 는 그것을 밖으로 내보내지 않는다. 실패한 회차처럼 쉬고,
-     * 예외의 종류만 한 줄 남긴다.
+     * 예외의 종류만 한 줄 남긴다. 그 회차의 종료 줄도 실패(warn)다.
      */
     @Test
     void treatsAnUnexpectedExceptionLikeAFailure(CapturedOutput output) {
@@ -177,7 +221,15 @@ class OutboxRelayTest {
         relay.run();
 
         // 운영에서 이 문구로 찾는다. 예외의 메시지는 로그에 적지 않는다.
-        assertThat(output.getOut()).contains("outbox relay round threw: reason=java.lang.IllegalStateException");
+        assertThat(lines("outbox relay round failed")).singleElement().satisfies(line -> {
+            assertThat(line.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(fields(line)).containsEntry("error.type", "java.lang.IllegalStateException")
+                    .containsEntry("loresentry.schedule.name", OutboxRelay.SCHEDULE);
+        });
+        assertThat(lines("schedule run failed")).singleElement().satisfies(line -> {
+            assertThat(line.getLevel()).isEqualTo(Level.WARN);
+            assertThat(fields(line)).containsEntry("error.type", OutboxRelay.RELAY_FAILED);
+        });
         assertThat(output.getOut()).doesNotContain("database is down");
 
         // 실패와 같이 1초를 쉰다.
@@ -191,32 +243,47 @@ class OutboxRelayTest {
     }
 
     /**
-     * 요약은 여러 회차의 개수를 더해 한 줄로 남긴다. 한 일이 없으면 남기지 않는다 — 주기마다 불리므로 매번 남기면
-     * 로그가 "0건"으로 가득 찬다.
+     * 종료 줄은 여러 회차의 개수를 더해 한 줄로 남긴다. 한 일이 없으면 시작·종료 줄 모두 남기지 않는다 — 주기마다 불리므로
+     * 매번 남기면 로그가 "0건"으로 가득 찬다.
      */
     @Test
-    void logsOneSummaryLineOnlyWhenSomethingWasDone(CapturedOutput output) {
+    void logsOneSummaryLineOnlyWhenSomethingWasDone() {
         OutboxRelay relay = relay(scripted(more(50), more(50), new Round(Outcome.MORE, 20, 1, 0), IDLE, IDLE));
 
-        // 회차 넷(셋은 보냈고 마지막은 빈 회차)의 합계가 한 줄에 실린다. 가짜 시계가 멈춰 있어 걸린 시간은 0 이다.
+        // 회차 넷(셋은 보냈고 마지막은 빈 회차)의 합계가 종료 줄 하나에 실린다. 걸린 시간도 붙는다.
         relay.run();
-        assertThat(output.getOut())
-                .contains("outbox relay: published=120, quarantined=1, failed=0, rounds=4, took=0ms");
+        assertThat(lines("schedule run completed")).singleElement().satisfies(line -> {
+            assertThat(line.getLevel()).isEqualTo(Level.INFO);
+            assertThat(fields(line)).containsEntry("loresentry.result.published", 120)
+                    .containsEntry("loresentry.result.quarantined", 1).containsEntry("loresentry.result.failed", 0)
+                    .containsEntry("loresentry.result.rounds", 4).containsEntry("loresentry.schedule.name", OutboxRelay.SCHEDULE)
+                    .containsKey("event.duration");
+        });
 
-        // 다음 호출은 할 일이 없었다. 요약이 더 늘지 않는다.
+        // 다음 호출은 할 일이 없었다. 시작·종료 줄이 더 늘지 않는다.
         relay.run();
-        assertThat(output.getOut()).containsOnlyOnce("outbox relay: published=");
+        assertThat(lines("schedule run start")).hasSize(1);
+        assertThat(lines("schedule run completed")).hasSize(1);
     }
 
-    /** 실패로 간격을 늘렸을 때는 요약에 그 간격도 적는다. 로그만 보고 relay 가 언제 다시 시도할지 알 수 있다. */
+    /**
+     * 실패로 간격을 늘렸을 때는 종료 줄이 실패(warn)가 되고 그 간격도 적는다. 로그만 보고 relay 가 언제 다시 시도할지 알 수
+     * 있다.
+     */
     @Test
-    void addsTheRestToTheSummaryWhenARoundFailed(CapturedOutput output) {
+    void addsTheRestToTheSummaryWhenARoundFailed() {
         OutboxRelay relay = relay(scripted(new Round(Outcome.FAILED, 30, 0, 20)));
 
         relay.run();
 
-        assertThat(output.getOut())
-                .contains("outbox relay: published=30, quarantined=0, failed=20, rounds=1, took=0ms, backoff=1s");
+        assertThat(lines("schedule run failed")).singleElement().satisfies(line -> {
+            assertThat(line.getLevel()).isEqualTo(Level.WARN);
+            assertThat(fields(line)).containsEntry("error.type", OutboxRelay.RELAY_FAILED)
+                    .containsEntry("loresentry.result.backoff_seconds", 1L).containsEntry("loresentry.result.published", 30)
+                    .containsEntry("loresentry.result.quarantined", 0).containsEntry("loresentry.result.failed", 20)
+                    .containsEntry("loresentry.result.rounds", 1);
+        });
+        assertThat(lines("schedule run completed")).isEmpty();
     }
 
     /**

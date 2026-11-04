@@ -45,6 +45,8 @@ public class ProjectKeys {
         if (pending != null && pending.containsKey(projectId)) {
             return pending.get(projectId);
         }
+        // 캐시에 없어 키를 읽어 푼다(없으면 만든다). 운영에서는 KMS 를 부르는 길이라, 이 줄 뒤에 kms 줄이 이어진다. 키는 남기지 않는다
+        AppLogger.current().info("project key load", LogField.projectId(projectId));
         Optional<byte[]> wrapped = wrappedKey(projectId);
         if (wrapped.isPresent()) {
             byte[] key = wrapper.unwrap(projectId, wrapped.get());

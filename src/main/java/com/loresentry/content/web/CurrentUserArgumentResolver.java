@@ -46,8 +46,8 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
         }
         // 값이 둘 이상이면 어느 것이 gateway의 것인지 알 수 없다. 고르지 않고 거절한다.
         if (values.length != 1) {
-            AppLogger.current().warn("user header rejected", LogField.resultCode("reason", "MULTIPLE", REJECT_REASONS),
-                    LogField.result("values", values.length));
+            AppLogger.current().warn("user header rejected", LogField.errorType("INVALID_REQUEST"),
+                    LogField.resultCode("reason", "MULTIPLE", REJECT_REASONS), LogField.result("values", values.length));
             throw invalidRequest();
         }
 
@@ -56,14 +56,14 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
             UUID id = UUID.fromString(text);
             // UUID.fromString은 비정규 표기도 받아들인다. 왕복해서 같아야만 통과시킨다.
             if (!id.toString().equalsIgnoreCase(text)) {
-                AppLogger.current().warn("user header rejected",
+                AppLogger.current().warn("user header rejected", LogField.errorType("INVALID_REQUEST"),
                         LogField.resultCode("reason", "NON_CANONICAL", REJECT_REASONS), LogField.result("values", 1));
                 throw invalidRequest();
             }
             return id;
         } catch (IllegalArgumentException invalid) {
-            AppLogger.current().warn("user header rejected", LogField.resultCode("reason", "NOT_UUID", REJECT_REASONS),
-                    LogField.result("values", 1));
+            AppLogger.current().warn("user header rejected", LogField.errorType("INVALID_REQUEST"),
+                    LogField.resultCode("reason", "NOT_UUID", REJECT_REASONS), LogField.result("values", 1));
             throw invalidRequest();
         }
     }

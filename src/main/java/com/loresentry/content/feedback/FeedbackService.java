@@ -46,7 +46,8 @@ public class FeedbackService {
 
         if (repository.countSince(userId, OffsetDateTime.now().minusHours(1)) >= HOURLY_LIMIT) {
             // 한 시간 한도를 넘었다(429)
-            AppLogger.current().warn("feedback rate limited", LogField.result("hourly_limit", HOURLY_LIMIT));
+            AppLogger.current().warn("feedback rate limited", LogField.errorType("FEEDBACK_RATE_LIMITED"),
+                    LogField.result("hourly_limit", HOURLY_LIMIT));
             throw new ContentFailure(ContentFailure.Reason.FEEDBACK_RATE_LIMITED);
         }
         return repository.insert(userId, category, message,

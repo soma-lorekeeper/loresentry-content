@@ -77,6 +77,43 @@ class EcsLogFormatterTest {
     }
 
     @Test
+    void writesContextFieldsFromMdcOnFrameworkLines() {
+        // 프레임워크 줄: key-value가 없어도 AppLogger가 바인딩하며 MDC에 넣은 흐름의 문맥 필드가 붙는다.
+        // MDC는 문자열만 담으므로 Kafka partition·offset은 숫자로 되돌려 쓴다(ES 타입이 long이다)
+        var framework = event(Level.WARN, "framework line", null);
+        framework.setMDCPropertyMap(Map.of("url.path", "/projects/p-1", "http.route", "/projects/{projectId}",
+                "http.request.method", "GET", "loresentry.schedule.name", "outbox-relay", "loresentry.kafka.topic", "auth.user.deleted.v1",
+                "loresentry.kafka.partition", "3", "loresentry.kafka.offset", "42", "loresentry.cloudevent.id", "e-1",
+                "loresentry.project_id", "not a context key"));
+        JsonNode json = format(framework);
+        assertThat(json.at("/url/path").asString()).isEqualTo("/projects/p-1");
+        assertThat(json.at("/http/route").asString()).isEqualTo("/projects/{projectId}");
+        assertThat(json.at("/http/request/method").asString()).isEqualTo("GET");
+        assertThat(json.at("/loresentry/schedule/name").asString()).isEqualTo("outbox-relay");
+        assertThat(json.at("/loresentry/kafka/topic").asString()).isEqualTo("auth.user.deleted.v1");
+        assertThat(json.at("/loresentry/kafka/partition").isNumber()).isTrue();
+        assertThat(json.at("/loresentry/kafka/partition").asLong()).isEqualTo(3L);
+        assertThat(json.at("/loresentry/kafka/offset").isNumber()).isTrue();
+        assertThat(json.at("/loresentry/kafka/offset").asLong()).isEqualTo(42L);
+        assertThat(json.at("/loresentry/cloudevent/id").asString()).isEqualTo("e-1");
+        // 목록 밖의 MDC 값은 내보내지 않는다
+        assertThat(json.at("/loresentry/project_id").isMissingNode()).isTrue();
+    }
+
+    @Test
+    void lineKeyValuesWinOverMdcContextFieldsAndBadNumbersAreDropped() {
+        // AppLogger 줄은 문맥 필드를 key-value로도 넘긴다. 둘이 다르면 그 줄에 넘긴 값이 남는다
+        var line = event(Level.INFO, "d", null);
+        line.addKeyValuePair(new KeyValuePair("url.path", "/from-line"));
+        line.setMDCPropertyMap(Map.of("url.path", "/from-mdc", "loresentry.kafka.offset", "not-a-number"));
+        JsonNode json = format(line);
+        assertThat(json.at("/url/path").asString()).isEqualTo("/from-line");
+        // 숫자로 되돌릴 수 없는 값은 그 필드만 빼고 줄은 그대로 쓴다
+        assertThat(json.at("/loresentry/kafka/offset").isMissingNode()).isTrue();
+        assertThat(json.get("message").asString()).isEqualTo("d");
+    }
+
+    @Test
     void writesTheExceptionAsErrorFieldsOnOneLine() {
         JsonNode json = format(event(Level.ERROR, "request failed", new IllegalStateException("boom")));
         assertThat(json.at("/error/type").asString()).isEqualTo("java.lang.IllegalStateException");

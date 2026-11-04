@@ -63,6 +63,18 @@ public final class LogField {
     // ---------------------------------------------------------------- 도메인 ID (loresentry.*, keyword)
     // 이 줄의 대상·대상이 속한 범위·새로 만든 대상만 여기에 넣는다. 참조만 하는 ID는 param("<역할>_<종류>_id", id)로 넣는다.
 
+    /**
+     * 이벤트 key 로 쓰인 프로젝트 ID 문자열(outbox 행의 event_key). 표준 표기의 UUID 일 때만 project_id 로 남기고, 아니면 남기지 않는다.
+     */
+    public static LogField projectKey(String key) {
+        if (key == null || key.length() != 36) return null;
+        try {
+            return projectId(UUID.fromString(key));
+        } catch (IllegalArgumentException notUuid) {
+            return null;
+        }
+    }
+
     public static LogField projectId(UUID id) {
         return uuid("loresentry.project_id", id);
     }
@@ -149,9 +161,25 @@ public final class LogField {
         return uuid("loresentry.cloudevent.id", id);
     }
 
-    /** 이벤트 종류(ce_type). 우리가 보내는 이벤트의 이름(FileChanged 등)이라 그대로 남긴다. 받은 메시지의 값에는 쓰지 않는다. */
+    /**
+     * 이벤트 종류(ce_type). 우리가 보내는 이벤트의 이름(FileChanged 등)이라 그대로 남긴다. 받은 메시지의 값에는 쓰지 않고
+     * 허용 목록을 받는 {@link #cloudeventType(String, Set)}를 쓴다.
+     */
     public static LogField cloudeventType(String type) {
         return of("loresentry.cloudevent.type", type);
+    }
+
+    /**
+     * 받은 메시지의 이벤트 종류(ce_type). 헤더는 보낸 쪽이 넣은 값 그대로라, 이 서비스가 처리하는 종류(known)면 그대로 남기고
+     * 목록 밖이면 other다.
+     */
+    public static LogField cloudeventType(String type, Set<String> known) {
+        return of("loresentry.cloudevent.type", type == null ? null : (known.contains(type) ? type : OTHER));
+    }
+
+    /** 이벤트 대상(ce_subject). 그 이벤트가 상태를 담은 대상의 ID다(사용자 탈퇴면 그 사용자, 파일 변경이면 그 파일). */
+    public static LogField cloudeventSubject(UUID subject) {
+        return uuid("loresentry.cloudevent.subject", subject);
     }
 
     // ---------------------------------------------------------------- 스케줄 작업 (loresentry.*)
@@ -193,8 +221,11 @@ public final class LogField {
 
     // ---------------------------------------------------------------- 시간·에러 (ECS)
 
-    /** 걸린 시간. ECS event.duration은 나노초다. */
-    public static LogField duration(Duration duration) {
+    /**
+     * 걸린 시간. ECS event.duration은 나노초다. 시간은 로깅 팩토리(RequestLogFilter, LogFlow)만 잰다. 서비스 코드가 시간을 재서
+     * 넘기지 않도록 이 패키지 안에서만 보인다.
+     */
+    static LogField duration(Duration duration) {
         return of("event.duration", duration == null ? null : duration.toNanos());
     }
 
