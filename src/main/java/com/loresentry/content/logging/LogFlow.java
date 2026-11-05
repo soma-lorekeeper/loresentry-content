@@ -7,10 +7,15 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.kafka.support.KafkaUtils;
 import software.amazon.awssdk.core.exception.SdkServiceException;
 
 /**
@@ -26,7 +31,8 @@ import software.amazon.awssdk.core.exception.SdkServiceException;
  *   <li>{@link #polling}: 짧은 주기로 도는 폴링 1회(1초 outbox relay, 1분 최신화 시간 제한). 그 회차에서 처음 줄이 찍힐 때
  *       시작 줄을 먼저 남기고, 줄이 하나도 없으면 시작·종료 줄을 모두 남기지 않는다</li>
  *   <li>{@link #kafkaRecord}: Kafka 레코드 하나. 시작은 {@code <event> event received}, 종료는
- *       {@code <event> event processed}와 결과({@code loresentry.result.outcome})다</li>
+ *       {@code <event> event processed}와 결과({@code loresentry.result.outcome})다. 처리를 시작할 때 소비 지연 지표
+ *       ({@value #CONSUME_DELAY})도 남긴다</li>
  *   <li>{@link #call}: 외부 호출 하나(S3, KMS). 시작은 호출하는 client 메서드의 진입 줄이고, 결과 줄 하나를 남긴다</li>
  *   <li>{@link #task}: 흐름 안·밖의 별도 작업(커밋 뒤 정리, migration). {@code <name> start}와
  *       {@code <name> completed} 또는 {@code <name> failed}</li>
@@ -71,6 +77,18 @@ public final class LogFlow {
     static final String SCHEDULE_FAILED = "schedule run failed";
     /** 상대가 5xx로 답한 호출의 error.type. 응답 상태 자체는 http.response.status_code에 있다. */
     static final String UPSTREAM_SERVER_ERROR = "UPSTREAM_SERVER_ERROR";
+
+    /** Kafka 소비 지연 histogram 이름(docs ALERTING.md 7절). 레코드의 시각부터 이 서비스가 처리를 시작하기까지 지난 초다. */
+    static final String CONSUME_DELAY = "loresentry.kafka.consume.delay";
+    /**
+     * 소비 지연의 버킷 경계(초). 평소의 지연(수십 ms~1초)과 밀림(재시도 25초, 분~시간 단위로 쌓인 lag)을 함께 가른다. agent에 권고로 넘겨
+     * 기본 경계(밀리초 단위 요청 지연용) 대신 쓰게 한다.
+     */
+    static final List<Double> CONSUME_DELAY_BUCKETS = List.of(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 900.0, 3600.0);
+    /** 소비 지연의 topic 속성(OpenTelemetry messaging 규약 이름). */
+    static final AttributeKey<String> MESSAGING_DESTINATION = AttributeKey.stringKey("messaging.destination.name");
+    /** 소비 지연의 consumer group 속성(OpenTelemetry messaging 규약 이름). */
+    static final AttributeKey<String> MESSAGING_CONSUMER_GROUP = AttributeKey.stringKey("messaging.consumer.group.name");
 
     /** 종료 줄의 레벨. */
     private enum Severity { INFO, WARN, ERROR }
@@ -189,12 +207,16 @@ public final class LogFlow {
      * <p>할 일이 예외로 끝나면 종료 줄을 warn과 결과 FAILED, error.type, 메시지 없는 스택으로 남기고 예외를 그대로 다시 던진다. 에러
      * 처리기가 다시 시도하거나 DLQ로 보낸다(그 줄도 스택을 남긴다. warn·error 줄에는 언제나 스택이 있다, LOG_SCHEMA.md 5절).
      *
+     * <p>시작 줄보다 먼저 소비 지연({@value #CONSUME_DELAY})을 지표로 남긴다({@link #recordConsumeDelay}).
+     *
      * @param knownTypes 이 서비스가 처리하는 이벤트 종류(ce_type). 목록 밖은 로그에 other로 남는다
      * @param event      문구에 쓰는 이벤트 이름(예: "user deleted")
      */
     public static <E extends Exception> void kafkaRecord(ConsumerRecord<?, ?> record, Set<String> knownTypes, String event,
                                                          Body<E> body) throws E {
         LogFlow flow = new LogFlow(AppLogger.callerOf(LogFlow.class));
+        // 처리를 시작하는 지금, 레코드가 만들어진 뒤 얼마나 기다렸는지 지표로 남긴다. 줄과 span은 남기지 않는다
+        recordConsumeDelay(record);
         AppLogger.Binding bound = AppLogger.bind(TraceContext.forRecord(Span.current().getSpanContext(), record, knownTypes));
         String processed = event + " event processed";
         try {
@@ -296,6 +318,35 @@ public final class LogFlow {
     }
 
     // ---------------------------------------------------------------- 내부
+
+    /**
+     * 레코드의 시각({@link ConsumerRecord#timestamp()}, 보통 보낸 쪽 producer가 만든 시각)부터 지금까지 지난 초를 소비 지연 histogram에
+     * 남긴다(docs ALERTING.md 7절). broker에 쌓여 기다린 시간과, 같은 partition의 앞 레코드가 처리·재시도되는 동안 기다린 시간이 모두
+     * 들어간다. 에러 처리기가 다시 시도하면 listener가 다시 불려 그 시도의 지연도 따로 남는다.
+     *
+     * <ul>
+     *   <li>시각이 없는 레코드(음수, 예전 형식)는 남기지 않는다</li>
+     *   <li>보낸 쪽과 이 서버의 시계가 어긋나 음수가 나오면 0으로 남긴다</li>
+     *   <li>속성은 topic({@code messaging.destination.name})과 consumer group({@code messaging.consumer.group.name})이다. group은
+     *       Spring Kafka가 listener 스레드에 두는 값({@link KafkaUtils#getConsumerGroupId()})이라 listener 밖(테스트에서 직접 부름)에서는
+     *       없고, 그때는 topic만 붙인다</li>
+     * </ul>
+     *
+     * <p>meter와 histogram은 부를 때마다 꺼낸다. 테스트가 SDK를 바꿔 꽂을 수 있게 하려는 것으로 {@link TraceContext#tracer()}와 같은
+     * 이유다. SDK가 meter와 같은 이름의 histogram을 하나로 묶어 두므로 부를 때마다 새로 쌓이지 않는다. 지표 전송이 꺼진 환경(prod 기본)에서는
+     * agent의 meter가 아무것도 하지 않는다.
+     */
+    private static void recordConsumeDelay(ConsumerRecord<?, ?> record) {
+        if (record.timestamp() < 0) return;
+        double seconds = Math.max(0, System.currentTimeMillis() - record.timestamp()) / 1000.0;
+        AttributesBuilder attributes = Attributes.builder().put(MESSAGING_DESTINATION, record.topic());
+        String group = KafkaUtils.getConsumerGroupId();
+        if (group != null) attributes.put(MESSAGING_CONSUMER_GROUP, group);
+        GlobalOpenTelemetry.getMeter(TraceContext.INSTRUMENTATION_SCOPE).histogramBuilder(CONSUME_DELAY).setUnit("s")
+                .setDescription("Time from a Kafka record's timestamp until this service starts processing it")
+                .setExplicitBucketBoundariesAdvice(CONSUME_DELAY_BUCKETS).build()
+                .record(seconds, attributes.build());
+    }
 
     /**
      * 스케줄·폴링의 할 일을 하고 종료 줄을 남긴다. 예외는 삼킨다(스케줄러가 예외 메시지를 찍지 않게). 폴링은 시작 줄을 남긴

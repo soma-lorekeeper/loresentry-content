@@ -2,6 +2,7 @@ package com.loresentry.content.logging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,7 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import ch.qos.logback.classic.Logger;
@@ -20,16 +22,21 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.metrics.data.HistogramPointData;
+import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.sdk.testing.junit5.OpenTelemetryExtension;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.record.TimestampType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.kafka.support.KafkaUtils;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
@@ -42,12 +49,13 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
  *   <li>시작·종료 줄의 위치는 흐름을 연 서비스 메서드다(log.layer·log.origin.function)</li>
  *   <li>진행 중에 알게 된 대상 ID(with)와 사용자(identify)가 이후 줄과 종료 줄에 붙는다</li>
  *   <li>외부 호출·작업·outbox 행·Kafka 에러 처리는 로깅 팩토리가 span을 열고, 그 줄이 그 span 안에서 찍힌다(LOG_SCHEMA.md 7절)</li>
+ *   <li>Kafka 레코드를 처리하기 시작할 때 소비 지연 histogram을 남긴다(docs ALERTING.md 7절)</li>
  * </ul>
  */
 class LogFlowTest {
     /**
-     * 로깅 팩토리가 여는 span을 받는 OpenTelemetry SDK. 운영에서는 agent의 SDK가 받는다. 이 테스트 클래스 동안 GlobalOpenTelemetry가 되고,
-     * 테스트마다 받은 span을 비운다.
+     * 로깅 팩토리가 여는 span과 남기는 지표를 받는 OpenTelemetry SDK. 운영에서는 agent의 SDK가 받는다. 이 테스트 클래스 동안
+     * GlobalOpenTelemetry가 되고, 테스트마다 받은 span과 지표를 비운다.
      */
     @RegisterExtension
     static final OpenTelemetryExtension OTEL = OpenTelemetryExtension.create();
@@ -226,6 +234,61 @@ class LogFlowTest {
                 .containsEntry("error.type", "java.lang.IllegalArgumentException");
         assertThat((String) pairs(processed).get("error.stack_trace")).startsWith("java.lang.IllegalArgumentException\n")
                 .doesNotContain("bad payload");
+    }
+
+    /** 그 시각(epoch 밀리초)에 보낸 쪽이 만든 레코드. 시각을 정하지 않는 짧은 생성자는 시각이 없는 레코드(-1)를 만든다. */
+    private static ConsumerRecord<String, String> recordCreatedAt(String topic, long timestamp) {
+        return new ConsumerRecord<>(topic, 0, 5L, timestamp, TimestampType.CREATE_TIME, 1, 1, "k", "v", new RecordHeaders(),
+                Optional.empty());
+    }
+
+    /** 이 테스트에서 남긴 소비 지연 histogram의 점 하나(속성 조합이 하나뿐일 때). */
+    private static HistogramPointData consumeDelay() {
+        MetricData delay = OTEL.getMetrics().stream().filter(m -> m.getName().equals(LogFlow.CONSUME_DELAY)).findFirst()
+                .orElseThrow(() -> new AssertionError("no metric named " + LogFlow.CONSUME_DELAY));
+        assertThat(delay.getUnit()).isEqualTo("s");
+        assertThat(delay.getInstrumentationScopeInfo().getName()).isEqualTo(TraceContext.INSTRUMENTATION_SCOPE);
+        assertThat(delay.getHistogramData().getPoints()).hasSize(1);
+        return delay.getHistogramData().getPoints().iterator().next();
+    }
+
+    @Test
+    void aKafkaRecordRecordsHowLongItWaitedBeforeProcessing() {
+        // 2초 전에 만들어진 레코드를 listener 스레드에서 받았다. Spring Kafka는 listener 스레드에 consumer group을 둔다
+        var record = recordCreatedAt("auth.user.deleted.v1", System.currentTimeMillis() - 2_000);
+        KafkaUtils.setConsumerGroupId("content.user-deleted");
+        try {
+            LogFlow.kafkaRecord(record, Set.of("UserDeleted"), "user deleted", flow -> AppLogger.current().info("sample handle"));
+            // 시각이 없는 레코드(-1)는 남기지 않는다. 남겼다면 같은 점의 개수가 2가 된다
+            LogFlow.kafkaRecord(new ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 6L, "k", "v"), Set.of("UserDeleted"),
+                    "user deleted", flow -> { });
+        } finally {
+            KafkaUtils.clearConsumerGroupId();
+        }
+
+        HistogramPointData point = consumeDelay();
+        assertThat(point.getCount()).isEqualTo(1);
+        // 레코드의 시각부터 처리를 시작할 때까지. 테스트가 도는 시간만큼 2초보다 조금 더 걸린다
+        assertThat(point.getSum()).isBetween(2.0, 30.0);
+        assertThat(point.getBoundaries()).isEqualTo(LogFlow.CONSUME_DELAY_BUCKETS);
+        assertThat(point.getAttributes().asMap()).containsOnly(entry(LogFlow.MESSAGING_DESTINATION, "auth.user.deleted.v1"),
+                entry(LogFlow.MESSAGING_CONSUMER_GROUP, "content.user-deleted"));
+        // 지표는 줄을 더하지 않는다. 시작·처리·종료 줄 그대로다
+        assertThat(messages()).containsExactly("user deleted event received", "sample handle", "user deleted event processed",
+                "user deleted event received", "user deleted event processed");
+    }
+
+    @Test
+    void aKafkaRecordFromAClockAheadOfOursRecordsNoNegativeDelay() {
+        // 보낸 쪽의 시계가 1분 빠르다. listener 밖(consumer group 없음)이라 topic만 붙는다
+        var record = recordCreatedAt("graph-rag.graph-refresh.completed.v1", System.currentTimeMillis() + 60_000);
+        LogFlow.kafkaRecord(record, Set.of("GraphRefreshCompleted"), "graph refresh completed", flow -> { });
+
+        HistogramPointData point = consumeDelay();
+        assertThat(point.getCount()).isEqualTo(1);
+        assertThat(point.getSum()).isZero();
+        assertThat(point.getAttributes().asMap())
+                .containsOnly(entry(LogFlow.MESSAGING_DESTINATION, "graph-rag.graph-refresh.completed.v1"));
     }
 
     @Test
