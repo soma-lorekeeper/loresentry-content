@@ -44,6 +44,8 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>{@link #deletePublishedBefore(OffsetDateTime)} 만 예외다. 회차와 무관하게 정리 작업({@link OutboxPurge})이
  * 하루 한 번 따로 부른다. 잠금에 기대지 않는 SQL 한 줄이라 스스로 트랜잭션을 연다.
+ *
+ * <p>{@link #backlog()} 도 회차 밖이다. relay 가 지표로 내보낼 밀린 행을 세는 읽기 한 줄이라 트랜잭션이 필요 없다.
  */
 @Repository
 public class OutboxRepository {
@@ -323,6 +325,29 @@ public class OutboxRepository {
                         """)
                 .param("cutoff", cutoff)
                 .update();
+    }
+
+    /**
+     * 아직 보내지 않은 행의 수와 그중 가장 오래된 행의 생성 시각을 센다. relay 가 지표(outbox 밀림)로 내보내려고 15초마다
+     * 부른다.
+     *
+     * <p>{@link #lockPending(int, long)} 과 같은 조건이라 같은 부분 인덱스(ix_outbox_events_pending, V14)로 보낼 행만 찾는다.
+     * 발행된 행이 쌓여도 그 행들까지 훑지 않고, 평소에는 보낼 행이 거의 없어 몇 줄을 세는 것으로 끝난다. 행을 잠그지 않으므로
+     * 트랜잭션이 필요 없고, relay 의 회차 트랜잭션 밖에서 불린다. 그래서 위 메서드들과 달리 {@code MANDATORY} 를 붙이지 않는다.
+     *
+     * @return 보내지 않은 행의 수와 가장 오래된 생성 시각(행이 없으면 null)
+     */
+    @SkipEntryLog("Called every 15 seconds by the relay to measure the backlog. The relay logs only in rounds that send rows")
+    Backlog backlog() {
+        // count(*) 와 min(created_at) 은 행이 없어도 한 줄을 돌려준다(0 과 null).
+        return jdbcClient
+                .sql("""
+                        select count(*) as pending, min(created_at) as oldest
+                        from outbox_events
+                        where published_at is null and quarantined_at is null
+                        """)
+                .query((rows, index) -> new Backlog(rows.getLong("pending"), rows.getObject("oldest", OffsetDateTime.class)))
+                .single();
     }
 
     /**
