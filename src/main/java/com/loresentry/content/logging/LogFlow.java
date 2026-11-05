@@ -89,6 +89,11 @@ public final class LogFlow {
     static final AttributeKey<String> MESSAGING_DESTINATION = AttributeKey.stringKey("messaging.destination.name");
     /** 소비 지연의 consumer group 속성(OpenTelemetry messaging 규약 이름). */
     static final AttributeKey<String> MESSAGING_CONSUMER_GROUP = AttributeKey.stringKey("messaging.consumer.group.name");
+    /**
+     * 소비 지연의 partition 속성(OpenTelemetry messaging 규약 이름, 규약대로 문자열). 한 partition만 밀린 것을 가려 본다. graph-rag·ai-chat이
+     * 남기는 소비 지연과 같은 속성이다.
+     */
+    static final AttributeKey<String> MESSAGING_PARTITION = AttributeKey.stringKey("messaging.destination.partition.id");
 
     /** 종료 줄의 레벨. */
     private enum Severity { INFO, WARN, ERROR }
@@ -327,9 +332,9 @@ public final class LogFlow {
      * <ul>
      *   <li>시각이 없는 레코드(음수, 예전 형식)는 남기지 않는다</li>
      *   <li>보낸 쪽과 이 서버의 시계가 어긋나 음수가 나오면 0으로 남긴다</li>
-     *   <li>속성은 topic({@code messaging.destination.name})과 consumer group({@code messaging.consumer.group.name})이다. group은
-     *       Spring Kafka가 listener 스레드에 두는 값({@link KafkaUtils#getConsumerGroupId()})이라 listener 밖(테스트에서 직접 부름)에서는
-     *       없고, 그때는 topic만 붙인다</li>
+     *   <li>속성은 topic({@code messaging.destination.name}), partition({@code messaging.destination.partition.id}), consumer
+     *       group({@code messaging.consumer.group.name})이다. group은 Spring Kafka가 listener 스레드에 두는 값
+     *       ({@link KafkaUtils#getConsumerGroupId()})이라 listener 밖(테스트에서 직접 부름)에서는 없고, 그때는 topic과 partition만 붙인다</li>
      * </ul>
      *
      * <p>meter와 histogram은 부를 때마다 꺼낸다. 테스트가 SDK를 바꿔 꽂을 수 있게 하려는 것으로 {@link TraceContext#tracer()}와 같은
@@ -339,7 +344,8 @@ public final class LogFlow {
     private static void recordConsumeDelay(ConsumerRecord<?, ?> record) {
         if (record.timestamp() < 0) return;
         double seconds = Math.max(0, System.currentTimeMillis() - record.timestamp()) / 1000.0;
-        AttributesBuilder attributes = Attributes.builder().put(MESSAGING_DESTINATION, record.topic());
+        AttributesBuilder attributes = Attributes.builder().put(MESSAGING_DESTINATION, record.topic())
+                .put(MESSAGING_PARTITION, String.valueOf(record.partition()));
         String group = KafkaUtils.getConsumerGroupId();
         if (group != null) attributes.put(MESSAGING_CONSUMER_GROUP, group);
         GlobalOpenTelemetry.getMeter(TraceContext.INSTRUMENTATION_SCOPE).histogramBuilder(CONSUME_DELAY).setUnit("s")

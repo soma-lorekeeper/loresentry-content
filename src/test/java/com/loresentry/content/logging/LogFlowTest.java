@@ -236,9 +236,12 @@ class LogFlowTest {
                 .doesNotContain("bad payload");
     }
 
-    /** 그 시각(epoch 밀리초)에 보낸 쪽이 만든 레코드. 시각을 정하지 않는 짧은 생성자는 시각이 없는 레코드(-1)를 만든다. */
+    /**
+     * 그 시각(epoch 밀리초)에 보낸 쪽이 만든 partition 2의 레코드. 시각을 정하지 않는 짧은 생성자는 시각이 없는 레코드(-1)를 만든다.
+     * partition을 0이 아닌 값으로 두어 속성에 실제 partition 번호가 실리는지 본다.
+     */
     private static ConsumerRecord<String, String> recordCreatedAt(String topic, long timestamp) {
-        return new ConsumerRecord<>(topic, 0, 5L, timestamp, TimestampType.CREATE_TIME, 1, 1, "k", "v", new RecordHeaders(),
+        return new ConsumerRecord<>(topic, 2, 5L, timestamp, TimestampType.CREATE_TIME, 1, 1, "k", "v", new RecordHeaders(),
                 Optional.empty());
     }
 
@@ -260,7 +263,7 @@ class LogFlowTest {
         try {
             LogFlow.kafkaRecord(record, Set.of("UserDeleted"), "user deleted", flow -> AppLogger.current().info("sample handle"));
             // 시각이 없는 레코드(-1)는 남기지 않는다. 남겼다면 같은 점의 개수가 2가 된다
-            LogFlow.kafkaRecord(new ConsumerRecord<String, String>("auth.user.deleted.v1", 0, 6L, "k", "v"), Set.of("UserDeleted"),
+            LogFlow.kafkaRecord(new ConsumerRecord<String, String>("auth.user.deleted.v1", 2, 6L, "k", "v"), Set.of("UserDeleted"),
                     "user deleted", flow -> { });
         } finally {
             KafkaUtils.clearConsumerGroupId();
@@ -271,8 +274,9 @@ class LogFlowTest {
         // 레코드의 시각부터 처리를 시작할 때까지. 테스트가 도는 시간만큼 2초보다 조금 더 걸린다
         assertThat(point.getSum()).isBetween(2.0, 30.0);
         assertThat(point.getBoundaries()).isEqualTo(LogFlow.CONSUME_DELAY_BUCKETS);
+        // partition은 OpenTelemetry 규약대로 문자열이다(graph-rag·ai-chat과 같다)
         assertThat(point.getAttributes().asMap()).containsOnly(entry(LogFlow.MESSAGING_DESTINATION, "auth.user.deleted.v1"),
-                entry(LogFlow.MESSAGING_CONSUMER_GROUP, "content.user-deleted"));
+                entry(LogFlow.MESSAGING_PARTITION, "2"), entry(LogFlow.MESSAGING_CONSUMER_GROUP, "content.user-deleted"));
         // 지표는 줄을 더하지 않는다. 시작·처리·종료 줄 그대로다
         assertThat(messages()).containsExactly("user deleted event received", "sample handle", "user deleted event processed",
                 "user deleted event received", "user deleted event processed");
@@ -280,7 +284,7 @@ class LogFlowTest {
 
     @Test
     void aKafkaRecordFromAClockAheadOfOursRecordsNoNegativeDelay() {
-        // 보낸 쪽의 시계가 1분 빠르다. listener 밖(consumer group 없음)이라 topic만 붙는다
+        // 보낸 쪽의 시계가 1분 빠르다. listener 밖(consumer group 없음)이라 topic과 partition만 붙는다
         var record = recordCreatedAt("graph-rag.graph-refresh.completed.v1", System.currentTimeMillis() + 60_000);
         LogFlow.kafkaRecord(record, Set.of("GraphRefreshCompleted"), "graph refresh completed", flow -> { });
 
@@ -288,7 +292,8 @@ class LogFlowTest {
         assertThat(point.getCount()).isEqualTo(1);
         assertThat(point.getSum()).isZero();
         assertThat(point.getAttributes().asMap())
-                .containsOnly(entry(LogFlow.MESSAGING_DESTINATION, "graph-rag.graph-refresh.completed.v1"));
+                .containsOnly(entry(LogFlow.MESSAGING_DESTINATION, "graph-rag.graph-refresh.completed.v1"),
+                        entry(LogFlow.MESSAGING_PARTITION, "2"));
     }
 
     @Test
