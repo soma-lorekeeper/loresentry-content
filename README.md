@@ -434,27 +434,44 @@ keys again. The failure is logged as a count, without keys or user ids.
 
 ## Sample project
 
-`POST /projects/sample` builds the example project from
-`src/main/resources/sample/glass-garden.json` — three episodes, seven
-manuscripts, fourteen setting documents across all six setting folders, and 46
-relations. It goes through the same services a user does (`ProjectService`,
-`FileService`, `DocumentService`), so ranks, name uniqueness, revision numbers,
-auto versions and same-project relation checks all apply, and the whole thing is
-one transaction. Every document is saved once at revision `1` with a
-`description` property; manuscripts are saved last, so `last_file` is the final
-chapter. The seed is checked when the service starts (unknown keys, duplicate
-keys or pairs, self relations fail startup).
+`POST /projects/sample` builds the example project 「별이 없는 세자」 (a Joseon
+alternate-history romance fantasy) from
+`src/main/resources/sample/starless-prince.json` — five episode folders of six
+chapters (30 manuscripts of about 5,000 characters each), 26 setting documents
+across all six setting folders, and 241 relations. It goes through the same
+services a user does (`ProjectService`, `FileService`, `DocumentService`), so
+ranks, name uniqueness, revision numbers, auto versions and same-project
+relation checks all apply, and the whole thing is one transaction. Every
+document is saved once at revision `1` with a `description` property;
+manuscripts are saved last, so `last_file` is the final chapter. The seed is
+checked when the service starts (unknown keys, duplicate keys or pairs, self
+relations and malformed setting lines fail startup).
+
+Each body line is one editor block. Manuscript lines are plain paragraphs.
+Setting lines read a few line prefixes so the documents show off the editor:
+`#`/`##`/`###` headings, `- ` bullet items (consecutive lines form one list),
+`> ` quotes, `**bold**` inside a line, and `[core] ` for a paragraph marked as a
+key setting (`attrs.core`), which the setting check treats as a fact it must
+keep.
+
+`not_refreshed` lists the chapters the sample author has "just written". After
+the documents are saved, a baseline graph refresh run is recorded for every
+other document: a `NO_CHANGE` run with `prompt_version = 'sample-baseline'` and
+its `refresh_run_files`. The first refresh of a sample project therefore sends
+only those chapters (28–30), the way a real author refreshes after writing new
+chapters, instead of the whole book. Exclude `prompt_version =
+'sample-baseline'` when counting refresh usage.
 
 `?locale=en` builds the English edition from
-`src/main/resources/sample/glass-garden.en.json` instead. It is a translation,
-not another sample: the same keys, folders, episodes, document order, paragraph
-counts and relations, with only the text in English. Only the exact lowercase
-value `en` selects it; a missing `locale`, `ko` or any other value builds the
-Korean project, so a caller that never sends a locale behaves as before. Both
-seeds are read and checked once when the service starts. The English name is
-numbered on its own (`The Glass Garden Records (2)`), compared
-case-insensitively like the unique index. `SampleSeedTest` fails the build when
-the two files drift apart in shape or the English one still contains Hangul.
+`src/main/resources/sample/glass-garden.en.json` instead. It is still the
+previous sample, "The Glass Garden Records", with no refresh baseline; the
+shape checks in `SampleSeedTest` that keep it a translation of the Korean seed
+are disabled until it is rewritten. Only the exact lowercase value `en` selects
+it; a missing `locale`, `ko` or any other value builds the Korean project, so a
+caller that never sends a locale behaves as before. Both seeds are read and
+checked once when the service starts. Names are numbered on their own
+(`별이 없는 세자 (2)`, `The Glass Garden Records (2)`), compared
+case-insensitively like the unique index.
 
 ## Not implemented yet
 - A retry for S3 objects whose post-commit delete failed. They are logged and

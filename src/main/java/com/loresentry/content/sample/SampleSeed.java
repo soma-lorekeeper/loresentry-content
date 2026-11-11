@@ -12,21 +12,22 @@ import org.springframework.core.io.ClassPathResource;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * 예시 프로젝트의 내용. {@code sample/glass-garden.json} 을 그대로 옮긴 모양이다.
+ * 예시 프로젝트의 내용. {@code sample/starless-prince.json} 을 그대로 옮긴 모양이다.
  *
  * <p>문서는 {@code key} 로 서로를 가리킨다. id 는 만들 때마다 새로 생기므로 파일에 적을 수 없다.
  *
- * <p>영어판 {@code sample/glass-garden.en.json} 은 키, 폴더, 관계, 순서를 그대로 두고 글만 옮긴
- * 것이다. 두 파일이 같은 모양인지는 {@code SampleSeedTest} 가 맞춰 본다.
+ * <p>영어판 {@code sample/glass-garden.en.json} 은 아직 이전 예시("The Glass Garden Records")다.
+ * 한국어판을 옮긴 영어판이 생기면 두 파일이 같은 모양인지 {@code SampleSeedTest} 가 다시 맞춰 본다.
  */
 record SampleSeed(
         String name,
         String description,
         List<Episode> episodes,
         List<Setting> settings,
-        List<Link> relations) {
+        List<Link> relations,
+        @JsonProperty("not_refreshed") List<String> notRefreshed) {
 
-    static final String KOREAN = "sample/glass-garden.json";
+    static final String KOREAN = "sample/starless-prince.json";
 
     static final String ENGLISH = "sample/glass-garden.en.json";
 
@@ -66,8 +67,18 @@ record SampleSeed(
                 require(resource, keys.add(manuscript.key()), "duplicate key " + manuscript.key());
             }
         }
+        Set<String> manuscripts = Set.copyOf(keys);
         for (Setting setting : settings) {
             require(resource, keys.add(setting.key()), "duplicate key " + setting.key());
+            for (String line : setting.body()) {
+                String problem = SampleBody.problem(line);
+                require(resource, problem == null, setting.key() + ": " + problem);
+            }
+        }
+        if (notRefreshed != null) {
+            for (String key : notRefreshed) {
+                require(resource, manuscripts.contains(key), "unknown not_refreshed manuscript " + key);
+            }
         }
         Set<String> pairs = new HashSet<>();
         for (Link link : relations) {
