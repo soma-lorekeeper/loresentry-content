@@ -25,9 +25,11 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.loresentry.content.document.DocumentService;
+import com.loresentry.content.refresh.GraphRefreshRepository;
 import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -35,18 +37,43 @@ import tools.jackson.databind.JsonNode;
 
 class SampleProjectApiTest extends ApiTestSupport {
 
-    private static final String NAME = "유리 정원의 기록";
+    private static final String NAME = "별이 없는 세자";
+
+    private static final String LAST_CHAPTER = "30화 · 동지 사흘 전";
+
+    private static final String SEOHWA_DESCRIPTION = "별을 읽는 금지된 재능을 숨긴 관상감 서운녀";
+
+    private static final int MANUSCRIPTS = 30;
+
+    private static final int SETTINGS = 26;
+
+    private static final int RELATIONS = 241;
+
+    private static final List<String> NOT_REFRESHED = List.of(
+            "28화 · 청에서 온 손님", "29화 · 분성(分星)의 값", LAST_CHAPTER);
 
     private static final String ENGLISH_NAME = "The Glass Garden Records";
 
-    private static final int MANUSCRIPTS = 7;
+    private static final int ENGLISH_MANUSCRIPTS = 7;
 
-    private static final int SETTINGS = 14;
+    private static final int ENGLISH_SETTINGS = 14;
 
-    private static final int RELATIONS = 46;
+    private static final int ENGLISH_RELATIONS = 46;
 
     @MockitoSpyBean
     private DocumentService documents;
+
+    @Autowired
+    private GraphRefreshRepository refreshRuns;
+
+    private Map<String, String> idsByTitle(String project) throws Exception {
+        JsonNode tree = read(mockMvc.perform(as(get("/projects/" + project + "/files"))).andReturn());
+        Map<String, String> ids = new HashMap<>();
+        for (JsonNode document : tree.get("documents")) {
+            ids.put(document.get("title").stringValue(), document.get("id").stringValue());
+        }
+        return ids;
+    }
 
     private JsonNode createSample(UUID user) throws Exception {
         return createSample(post("/projects/sample"), user);
@@ -78,7 +105,7 @@ class SampleProjectApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.created_at").exists())
                 .andExpect(jsonPath("$.last_worked_at").exists())
                 // 원고를 마지막으로 저장하므로 예시를 열면 마지막 회차가 보인다.
-                .andExpect(jsonPath("$.last_file.title").value("7화 · 균열의 밤"))
+                .andExpect(jsonPath("$.last_file.title").value(LAST_CHAPTER))
                 .andReturn();
         String id = read(result).get("id").stringValue();
 
@@ -93,8 +120,8 @@ class SampleProjectApiTest extends ApiTestSupport {
 
         MvcResult tree = mockMvc.perform(as(get("/projects/" + project + "/files")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.episodes.length()").value(3))
-                .andExpect(jsonPath("$.episodes[0].name").value("Episode 1. 유리의 계절"))
+                .andExpect(jsonPath("$.episodes.length()").value(5))
+                .andExpect(jsonPath("$.episodes[0].name").value("1부. 서운녀"))
                 .andExpect(jsonPath("$.documents.length()").value(MANUSCRIPTS + SETTINGS))
                 .andExpect(jsonPath("$.documents[*].revision_no", everyItem(
                         org.hamcrest.Matchers.is(1))))
@@ -115,40 +142,39 @@ class SampleProjectApiTest extends ApiTestSupport {
     @Test
     void storesBodiesAndRelationsTheWayTheEditorSavesThem() throws Exception {
         String project = createSample(owner).get("id").stringValue();
-        JsonNode tree = read(mockMvc.perform(as(get("/projects/" + project + "/files"))).andReturn());
-        String seoyun = null;
+        Map<String, String> ids = idsByTitle(project);
         Map<String, String> titles = new HashMap<>();
-        for (JsonNode document : tree.get("documents")) {
-            titles.put(document.get("id").stringValue(), document.get("title").stringValue());
-            if ("서윤".equals(document.get("title").stringValue())) {
-                seoyun = document.get("id").stringValue();
-            }
-        }
+        ids.forEach((title, id) -> titles.put(id, title));
 
-        JsonNode content = read(mockMvc.perform(as(get("/files/" + seoyun + "/content")))
+        JsonNode content = read(mockMvc.perform(as(get("/files/" + ids.get("윤서화") + "/content")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.schema_version").value(1))
                 .andExpect(jsonPath("$.body.doc.type").value("doc"))
-                .andExpect(jsonPath("$.body.doc.content[0].type").value("paragraph"))
-                .andExpect(jsonPath("$.body.doc.content[0].content[0].text").value(
-                        org.hamcrest.Matchers.startsWith("서윤은 정원 기록단에")))
                 .andExpect(jsonPath("$.legacy_body_md").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.properties[0].key").value("description"))
-                .andExpect(jsonPath("$.properties[0].value").value("정원 기록단의 막내 기록관"))
+                .andExpect(jsonPath("$.properties[0].value").value(SEOHWA_DESCRIPTION))
                 .andExpect(jsonPath("$.revision_no").value(1))
                 .andReturn());
 
-        // 서윤이 먼저 저장되고 원고가 나중에 가리켰어도, 서윤 쪽에 원고 관계가 모두 보인다.
+        Set<String> blocks = new HashSet<>();
+        content.get("body").get("doc").get("content").forEach(block -> blocks.add(block.get("type").stringValue()));
+        assertThat(blocks).contains("heading", "bulletList", "paragraph");
+
+        JsonNode chapter = read(mockMvc.perform(as(get("/files/" + ids.get(LAST_CHAPTER) + "/content")))
+                .andExpect(status().isOk())
+                .andReturn());
+        chapter.get("body").get("doc").get("content")
+                .forEach(block -> assertThat(block.get("type").stringValue()).isEqualTo("paragraph"));
+
         Set<String> related = new HashSet<>();
         for (JsonNode relation : content.get("relations")) {
             related.add(titles.get(relation.get("target_document_id").stringValue()));
             String key = relation.get("relation_key").stringValue();
             assertThat(key).startsWith("related_");
         }
-        assertThat(related).containsExactlyInAnyOrder(
-                "1화 · 첫 번째 온실", "2화 · 빛의 순찰", "3화 · 금 간 렌즈", "6화 · 유리 정원", "7화 · 균열의 밤",
-                "정원 기록단", "하린", "첫 순찰");
-        assertThat(content.get("relations").toString()).contains("막내 기록관");
+        assertThat(related).hasSize(MANUSCRIPTS + 11)
+                .contains("1화 · 별을 숨긴 아이", LAST_CHAPTER, "이현", "정시후", "덕이", "흑요석 성반");
+        assertThat(content.get("relations").toString()).contains("소꿉친구");
 
         // 관계에는 방향이 없고 한 쌍은 한 행이다(V10). 양쪽에서 보이는 것은 행이 둘이어서가 아니다.
         long total = jdbcClient.sql("""
@@ -176,21 +202,61 @@ class SampleProjectApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.nodes.length()").value(MANUSCRIPTS + SETTINGS))
                 .andExpect(jsonPath("$.nodes[*].description", everyItem(notNullValue())))
                 .andExpect(jsonPath("$.edges.length()").value(RELATIONS))
-                .andExpect(jsonPath("$.episodes.length()").value(3))
-                .andExpect(jsonPath("$.episodes[0].document_ids.length()").value(3))
-                .andExpect(jsonPath("$.episodes[1].document_ids.length()").value(2))
-                .andExpect(jsonPath("$.episodes[2].document_ids.length()").value(2));
+                .andExpect(jsonPath("$.episodes.length()").value(5))
+                .andExpect(jsonPath("$.episodes[*].document_ids.length()", everyItem(
+                        org.hamcrest.Matchers.is(6))));
+    }
+
+    @Test
+    void marksTheRulesTheSettingCheckMustKeep() throws Exception {
+        String project = createSample(owner).get("id").stringValue();
+        Map<String, String> ids = idsByTitle(project);
+
+        JsonNode rules = read(mockMvc.perform(as(get("/files/" + ids.get("명성과 독성술") + "/content")))
+                .andExpect(status().isOk())
+                .andReturn());
+        int core = 0;
+        for (JsonNode block : rules.get("body").get("doc").get("content")) {
+            if (block.path("attrs").path("core").booleanValue(false)) {
+                assertThat(block.get("type").stringValue()).isEqualTo("paragraph");
+                core++;
+            }
+        }
+        assertThat(core).isEqualTo(3);
+    }
+
+    @Test
+    void leavesTheLatestChaptersForTheFirstRefresh() throws Exception {
+        String project = createSample(owner).get("id").stringValue();
+        Map<String, String> ids = idsByTitle(project);
+
+        List<String> changed = refreshRuns.changedFiles(UUID.fromString(project)).stream()
+                .map(UUID::toString)
+                .toList();
+        assertThat(changed).containsExactlyInAnyOrderElementsOf(
+                NOT_REFRESHED.stream().map(ids::get).toList());
+
+        Map<String, Object> run = jdbcClient.sql("""
+                        select status, prompt_version, completed_at is not null as completed
+                        from refresh_runs where project_id = :project
+                        """)
+                .param("project", UUID.fromString(project))
+                .query().singleRow();
+        assertThat(run).containsEntry("status", "NO_CHANGE")
+                .containsEntry("prompt_version", GraphRefreshRepository.SAMPLE_BASELINE)
+                .containsEntry("completed", true);
+        assertThat(refreshRuns.openRunStatus(UUID.fromString(project))).isEmpty();
     }
 
     @Test
     void isSearchableLikeAnyOtherProject() throws Exception {
         String project = createSample(owner).get("id").stringValue();
-        String query = URLEncoder.encode("발자국", StandardCharsets.UTF_8);
+        String query = URLEncoder.encode("남별궁", StandardCharsets.UTF_8);
 
         MvcResult result = mockMvc.perform(as(get(URI.create("/projects/" + project + "/search?q=" + query))))
                 .andExpect(status().isOk())
                 .andReturn();
-        assertThat(read(result).toString()).contains("7화 · 균열의 밤");
+        assertThat(read(result).toString()).contains(LAST_CHAPTER);
     }
 
     @Test
@@ -223,7 +289,7 @@ class SampleProjectApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.episodes[*].name").value(contains(
                         "Episode 1. Season of Glass", "Episode 2. The North Door",
                         "Episode 3. Night of the Fracture")))
-                .andExpect(jsonPath("$.documents.length()").value(MANUSCRIPTS + SETTINGS))
+                .andExpect(jsonPath("$.documents.length()").value(ENGLISH_MANUSCRIPTS + ENGLISH_SETTINGS))
                 .andReturn());
         String seoyun = null;
         Map<String, String> titles = new HashMap<>();
@@ -255,11 +321,14 @@ class SampleProjectApiTest extends ApiTestSupport {
 
         mockMvc.perform(as(get("/projects/" + project + "/graph")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.nodes.length()").value(MANUSCRIPTS + SETTINGS))
-                .andExpect(jsonPath("$.edges.length()").value(RELATIONS))
+                .andExpect(jsonPath("$.nodes.length()").value(ENGLISH_MANUSCRIPTS + ENGLISH_SETTINGS))
+                .andExpect(jsonPath("$.edges.length()").value(ENGLISH_RELATIONS))
                 .andExpect(jsonPath("$.episodes[0].document_ids.length()").value(3))
                 .andExpect(jsonPath("$.episodes[1].document_ids.length()").value(2))
                 .andExpect(jsonPath("$.episodes[2].document_ids.length()").value(2));
+
+        assertThat(jdbcClient.sql("select count(*) from refresh_runs where project_id = :project")
+                .param("project", UUID.fromString(project)).query(Long.class).single()).isZero();
     }
 
     @Test
@@ -282,7 +351,7 @@ class SampleProjectApiTest extends ApiTestSupport {
             JsonNode created = createSample(UUID.randomUUID(), locale);
             assertThat(created.get("name").stringValue()).as(locale).isEqualTo(NAME);
             assertThat(created.get("last_file").get("title").stringValue()).as(locale)
-                    .isEqualTo("7화 · 균열의 밤");
+                    .isEqualTo(LAST_CHAPTER);
         }
     }
 
@@ -303,6 +372,7 @@ class SampleProjectApiTest extends ApiTestSupport {
         assertThat(jdbcClient.sql("select count(*) from projects").query(Long.class).single()).isZero();
         assertThat(jdbcClient.sql("select count(*) from document").query(Long.class).single()).isZero();
         assertThat(jdbcClient.sql("select count(*) from episode_folders").query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from refresh_runs").query(Long.class).single()).isZero();
     }
 
     @Test
@@ -316,10 +386,11 @@ class SampleProjectApiTest extends ApiTestSupport {
     void loadsAConsistentSeed() {
         SampleSeed seed = SampleSeed.load(SampleSeed.KOREAN);
 
-        assertThat(seed.episodes()).hasSize(3);
+        assertThat(seed.episodes()).hasSize(5);
         assertThat(seed.episodes().stream().mapToInt(episode -> episode.manuscripts().size()).sum())
                 .isEqualTo(MANUSCRIPTS);
         assertThat(seed.settings()).hasSize(SETTINGS);
         assertThat(seed.relations()).hasSize(RELATIONS);
+        assertThat(seed.notRefreshed()).containsExactly("ch-28", "ch-29", "ch-30");
     }
 }

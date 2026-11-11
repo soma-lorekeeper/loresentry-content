@@ -104,6 +104,23 @@ public class GraphRefreshRepository {
                 .single();
     }
 
+    public static final String SAMPLE_BASELINE = "sample-baseline";
+
+    public void insertSampleBaseline(UUID projectId, UUID ownerUserId, List<GraphRefreshRequested.File> files) {
+        UUID runId = jdbcClient
+                .sql("""
+                        insert into refresh_runs (project_id, requested_by, status, prompt_version, completed_at)
+                        values (:project, :user, 'NO_CHANGE', :version, now())
+                        returning id
+                        """)
+                .param("project", projectId)
+                .param("user", ownerUserId)
+                .param("version", SAMPLE_BASELINE)
+                .query(UUID.class)
+                .single();
+        insertRunFiles(runId, files);
+    }
+
     /** run 한 줄의 식별과 상태. */
     public record RunRow(UUID id, UUID projectId, String status) {
     }

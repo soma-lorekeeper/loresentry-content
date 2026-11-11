@@ -12,19 +12,18 @@ import java.util.stream.Collectors;
 
 import com.loresentry.content.document.DocumentService;
 import com.loresentry.content.document.DocumentSnapshot;
+import com.loresentry.content.event.GraphRefreshRequested;
 import com.loresentry.content.file.FileRequests;
 import com.loresentry.content.file.FileResponses;
 import com.loresentry.content.file.FileService;
 import com.loresentry.content.project.CreateProjectRequest;
 import com.loresentry.content.project.Project;
 import com.loresentry.content.project.ProjectService;
+import com.loresentry.content.refresh.GraphRefreshRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 처음 온 사용자가 둘러볼 예시 프로젝트를 만든다.
@@ -49,16 +48,18 @@ public class SampleProjectService {
 
     private final DocumentService documents;
 
+    private final GraphRefreshRepository refreshRuns;
+
     private final SampleSeed korean = SampleSeed.load(SampleSeed.KOREAN);
 
     private final SampleSeed english = SampleSeed.load(SampleSeed.ENGLISH);
 
-    private final JsonMapper json = JsonMapper.builder().build();
-
-    public SampleProjectService(ProjectService projects, FileService files, DocumentService documents) {
+    public SampleProjectService(ProjectService projects, FileService files, DocumentService documents,
+            GraphRefreshRepository refreshRuns) {
         this.projects = projects;
         this.files = files;
         this.documents = documents;
+        this.refreshRuns = refreshRuns;
     }
 
     @Transactional
@@ -76,7 +77,8 @@ public class SampleProjectService {
         for (SampleSeed.Setting setting : seed.settings()) {
             UUID id = createDocument(ownerUserId, projectId, setting.folderCode(), null, setting.title());
             created.put(setting.key(), new Created(id, setting.folderCode()));
-            order.add(new Pending(setting.key(), setting.title(), setting.description(), setting.body()));
+            order.add(new Pending(setting.key(), setting.title(), setting.description(),
+                    SampleBody.blocks(setting.body())));
         }
         for (SampleSeed.Episode episode : seed.episodes()) {
             UUID episodeId = createEpisode(ownerUserId, projectId, episode.title());
@@ -84,11 +86,13 @@ public class SampleProjectService {
                 UUID id = createDocument(ownerUserId, projectId, MANUSCRIPT, episodeId, manuscript.title());
                 created.put(manuscript.key(), new Created(id, MANUSCRIPT));
                 order.add(new Pending(manuscript.key(), manuscript.title(), manuscript.description(),
-                        manuscript.body()));
+                        SampleBody.paragraphs(manuscript.body())));
             }
         }
 
         Map<String, Map<String, String>> links = symmetricLinks(seed);
+        List<GraphRefreshRequested.File> refreshed = new ArrayList<>();
+        Set<String> notRefreshed = seed.notRefreshed() == null ? Set.of() : Set.copyOf(seed.notRefreshed());
         for (Pending pending : order) {
             List<DocumentSnapshot.Relation> relations = new ArrayList<>();
             links.getOrDefault(pending.key(), Map.of()).forEach((target, description) -> {
@@ -96,10 +100,17 @@ public class SampleProjectService {
                 // 관계 키는 서버가 대상 문서의 분류에서 꺼낸다. 보내도 쓰이지 않는다.
                 relations.add(new DocumentSnapshot.Relation(null, other.id(), description));
             });
-            documents.save(ownerUserId, created.get(pending.key()).id(), 0, null, new DocumentSnapshot(
-                    pending.title(), body(pending.body()), null,
+            UUID id = created.get(pending.key()).id();
+            long revision = documents.save(ownerUserId, id, 0, null, new DocumentSnapshot(
+                    pending.title(), pending.body(), null,
                     List.of(new DocumentSnapshot.TextProperty("description", pending.description())),
-                    relations));
+                    relations)).revisionNo();
+            if (!notRefreshed.contains(pending.key())) {
+                refreshed.add(new GraphRefreshRequested.File(id, revision));
+            }
+        }
+        if (seed.notRefreshed() != null) {
+            refreshRuns.insertSampleBaseline(projectId, ownerUserId, refreshed);
         }
 
         return projects.getActive(ownerUserId, projectId);
@@ -156,22 +167,9 @@ public class SampleProjectService {
         return document.id();
     }
 
-    /** 빈 줄로 나뉜 문단마다 문단 노드 하나. 프론트의 {@code bodyFromParagraphs} 와 같은 모양이다. */
-    private JsonNode body(List<String> paragraphs) {
-        ArrayNode content = json.createArrayNode();
-        for (String paragraph : paragraphs) {
-            ObjectNode block = content.addObject().put("type", "paragraph");
-            block.putArray("content").addObject().put("type", "text").put("text", paragraph);
-        }
-        ObjectNode body = json.createObjectNode();
-        body.put("schema_version", 1);
-        body.putObject("doc").put("type", "doc").set("content", content);
-        return body;
-    }
-
     private record Created(UUID id, String folderCode) {
     }
 
-    private record Pending(String key, String title, String description, List<String> body) {
+    private record Pending(String key, String title, String description, JsonNode body) {
     }
 }
