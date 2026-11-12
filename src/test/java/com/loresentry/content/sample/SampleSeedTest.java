@@ -33,6 +33,14 @@ class SampleSeedTest {
     }
 
     @Test
+    void koreanDescribesEveryRelation() {
+        assertThat(korean.relations())
+                .filteredOn(link -> link.description() == null || link.description().isBlank())
+                .extracting(link -> link.from() + " - " + link.to())
+                .isEmpty();
+    }
+
+    @Test
     void englishIsTranslatedThroughout() {
         List<String> texts = texts(english);
 

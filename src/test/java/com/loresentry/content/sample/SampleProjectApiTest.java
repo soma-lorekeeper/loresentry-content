@@ -202,6 +202,8 @@ class SampleProjectApiTest extends ApiTestSupport {
                 .andExpect(jsonPath("$.nodes.length()").value(MANUSCRIPTS + SETTINGS))
                 .andExpect(jsonPath("$.nodes[*].description", everyItem(notNullValue())))
                 .andExpect(jsonPath("$.edges.length()").value(RELATIONS))
+                .andExpect(jsonPath("$.edges[*].description", everyItem(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.emptyOrNullString()))))
                 .andExpect(jsonPath("$.episodes.length()").value(5))
                 .andExpect(jsonPath("$.episodes[*].document_ids.length()", everyItem(
                         org.hamcrest.Matchers.is(6))));

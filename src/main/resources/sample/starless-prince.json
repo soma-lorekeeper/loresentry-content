@@ -4453,7 +4453,7 @@
     {
       "from": "ch-1",
       "to": "c-sihoo",
-      "description": ""
+      "description": "시험 보조로 재회한다"
     },
     {
       "from": "ch-1",
@@ -4463,12 +4463,12 @@
     {
       "from": "ch-1",
       "to": "o-gwansang",
-      "description": ""
+      "description": "서운녀 시험이 열린다"
     },
     {
       "from": "ch-1",
       "to": "p-gwancheondae",
-      "description": ""
+      "description": "밤 관측 시험장"
     },
     {
       "from": "ch-1",
@@ -4483,12 +4483,12 @@
     {
       "from": "ch-1",
       "to": "w-star",
-      "description": ""
+      "description": "별실을 보되 읽지 않는다"
     },
     {
       "from": "ch-2",
       "to": "c-seohwa",
-      "description": ""
+      "description": "관천대 밤 근무를 맡는다"
     },
     {
       "from": "ch-2",
@@ -4518,17 +4518,17 @@
     {
       "from": "ch-2",
       "to": "c-heo",
-      "description": ""
+      "description": "가장 추운 자리를 맡긴다"
     },
     {
       "from": "ch-2",
       "to": "c-sihoo",
-      "description": ""
+      "description": "합격을 축하한다"
     },
     {
       "from": "ch-3",
       "to": "c-seohwa",
-      "description": ""
+      "description": "외할머니에게 독성술을 배웠다"
     },
     {
       "from": "ch-3",
@@ -4538,7 +4538,7 @@
     {
       "from": "ch-3",
       "to": "c-sihoo",
-      "description": ""
+      "description": "허 제조를 조심하라 경고"
     },
     {
       "from": "ch-3",
@@ -4553,12 +4553,12 @@
     {
       "from": "ch-3",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "아버지가 귀양 간 까닭"
     },
     {
       "from": "ch-3",
       "to": "i-binyeo",
-      "description": ""
+      "description": "머리에 꽂은 어머니 유품"
     },
     {
       "from": "ch-4",
@@ -4568,17 +4568,17 @@
     {
       "from": "ch-4",
       "to": "c-seohwa",
-      "description": ""
+      "description": "세자의 부탁을 거절한다"
     },
     {
       "from": "ch-4",
       "to": "c-doyun",
-      "description": ""
+      "description": "서화를 자선당으로 데려간다"
     },
     {
       "from": "ch-4",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "일기가 쌓인 서고"
     },
     {
       "from": "ch-4",
@@ -4588,22 +4588,22 @@
     {
       "from": "ch-4",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "기억을 잃기 시작한 밤"
     },
     {
       "from": "ch-4",
       "to": "w-starless",
-      "description": ""
+      "description": "매일 아침 별이 없음을 안다"
     },
     {
       "from": "ch-5",
       "to": "c-seohwa",
-      "description": ""
+      "description": "약조의 조건을 내건다"
     },
     {
       "from": "ch-5",
       "to": "c-hyeon",
-      "description": ""
+      "description": "명부고 출입과 보호를 약속"
     },
     {
       "from": "ch-5",
@@ -4613,7 +4613,7 @@
     {
       "from": "ch-5",
       "to": "o-gwansang",
-      "description": ""
+      "description": "제조실로 불려 간다"
     },
     {
       "from": "ch-5",
@@ -4628,7 +4628,7 @@
     {
       "from": "ch-5",
       "to": "i-myeongbu",
-      "description": ""
+      "description": "경신년 명부를 찾기로 한다"
     },
     {
       "from": "ch-5",
@@ -4643,22 +4643,22 @@
     {
       "from": "ch-6",
       "to": "c-seohwa",
-      "description": ""
+      "description": "처음 보는 사람이 된다"
     },
     {
       "from": "ch-6",
       "to": "c-doyun",
-      "description": ""
+      "description": "이용하면 베겠다고 경고"
     },
     {
       "from": "ch-6",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "함께 일하는 하루"
     },
     {
       "from": "ch-6",
       "to": "i-diary",
-      "description": ""
+      "description": "일기로 어제를 배운다"
     },
     {
       "from": "ch-6",
@@ -4668,17 +4668,17 @@
     {
       "from": "ch-7",
       "to": "c-seohwa",
-      "description": ""
+      "description": "아버지의 글씨를 찾는다"
     },
     {
       "from": "ch-7",
       "to": "c-hyeon",
-      "description": ""
+      "description": "서가 틈에 함께 숨는다"
     },
     {
       "from": "ch-7",
       "to": "c-doyun",
-      "description": ""
+      "description": "명부고 앞에서 망을 본다"
     },
     {
       "from": "ch-7",
@@ -4693,17 +4693,17 @@
     {
       "from": "ch-7",
       "to": "c-heo",
-      "description": ""
+      "description": "명부고를 순찰한다"
     },
     {
       "from": "ch-7",
       "to": "w-starless",
-      "description": ""
+      "description": "별을 옮긴 흔적 '移'"
     },
     {
       "from": "ch-8",
       "to": "c-seohwa",
-      "description": ""
+      "description": "지물포에서 홍랑을 만난다"
     },
     {
       "from": "ch-8",
@@ -4713,7 +4713,7 @@
     {
       "from": "ch-8",
       "to": "c-deoki",
-      "description": ""
+      "description": "흑월회 격문을 구해 온다"
     },
     {
       "from": "ch-8",
@@ -4728,27 +4728,27 @@
     {
       "from": "ch-8",
       "to": "c-heo",
-      "description": ""
+      "description": "그의 사람들이 지물포를 덮친다"
     },
     {
       "from": "ch-8",
       "to": "w-barrier",
-      "description": ""
+      "description": "결계가 별을 먹는다는 격문"
     },
     {
       "from": "ch-9",
       "to": "c-sihoo",
-      "description": ""
+      "description": "경신년 하늘을 함께 셈한다"
     },
     {
       "from": "ch-9",
       "to": "c-seohwa",
-      "description": ""
+      "description": "언 손끝을 시후에게 들킨다"
     },
     {
       "from": "ch-9",
       "to": "o-gwansang",
-      "description": ""
+      "description": "산실에서 성도를 셈한다"
     },
     {
       "from": "ch-9",
@@ -4758,12 +4758,12 @@
     {
       "from": "ch-9",
       "to": "p-inwangsan",
-      "description": ""
+      "description": "떨어진 별이 닿은 곳"
     },
     {
       "from": "ch-9",
       "to": "c-heo",
-      "description": ""
+      "description": "요즘 서화를 자주 묻는다"
     },
     {
       "from": "ch-10",
@@ -4773,22 +4773,22 @@
     {
       "from": "ch-10",
       "to": "c-hyeon",
-      "description": ""
+      "description": "쓰러진 서화를 안아 옮긴다"
     },
     {
       "from": "ch-10",
       "to": "w-star",
-      "description": ""
+      "description": "하룻밤에 세 번 독성한다"
     },
     {
       "from": "ch-10",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "쓰러진 서화를 눕힌 곳"
     },
     {
       "from": "ch-10",
       "to": "i-diary",
-      "description": ""
+      "description": "잊고 싶지 않다고 적는다"
     },
     {
       "from": "ch-10",
@@ -4803,37 +4803,37 @@
     {
       "from": "ch-11",
       "to": "c-seohwa",
-      "description": ""
+      "description": "독성 없이 함정을 넘긴다"
     },
     {
       "from": "ch-11",
       "to": "c-hyeon",
-      "description": ""
+      "description": "대비와 설전을 벌인다"
     },
     {
       "from": "ch-11",
       "to": "o-gwansang",
-      "description": ""
+      "description": "서운녀들이 불려 간다"
     },
     {
       "from": "ch-11",
       "to": "w-star",
-      "description": ""
+      "description": "세자의 별을 읽으라는 함정"
     },
     {
       "from": "ch-12",
       "to": "c-hyeon",
-      "description": ""
+      "description": "어제의 자신을 믿기로 한다"
     },
     {
       "from": "ch-12",
       "to": "c-seohwa",
-      "description": ""
+      "description": "의심을 받고 상처 입는다"
     },
     {
       "from": "ch-12",
       "to": "c-doyun",
-      "description": ""
+      "description": "서고 경비를 점검한다"
     },
     {
       "from": "ch-12",
@@ -4843,7 +4843,7 @@
     {
       "from": "ch-12",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "누군가 서고를 드나들었다"
     },
     {
       "from": "ch-12",
@@ -4853,7 +4853,7 @@
     {
       "from": "ch-13",
       "to": "c-hyeon",
-      "description": ""
+      "description": "기억 상실을 부정하지 않는다"
     },
     {
       "from": "ch-13",
@@ -4863,17 +4863,17 @@
     {
       "from": "ch-13",
       "to": "c-daebi",
-      "description": ""
+      "description": "대비전 대신들이 동조한다"
     },
     {
       "from": "ch-13",
       "to": "c-seohwa",
-      "description": ""
+      "description": "일기가 샌 길을 추리한다"
     },
     {
       "from": "ch-13",
       "to": "i-diary",
-      "description": ""
+      "description": "찢긴 장이 조회에 나온다"
     },
     {
       "from": "ch-13",
@@ -4883,12 +4883,12 @@
     {
       "from": "ch-14",
       "to": "c-seohwa",
-      "description": ""
+      "description": "장 나인을 설득한다"
     },
     {
       "from": "ch-14",
       "to": "c-hyeon",
-      "description": ""
+      "description": "장 나인을 궐 밖으로 보낸다"
     },
     {
       "from": "ch-14",
@@ -4898,32 +4898,32 @@
     {
       "from": "ch-14",
       "to": "w-star",
-      "description": ""
+      "description": "장 나인의 운명선을 본다"
     },
     {
       "from": "ch-14",
       "to": "i-diary",
-      "description": ""
+      "description": "일기를 훔친 나인을 찾는다"
     },
     {
       "from": "ch-14",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "도윤이 담 안에서 기다린다"
     },
     {
       "from": "ch-15",
       "to": "c-hyeon",
-      "description": ""
+      "description": "성석을 만지자 기억이 번쩍인다"
     },
     {
       "from": "ch-15",
       "to": "c-seohwa",
-      "description": ""
+      "description": "모닥불 앞에서 고백을 듣는다"
     },
     {
       "from": "ch-15",
       "to": "c-doyun",
-      "description": ""
+      "description": "흑월회 표식을 발견한다"
     },
     {
       "from": "ch-15",
@@ -4933,37 +4933,37 @@
     {
       "from": "ch-15",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "그날 떨어진 별의 파편"
     },
     {
       "from": "ch-15",
       "to": "w-barrier",
-      "description": ""
+      "description": "세자의 별이 결계 안에 있다"
     },
     {
       "from": "ch-15",
       "to": "o-heugwol",
-      "description": ""
+      "description": "바위에 그려진 검은 달"
     },
     {
       "from": "ch-15",
       "to": "i-seongban",
-      "description": ""
+      "description": "성석에 별빛을 비춘다"
     },
     {
       "from": "ch-16",
       "to": "c-seohwa",
-      "description": ""
+      "description": "아버지의 편지를 읽는다"
     },
     {
       "from": "ch-16",
       "to": "c-deoki",
-      "description": ""
+      "description": "오열하는 서화를 위로한다"
     },
     {
       "from": "ch-16",
       "to": "c-hyeon",
-      "description": ""
+      "description": "윤재겸은 역적이 아니라 적는다"
     },
     {
       "from": "ch-16",
@@ -4973,17 +4973,17 @@
     {
       "from": "ch-16",
       "to": "w-starless",
-      "description": ""
+      "description": "편지에 적힌 이성(移星)"
     },
     {
       "from": "ch-16",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "아버지가 알고 있던 진실"
     },
     {
       "from": "ch-16",
       "to": "i-diary",
-      "description": ""
+      "description": "편지를 베껴 적는다"
     },
     {
       "from": "ch-17",
@@ -4993,17 +4993,17 @@
     {
       "from": "ch-17",
       "to": "c-seohwa",
-      "description": ""
+      "description": "연모한다고 답한다"
     },
     {
       "from": "ch-17",
       "to": "i-diary",
-      "description": ""
+      "description": "연모한다고 적어 둔다"
     },
     {
       "from": "ch-17",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "툇마루의 고백"
     },
     {
       "from": "ch-18",
@@ -5013,17 +5013,17 @@
     {
       "from": "ch-18",
       "to": "c-seohwa",
-      "description": ""
+      "description": "시후의 고백을 거절한다"
     },
     {
       "from": "ch-18",
       "to": "c-doyun",
-      "description": ""
+      "description": "서화를 인정한다"
     },
     {
       "from": "ch-18",
       "to": "c-hyeon",
-      "description": ""
+      "description": "경신년 이전의 모습"
     },
     {
       "from": "ch-18",
@@ -5033,7 +5033,7 @@
     {
       "from": "ch-18",
       "to": "p-gwancheondae",
-      "description": ""
+      "description": "시후가 서화를 불러낸 곳"
     },
     {
       "from": "ch-19",
@@ -5043,27 +5043,27 @@
     {
       "from": "ch-19",
       "to": "c-heo",
-      "description": ""
+      "description": "빚 문서로 시후를 부린다"
     },
     {
       "from": "ch-19",
       "to": "o-gwansang",
-      "description": ""
+      "description": "제조만 펴는 『천추비록』"
     },
     {
       "from": "ch-19",
       "to": "w-barrier",
-      "description": ""
+      "description": "해마다 약해진다는 기록"
     },
     {
       "from": "ch-19",
       "to": "c-seohwa",
-      "description": ""
+      "description": "시후가 이상하다고 느낀다"
     },
     {
       "from": "ch-20",
       "to": "c-seohwa",
-      "description": ""
+      "description": "독성 없이 시험을 넘긴다"
     },
     {
       "from": "ch-20",
@@ -5073,7 +5073,7 @@
     {
       "from": "ch-20",
       "to": "c-sihoo",
-      "description": ""
+      "description": "흔들리다 계산을 돕는다"
     },
     {
       "from": "ch-20",
@@ -5083,7 +5083,7 @@
     {
       "from": "ch-20",
       "to": "o-gwansang",
-      "description": ""
+      "description": "정기 점검 자리"
     },
     {
       "from": "ch-20",
@@ -5093,12 +5093,12 @@
     {
       "from": "ch-20",
       "to": "i-binyeo",
-      "description": ""
+      "description": "편지를 품은 채 무사하다"
     },
     {
       "from": "ch-21",
       "to": "c-seohwa",
-      "description": ""
+      "description": "흑월회 은신처로 간다"
     },
     {
       "from": "ch-21",
@@ -5108,32 +5108,32 @@
     {
       "from": "ch-21",
       "to": "w-barrier",
-      "description": ""
+      "description": "결계를 지켜 온 진실"
     },
     {
       "from": "ch-21",
       "to": "w-starless",
-      "description": ""
+      "description": "경신년 이성술이 밝혀진다"
     },
     {
       "from": "ch-21",
       "to": "c-heo",
-      "description": ""
+      "description": "이성술을 꺼낸 장본인"
     },
     {
       "from": "ch-21",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "월인이 본 그날 밤"
     },
     {
       "from": "ch-21",
       "to": "e-imjin",
-      "description": ""
+      "description": "결계가 맺어진 내막"
     },
     {
       "from": "ch-21",
       "to": "c-doyun",
-      "description": ""
+      "description": "은신처에서 서화를 데려온다"
     },
     {
       "from": "ch-22",
@@ -5143,22 +5143,22 @@
     {
       "from": "ch-22",
       "to": "c-seohwa",
-      "description": ""
+      "description": "둘 다 지킬 길을 찾기로 한다"
     },
     {
       "from": "ch-22",
       "to": "w-barrier",
-      "description": ""
+      "description": "별을 찾으면 결계가 무너진다"
     },
     {
       "from": "ch-22",
       "to": "i-diary",
-      "description": ""
+      "description": "그녀를 울렸다고 적는다"
     },
     {
       "from": "ch-22",
       "to": "w-starless",
-      "description": ""
+      "description": "무성인이 된 내막을 듣는다"
     },
     {
       "from": "ch-23",
@@ -5168,47 +5168,47 @@
     {
       "from": "ch-23",
       "to": "c-seohwa",
-      "description": ""
+      "description": "자기 수첩에 오늘을 적는다"
     },
     {
       "from": "ch-23",
       "to": "c-doyun",
-      "description": ""
+      "description": "불길에서 둘을 끌어낸다"
     },
     {
       "from": "ch-23",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "서고가 불탄다"
     },
     {
       "from": "ch-23",
       "to": "i-diary",
-      "description": ""
+      "description": "열 해치 일기가 탄다"
     },
     {
       "from": "ch-23",
       "to": "e-fire",
-      "description": ""
+      "description": "술시의 방화"
     },
     {
       "from": "ch-23",
       "to": "c-daebi",
-      "description": ""
+      "description": "방화범이 대비전 내관"
     },
     {
       "from": "ch-24",
       "to": "c-hyeon",
-      "description": ""
+      "description": "서화의 목소리를 믿는다"
     },
     {
       "from": "ch-24",
       "to": "c-seohwa",
-      "description": ""
+      "description": "새 일기를 써 드리기로 한다"
     },
     {
       "from": "ch-24",
       "to": "c-doyun",
-      "description": ""
+      "description": "지난 일을 증언한다"
     },
     {
       "from": "ch-24",
@@ -5218,12 +5218,12 @@
     {
       "from": "ch-24",
       "to": "e-fire",
-      "description": ""
+      "description": "불길에서 건진 낱장"
     },
     {
       "from": "ch-24",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "툇마루에서 밤을 새운다"
     },
     {
       "from": "ch-25",
@@ -5233,17 +5233,17 @@
     {
       "from": "ch-25",
       "to": "c-hyeon",
-      "description": ""
+      "description": "일기로 서화를 다시 알아 간다"
     },
     {
       "from": "ch-25",
       "to": "i-diary",
-      "description": ""
+      "description": "서화의 글씨로 다시 쓴다"
     },
     {
       "from": "ch-25",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "탄내가 남은 서고"
     },
     {
       "from": "ch-26",
@@ -5253,27 +5253,27 @@
     {
       "from": "ch-26",
       "to": "c-seohwa",
-      "description": ""
+      "description": "시후의 배신을 듣는다"
     },
     {
       "from": "ch-26",
       "to": "c-heo",
-      "description": ""
+      "description": "시후의 빈자리를 본다"
     },
     {
       "from": "ch-26",
       "to": "o-gwansang",
-      "description": ""
+      "description": "제조실에서 필사본을 빼낸다"
     },
     {
       "from": "ch-26",
       "to": "w-starless",
-      "description": ""
+      "description": "이성 의식의 필사본"
     },
     {
       "from": "ch-26",
       "to": "e-dongji",
-      "description": ""
+      "description": "서화를 제물로 쓰려는 계획"
     },
     {
       "from": "ch-27",
@@ -5283,7 +5283,7 @@
     {
       "from": "ch-27",
       "to": "c-seohwa",
-      "description": ""
+      "description": "증인으로 어전에 선다"
     },
     {
       "from": "ch-27",
@@ -5293,107 +5293,107 @@
     {
       "from": "ch-27",
       "to": "c-heo",
-      "description": ""
+      "description": "나라를 위한 일이라 맞선다"
     },
     {
       "from": "ch-27",
       "to": "c-daebi",
-      "description": ""
+      "description": "주렴 너머에서 허태정을 거든다"
     },
     {
       "from": "ch-27",
       "to": "e-dongji",
-      "description": ""
+      "description": "동지까지 보름 남짓"
     },
     {
       "from": "ch-27",
       "to": "i-myeongbu",
-      "description": ""
+      "description": "긁힌 칸을 증거로 낸다"
     },
     {
       "from": "ch-27",
       "to": "i-binyeo",
-      "description": ""
+      "description": "편지를 꺼내 보인다"
     },
     {
       "from": "ch-27",
       "to": "e-gyeongsin",
-      "description": ""
+      "description": "옥사를 재조사하라는 어명"
     },
     {
       "from": "ch-28",
       "to": "c-seohwa",
-      "description": ""
+      "description": "진무량을 맞으러 차출된다"
     },
     {
       "from": "ch-28",
       "to": "c-hyeon",
-      "description": ""
+      "description": "청 사신을 경계한다"
     },
     {
       "from": "ch-28",
       "to": "o-gwansang",
-      "description": ""
+      "description": "청의 흠천감에 견준다"
     },
     {
       "from": "ch-28",
       "to": "e-dongji",
-      "description": ""
+      "description": "재결을 참관하러 온 사신"
     },
     {
       "from": "ch-29",
       "to": "c-seohwa",
-      "description": ""
+      "description": "분성을 혼자 결심한다"
     },
     {
       "from": "ch-29",
       "to": "c-hyeon",
-      "description": ""
+      "description": "분성을 격렬히 반대한다"
     },
     {
       "from": "ch-29",
       "to": "c-deoki",
-      "description": ""
+      "description": "서화를 눈치채고 말린다"
     },
     {
       "from": "ch-29",
       "to": "i-diary",
-      "description": ""
+      "description": "분성을 말리라고 덧붙인다"
     },
     {
       "from": "ch-30",
       "to": "c-seohwa",
-      "description": ""
+      "description": "진무량의 속셈을 확인한다"
     },
     {
       "from": "ch-30",
       "to": "c-hyeon",
-      "description": ""
+      "description": "함께 대책을 세운다"
     },
     {
       "from": "ch-30",
       "to": "c-doyun",
-      "description": ""
+      "description": "밀회 소식을 전한다"
     },
     {
       "from": "ch-30",
       "to": "c-heo",
-      "description": ""
+      "description": "서화를 제관으로 세운다"
     },
     {
       "from": "ch-30",
       "to": "c-sihoo",
-      "description": ""
+      "description": "제물로 삼으려는 속셈을 알린다"
     },
     {
       "from": "ch-30",
       "to": "i-seongban",
-      "description": ""
+      "description": "진무량의 별을 비춘다"
     },
     {
       "from": "ch-30",
       "to": "e-dongji",
-      "description": ""
+      "description": "재결 제관 윤허가 내린다"
     },
     {
       "from": "c-seohwa",
@@ -5438,7 +5438,7 @@
     {
       "from": "c-seohwa",
       "to": "e-pact",
-      "description": ""
+      "description": "독성은 제가 정한다는 조건"
     },
     {
       "from": "c-seohwa",
@@ -5483,7 +5483,7 @@
     {
       "from": "c-hyeon",
       "to": "e-pact",
-      "description": ""
+      "description": "명부고 출입과 보호를 약속"
     },
     {
       "from": "c-hyeon",
@@ -5548,7 +5548,7 @@
     {
       "from": "p-gwancheondae",
       "to": "o-gwansang",
-      "description": ""
+      "description": "관상감 경내의 관측대"
     },
     {
       "from": "p-gwancheondae",
@@ -5628,7 +5628,7 @@
     {
       "from": "e-imjin",
       "to": "o-gwansang",
-      "description": ""
+      "description": "결계를 맺은 관상감 정 허운"
     },
     {
       "from": "e-gyeongsin",
@@ -5643,12 +5643,12 @@
     {
       "from": "e-fire",
       "to": "p-jaseondang",
-      "description": ""
+      "description": "서고가 불탄 곳"
     },
     {
       "from": "w-star",
       "to": "w-starless",
-      "description": ""
+      "description": "읽을 별이 없는 사람"
     }
   ],
   "not_refreshed": [
