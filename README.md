@@ -470,6 +470,17 @@ only those chapters (28–30), the way a real author refreshes after writing new
 chapters, instead of the whole book. Exclude `prompt_version =
 'sample-baseline'` when counting refresh usage.
 
+`recorded_refresh` holds what graph-rag proposed for those chapters in a real
+production run (body edits as plain text, new setting documents and added
+relations, with documents named by seed key). Right after the baseline the
+sample opens that run the way a request does (`refresh_run_files`, base
+versions, locks; nothing goes to S3 or Kafka) and completes it through
+`RefreshDraftBuilder` with the recorded result, so a new sample already waits
+for review (`READY`, `prompt_version = 'sample-replay'`) and its drafts match
+the production run. Exclude `sample-replay` from usage counts as well. Its chat
+history and 30화 setting check come from ai-chat, which the gateway asks to
+seed right after creating a Korean sample.
+
 `?locale=en` builds the English edition from
 `src/main/resources/sample/glass-garden.en.json` instead. It is still the
 previous sample, "The Glass Garden Records", with no refresh baseline; the

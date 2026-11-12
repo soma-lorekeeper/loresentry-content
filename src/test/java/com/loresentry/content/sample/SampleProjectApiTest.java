@@ -19,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -269,26 +270,52 @@ class SampleProjectApiTest extends ApiTestSupport {
     }
 
     @Test
-    void leavesTheLatestChaptersForTheFirstRefresh() throws Exception {
+    void opensTheRecordedSuggestionsForReview() throws Exception {
         String project = createSample(owner).get("id").stringValue();
+        UUID projectId = UUID.fromString(project);
         Map<String, String> ids = idsByTitle(project);
 
-        List<String> changed = refreshRuns.changedFiles(UUID.fromString(project)).stream()
-                .map(UUID::toString)
-                .toList();
-        assertThat(changed).containsExactlyInAnyOrderElementsOf(
-                NOT_REFRESHED.stream().map(ids::get).toList());
+        Map<String, UUID> runs = new HashMap<>();
+        jdbcClient.sql("select id, status, prompt_version from refresh_runs where project_id = :project")
+                .param("project", projectId)
+                .query((rows, n) -> runs.put(rows.getString("status") + " " + rows.getString("prompt_version"),
+                        rows.getObject("id", UUID.class)))
+                .list();
+        assertThat(runs).containsOnlyKeys(
+                "NO_CHANGE " + GraphRefreshRepository.SAMPLE_BASELINE,
+                "READY " + GraphRefreshRepository.SAMPLE_REPLAY);
+        UUID replay = runs.get("READY " + GraphRefreshRepository.SAMPLE_REPLAY);
+        assertThat(jdbcClient.sql("select file_id from refresh_run_files where refresh_run_id = :run")
+                .param("run", replay).query(UUID.class).list())
+                .extracting(UUID::toString)
+                .containsExactlyInAnyOrderElementsOf(NOT_REFRESHED.stream().map(ids::get).toList());
+        assertThat(refreshRuns.changedFiles(projectId)).isEmpty();
 
-        Map<String, Object> run = jdbcClient.sql("""
-                        select status, prompt_version, completed_at is not null as completed
-                        from refresh_runs where project_id = :project
-                        """)
-                .param("project", UUID.fromString(project))
-                .query().singleRow();
-        assertThat(run).containsEntry("status", "NO_CHANGE")
-                .containsEntry("prompt_version", GraphRefreshRepository.SAMPLE_BASELINE)
-                .containsEntry("completed", true);
-        assertThat(refreshRuns.openRunStatus(UUID.fromString(project))).isEmpty();
+        JsonNode detail = read(mockMvc.perform(as(get("/projects/" + project + "/graph-refresh/" + replay)))
+                .andExpect(status().isOk())
+                .andReturn());
+        assertThat(detail.get("status").stringValue()).isEqualTo("READY");
+        List<String> edited = new ArrayList<>();
+        List<String> proposed = new ArrayList<>();
+        for (JsonNode draft : detail.get("drafts")) {
+            if ("NEW".equals(draft.get("kind").stringValue())) {
+                proposed.add(draft.get("candidate").get("name").stringValue());
+            } else {
+                edited.add(draft.get("document").get("title").stringValue());
+                assertThat(draft.get("matched").booleanValue()).isFalse();
+            }
+        }
+        assertThat(edited).containsExactlyInAnyOrder(
+                "28화 · 청에서 온 손님", "29화 · 분성(分星)의 값", LAST_CHAPTER,
+                "이현", "민도윤", "윤서화", "정시후", "허태정", "세자의 일기", "흑요석 성반");
+        assertThat(proposed).containsExactlyInAnyOrder(
+                "진무량", "쌍성경(雙星鏡)", "남별궁", "흠천감", "분성(分星)의 법", "자시를 넘긴 밤");
+        assertThat(jdbcClient.sql("select count(*) from document where refresh_lock_run_id = :run")
+                .param("run", replay).query(Long.class).single()).isEqualTo(edited.size());
+
+        mockMvc.perform(as(post("/projects/" + project + "/graph-refresh")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REFRESH_REVIEW_PENDING"));
     }
 
     @Test

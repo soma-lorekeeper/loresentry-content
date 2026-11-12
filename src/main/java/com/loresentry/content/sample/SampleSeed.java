@@ -26,7 +26,8 @@ record SampleSeed(
         List<Episode> episodes,
         List<Setting> settings,
         List<Link> relations,
-        @JsonProperty("not_refreshed") List<String> notRefreshed) {
+        @JsonProperty("not_refreshed") List<String> notRefreshed,
+        @JsonProperty("recorded_refresh") RecordedRefresh recordedRefresh) {
 
     static final String KOREAN = "sample/starless-prince.json";
 
@@ -56,6 +57,25 @@ record SampleSeed(
 
     /** 관계는 대칭이므로 한 쌍을 한 번만 적는다. 반대쪽은 저장이 채운다. */
     record Link(String from, String to, String description) {
+    }
+
+    record RecordedRefresh(
+            @JsonProperty("document_proposals") List<Edit> documentProposals,
+            @JsonProperty("new_document_proposals") List<Candidate> newDocumentProposals,
+            @JsonProperty("relation_proposals") List<Link> relationProposals) {
+
+        record Edit(String target, @JsonProperty("body_text") String bodyText) {
+        }
+
+        record Candidate(
+                @JsonProperty("candidate_id") String candidateId,
+                @JsonProperty("folder_code") String folderCode,
+                String name,
+                @JsonProperty("body_text") String bodyText) {
+        }
+
+        record Link(String one, String other, String description) {
+        }
     }
 
     static String imageType(String image) {
@@ -107,6 +127,9 @@ record SampleSeed(
                 require(resource, manuscripts.contains(key), "unknown not_refreshed manuscript " + key);
             }
         }
+        if (recordedRefresh != null) {
+            checkRecordedRefresh(resource, keys, manuscripts);
+        }
         Set<String> pairs = new HashSet<>();
         for (Link link : relations) {
             require(resource, keys.contains(link.from()) && keys.contains(link.to()),
@@ -116,6 +139,27 @@ record SampleSeed(
                     ? link.from() + "|" + link.to()
                     : link.to() + "|" + link.from();
             require(resource, pairs.add(pair), "duplicate relation " + pair);
+        }
+    }
+
+    private void checkRecordedRefresh(String resource, Set<String> keys, Set<String> manuscripts) {
+        require(resource, notRefreshed != null, "recorded_refresh needs not_refreshed");
+        for (RecordedRefresh.Edit edit : recordedRefresh.documentProposals()) {
+            require(resource, keys.contains(edit.target()) && !manuscripts.contains(edit.target()),
+                    "recorded edit must target a setting " + edit.target());
+        }
+        Set<String> candidates = new HashSet<>();
+        for (RecordedRefresh.Candidate candidate : recordedRefresh.newDocumentProposals()) {
+            require(resource, candidate.candidateId().equals(
+                            "new:" + candidate.folderCode() + ":" + candidate.name()),
+                    "recorded candidate id " + candidate.candidateId());
+            candidates.add(candidate.candidateId());
+        }
+        for (RecordedRefresh.Link link : recordedRefresh.relationProposals()) {
+            for (String end : List.of(link.one(), link.other())) {
+                require(resource, keys.contains(end) || candidates.contains(end),
+                        "unknown recorded relation end " + end);
+            }
         }
     }
 

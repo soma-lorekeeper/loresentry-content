@@ -1,6 +1,10 @@
 package com.loresentry.content.refresh.completion;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -15,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 그래프 최신화 완료.
@@ -181,6 +186,34 @@ public class GraphRefreshCompletionService {
                     default -> end(runId, "NO_CHANGE");
                 }
             }
+        }
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean completeRecorded(UUID projectId, UUID runId,
+            List<RefreshResult.DocumentProposal> edits,
+            List<RefreshResult.NewDocumentProposal> candidates,
+            List<RefreshResult.RelationProposal> relations) {
+        RefreshResult result = new RefreshResult(RefreshResult.SCHEMA_VERSION, runId.toString(),
+                projectId.toString(), "PROPOSED", edits, candidates, relations, null);
+        byte[] json = RECORDED.writeValueAsBytes(result);
+        repository.setPromptVersion(runId, GraphRefreshRepository.SAMPLE_REPLAY);
+        repository.storeResult(runId, new String(json, StandardCharsets.UTF_8), sha256Hex(json), null, null);
+        if (builder.build(runId, projectId, result)) {
+            repository.markReady(runId);
+            return true;
+        }
+        end(runId, "NO_CHANGE");
+        return false;
+    }
+
+    private static final JsonMapper RECORDED = JsonMapper.builder().build();
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
         }
     }
 
