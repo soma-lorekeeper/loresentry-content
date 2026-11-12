@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -63,6 +64,20 @@ public class MediaStorageService {
                 requiredHeaders(presigned),
                 presigned.expiration(),
                 publicUrl(key));
+    }
+
+    public String putImage(UUID projectId, String contentType, byte[] bytes) {
+        String normalizedType = validateContentType(contentType);
+        long size = validateSize(bytes.length);
+        String key = imageKey(projectId, normalizedType);
+        s3Client.putObject(PutObjectRequest.builder()
+                        .bucket(properties.bucket())
+                        .key(key)
+                        .contentType(normalizedType)
+                        .contentLength(size)
+                        .build(),
+                RequestBody.fromBytes(bytes));
+        return key;
     }
 
     public StoredObject verifyUploaded(String key, long expectedSizeBytes) {

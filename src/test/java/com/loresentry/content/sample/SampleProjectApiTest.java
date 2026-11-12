@@ -7,6 +7,9 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.willAnswer;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -30,9 +33,14 @@ import com.loresentry.content.support.ApiTestSupport;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.JsonNode;
 
 class SampleProjectApiTest extends ApiTestSupport {
@@ -52,6 +60,10 @@ class SampleProjectApiTest extends ApiTestSupport {
     private static final List<String> NOT_REFRESHED = List.of(
             "28화 · 청에서 온 손님", "29화 · 분성(分星)의 값", LAST_CHAPTER);
 
+    private static final Set<String> PICTURED = Set.of(
+            "윤서화", "이현", "민도윤", "정시후", "허태정", "대비 심씨", "덕이",
+            "흑요석 성반", "세자의 일기", "명부", "은하잠");
+
     private static final String ENGLISH_NAME = "The Glass Garden Records";
 
     private static final int ENGLISH_MANUSCRIPTS = 7;
@@ -62,6 +74,9 @@ class SampleProjectApiTest extends ApiTestSupport {
 
     @MockitoSpyBean
     private DocumentService documents;
+
+    @MockitoBean(name = "s3Client")
+    private S3Client s3;
 
     @Autowired
     private GraphRefreshRepository refreshRuns;
@@ -210,6 +225,32 @@ class SampleProjectApiTest extends ApiTestSupport {
     }
 
     @Test
+    void givesTheCharactersAndItemsTheirPictures() throws Exception {
+        String project = createSample(owner).get("id").stringValue();
+
+        JsonNode graph = read(mockMvc.perform(as(get("/projects/" + project + "/graph"))).andReturn());
+        Map<String, String> pictures = new HashMap<>();
+        for (JsonNode node : graph.get("nodes")) {
+            if (!node.get("image_url").isNull()) {
+                pictures.put(node.get("title").stringValue(), node.get("image_url").stringValue());
+            }
+        }
+
+        assertThat(pictures).containsOnlyKeys(PICTURED);
+        assertThat(pictures.values())
+                .allMatch(url -> url.startsWith("https://media.test.invalid/projects/" + project + "/images/"))
+                .allMatch(url -> url.endsWith(".webp"))
+                .doesNotHaveDuplicates();
+        verify(s3, times(PICTURED.size())).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+        assertThat(jdbcClient.sql("""
+                        select count(*) from image
+                        where project_id = :project and status = 'COMMITTED' and content_type = 'image/webp'
+                        """)
+                .param("project", UUID.fromString(project)).query(Long.class).single())
+                .isEqualTo(PICTURED.size());
+    }
+
+    @Test
     void marksTheRulesTheSettingCheckMustKeep() throws Exception {
         String project = createSample(owner).get("id").stringValue();
         Map<String, String> ids = idsByTitle(project);
@@ -331,6 +372,7 @@ class SampleProjectApiTest extends ApiTestSupport {
 
         assertThat(jdbcClient.sql("select count(*) from refresh_runs where project_id = :project")
                 .param("project", UUID.fromString(project)).query(Long.class).single()).isZero();
+        verifyNoInteractions(s3);
     }
 
     @Test
@@ -375,6 +417,8 @@ class SampleProjectApiTest extends ApiTestSupport {
         assertThat(jdbcClient.sql("select count(*) from document").query(Long.class).single()).isZero();
         assertThat(jdbcClient.sql("select count(*) from episode_folders").query(Long.class).single()).isZero();
         assertThat(jdbcClient.sql("select count(*) from refresh_runs").query(Long.class).single()).isZero();
+        assertThat(jdbcClient.sql("select count(*) from image").query(Long.class).single()).isZero();
+        verify(s3, times(PICTURED.size())).deleteObject(any(DeleteObjectRequest.class));
     }
 
     @Test

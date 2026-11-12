@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -31,6 +32,13 @@ record SampleSeed(
 
     static final String ENGLISH = "sample/glass-garden.en.json";
 
+    private static final String IMAGES = "sample/images/";
+
+    private static final Map<String, String> IMAGE_TYPES = Map.of(
+            "webp", "image/webp",
+            "png", "image/png",
+            "jpg", "image/jpeg");
+
     record Episode(String title, List<Manuscript> manuscripts) {
     }
 
@@ -42,11 +50,24 @@ record SampleSeed(
             @JsonProperty("folder_code") String folderCode,
             String title,
             String description,
-            List<String> body) {
+            List<String> body,
+            String image) {
     }
 
     /** 관계는 대칭이므로 한 쌍을 한 번만 적는다. 반대쪽은 저장이 채운다. */
     record Link(String from, String to, String description) {
+    }
+
+    static String imageType(String image) {
+        return IMAGE_TYPES.get(image.substring(image.lastIndexOf('.') + 1));
+    }
+
+    static byte[] imageBytes(String image) {
+        try {
+            return new ClassPathResource(IMAGES + image).getContentAsByteArray();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 
     static SampleSeed load(String resource) {
@@ -73,6 +94,12 @@ record SampleSeed(
             for (String line : setting.body()) {
                 String problem = SampleBody.problem(line);
                 require(resource, problem == null, setting.key() + ": " + problem);
+            }
+            if (setting.image() != null) {
+                require(resource, imageType(setting.image()) != null,
+                        setting.key() + ": unsupported image " + setting.image());
+                require(resource, new ClassPathResource(IMAGES + setting.image()).exists(),
+                        setting.key() + ": missing image " + setting.image());
             }
         }
         if (notRefreshed != null) {

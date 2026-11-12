@@ -16,6 +16,7 @@ import com.loresentry.content.event.GraphRefreshRequested;
 import com.loresentry.content.file.FileRequests;
 import com.loresentry.content.file.FileResponses;
 import com.loresentry.content.file.FileService;
+import com.loresentry.content.image.ImageService;
 import com.loresentry.content.project.CreateProjectRequest;
 import com.loresentry.content.project.Project;
 import com.loresentry.content.project.ProjectService;
@@ -50,16 +51,19 @@ public class SampleProjectService {
 
     private final GraphRefreshRepository refreshRuns;
 
+    private final ImageService images;
+
     private final SampleSeed korean = SampleSeed.load(SampleSeed.KOREAN);
 
     private final SampleSeed english = SampleSeed.load(SampleSeed.ENGLISH);
 
     public SampleProjectService(ProjectService projects, FileService files, DocumentService documents,
-            GraphRefreshRepository refreshRuns) {
+            GraphRefreshRepository refreshRuns, ImageService images) {
         this.projects = projects;
         this.files = files;
         this.documents = documents;
         this.refreshRuns = refreshRuns;
+        this.images = images;
     }
 
     @Transactional
@@ -77,6 +81,11 @@ public class SampleProjectService {
         for (SampleSeed.Setting setting : seed.settings()) {
             UUID id = createDocument(ownerUserId, projectId, setting.folderCode(), null, setting.title());
             created.put(setting.key(), new Created(id, setting.folderCode()));
+            if (setting.image() != null) {
+                UUID imageId = images.store(ownerUserId, projectId, setting.image(),
+                        SampleSeed.imageType(setting.image()), SampleSeed.imageBytes(setting.image())).imageId();
+                files.setImage(ownerUserId, id, new FileRequests.SetImage(imageId));
+            }
             order.add(new Pending(setting.key(), setting.title(), setting.description(),
                     SampleBody.blocks(setting.body())));
         }

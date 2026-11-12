@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.time.Duration;
@@ -19,12 +20,14 @@ import org.mockito.ArgumentCaptor;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
@@ -179,5 +182,27 @@ class MediaStorageServiceTest {
         verify(s3Client).deleteObject(request.capture());
         assertThat(request.getValue().bucket()).isEqualTo("test-media-bucket");
         assertThat(request.getValue().key()).isEqualTo("projects/x/images/y.png");
+    }
+
+    @Test
+    void putImageStoresTheBytesUnderTheProject() {
+        String key = service.putImage(PROJECT, "IMAGE/WEBP", new byte[] {1, 2, 3});
+
+        assertThat(key).startsWith("projects/" + PROJECT + "/images/").endsWith(".webp");
+        ArgumentCaptor<PutObjectRequest> request = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3Client).putObject(request.capture(), any(RequestBody.class));
+        assertThat(request.getValue().bucket()).isEqualTo("test-media-bucket");
+        assertThat(request.getValue().key()).isEqualTo(key);
+        assertThat(request.getValue().contentType()).isEqualTo("image/webp");
+        assertThat(request.getValue().contentLength()).isEqualTo(3L);
+    }
+
+    @Test
+    void putImageRejectsWhatATicketWouldReject() {
+        assertThatExceptionOfType(InvalidUploadRequestException.class)
+                .isThrownBy(() -> service.putImage(PROJECT, "image/svg+xml", new byte[] {1}));
+        assertThatExceptionOfType(InvalidUploadRequestException.class)
+                .isThrownBy(() -> service.putImage(PROJECT, "image/png", new byte[0]));
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 }
