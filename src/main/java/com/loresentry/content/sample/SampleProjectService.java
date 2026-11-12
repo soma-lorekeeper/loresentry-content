@@ -16,10 +16,14 @@ import com.loresentry.content.event.GraphRefreshRequested;
 import com.loresentry.content.file.FileRequests;
 import com.loresentry.content.file.FileResponses;
 import com.loresentry.content.file.FileService;
+import com.loresentry.content.image.ImageService;
 import com.loresentry.content.project.CreateProjectRequest;
 import com.loresentry.content.project.Project;
 import com.loresentry.content.project.ProjectService;
 import com.loresentry.content.refresh.GraphRefreshRepository;
+import com.loresentry.content.refresh.completion.GraphRefreshCompletionService;
+import com.loresentry.content.refresh.completion.RefreshResult;
+import com.loresentry.content.refresh.request.GraphRefreshRequestService;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,16 +54,26 @@ public class SampleProjectService {
 
     private final GraphRefreshRepository refreshRuns;
 
+    private final ImageService images;
+
+    private final GraphRefreshRequestService refreshRequests;
+
+    private final GraphRefreshCompletionService refreshCompletion;
+
     private final SampleSeed korean = SampleSeed.load(SampleSeed.KOREAN);
 
     private final SampleSeed english = SampleSeed.load(SampleSeed.ENGLISH);
 
     public SampleProjectService(ProjectService projects, FileService files, DocumentService documents,
-            GraphRefreshRepository refreshRuns) {
+            GraphRefreshRepository refreshRuns, ImageService images, GraphRefreshRequestService refreshRequests,
+            GraphRefreshCompletionService refreshCompletion) {
         this.projects = projects;
         this.files = files;
         this.documents = documents;
         this.refreshRuns = refreshRuns;
+        this.images = images;
+        this.refreshRequests = refreshRequests;
+        this.refreshCompletion = refreshCompletion;
     }
 
     @Transactional
@@ -77,6 +91,11 @@ public class SampleProjectService {
         for (SampleSeed.Setting setting : seed.settings()) {
             UUID id = createDocument(ownerUserId, projectId, setting.folderCode(), null, setting.title());
             created.put(setting.key(), new Created(id, setting.folderCode()));
+            if (setting.image() != null) {
+                UUID imageId = images.store(ownerUserId, projectId, setting.image(),
+                        SampleSeed.imageType(setting.image()), SampleSeed.imageBytes(setting.image())).imageId();
+                files.setImage(ownerUserId, id, new FileRequests.SetImage(imageId));
+            }
             order.add(new Pending(setting.key(), setting.title(), setting.description(),
                     SampleBody.blocks(setting.body())));
         }
@@ -92,6 +111,7 @@ public class SampleProjectService {
 
         Map<String, Map<String, String>> links = symmetricLinks(seed);
         List<GraphRefreshRequested.File> refreshed = new ArrayList<>();
+        Map<String, Long> revisions = new HashMap<>();
         Set<String> notRefreshed = seed.notRefreshed() == null ? Set.of() : Set.copyOf(seed.notRefreshed());
         for (Pending pending : order) {
             List<DocumentSnapshot.Relation> relations = new ArrayList<>();
@@ -105,6 +125,7 @@ public class SampleProjectService {
                     pending.title(), pending.body(), null,
                     List.of(new DocumentSnapshot.TextProperty("description", pending.description())),
                     relations)).revisionNo();
+            revisions.put(pending.key(), revision);
             if (!notRefreshed.contains(pending.key())) {
                 refreshed.add(new GraphRefreshRequested.File(id, revision));
             }
@@ -112,8 +133,35 @@ public class SampleProjectService {
         if (seed.notRefreshed() != null) {
             refreshRuns.insertSampleBaseline(projectId, ownerUserId, refreshed);
         }
+        if (seed.recordedRefresh() != null) {
+            replayRefresh(ownerUserId, projectId, seed.recordedRefresh(), created, revisions);
+        }
 
         return projects.getActive(ownerUserId, projectId);
+    }
+
+    private void replayRefresh(UUID ownerUserId, UUID projectId, SampleSeed.RecordedRefresh recorded,
+            Map<String, Created> created, Map<String, Long> revisions) {
+        UUID runId = refreshRequests.openWithoutSending(ownerUserId, projectId);
+        List<RefreshResult.DocumentProposal> edits = recorded.documentProposals().stream()
+                .map(edit -> new RefreshResult.DocumentProposal(created.get(edit.target()).id().toString(),
+                        revisions.get(edit.target()), "body_text", edit.bodyText()))
+                .toList();
+        List<RefreshResult.NewDocumentProposal> candidates = recorded.newDocumentProposals().stream()
+                .map(candidate -> new RefreshResult.NewDocumentProposal(candidate.candidateId(),
+                        candidate.folderCode(), candidate.name(), candidate.bodyText()))
+                .toList();
+        List<RefreshResult.RelationProposal> relations = recorded.relationProposals().stream()
+                .map(link -> new RefreshResult.RelationProposal(endpoint(link.one(), created),
+                        endpoint(link.other(), created), revisions.get(link.one()), revisions.get(link.other()),
+                        "ADD", link.description()))
+                .toList();
+        refreshCompletion.completeRecorded(projectId, runId, edits, candidates, relations);
+    }
+
+    private static String endpoint(String key, Map<String, Created> created) {
+        Created document = created.get(key);
+        return document == null ? key : document.id().toString();
     }
 
     /**

@@ -1,8 +1,10 @@
 package com.loresentry.content.image;
 
+import java.util.List;
 import java.util.UUID;
 
 import com.loresentry.content.media.InvalidUploadRequestException;
+import com.loresentry.content.media.MediaCleanup;
 import com.loresentry.content.media.MediaStorageService;
 import com.loresentry.content.media.ObjectNotUploadedException;
 import com.loresentry.content.media.UploadTicket;
@@ -28,11 +30,14 @@ public class ImageService {
 
     private final ProjectActivity activity;
 
+    private final MediaCleanup cleanup;
+
     public ImageService(ImageRepository repository, MediaStorageService storage,
-            ProjectActivity activity) {
+            ProjectActivity activity, MediaCleanup cleanup) {
         this.repository = repository;
         this.storage = storage;
         this.activity = activity;
+        this.cleanup = cleanup;
     }
 
     @Transactional
@@ -80,6 +85,24 @@ public class ImageService {
         }
 
         ImageRow committed = repository.markCommitted(imageId);
+        activity.touch(projectId);
+        return toDto(committed);
+    }
+
+    @Transactional
+    public ImageDtos.Image store(UUID ownerUserId, UUID projectId, String fileName, String contentType,
+            byte[] bytes) {
+        requireProject(ownerUserId, projectId);
+        String key;
+        try {
+            key = storage.putImage(projectId, contentType, bytes);
+        } catch (InvalidUploadRequestException invalid) {
+            throw new ContentFailure(ContentFailure.Reason.INVALID_UPLOAD_REQUEST);
+        }
+        cleanup.deleteAfterRollback(List.of(key));
+        ImageRow row = repository.insertPending(projectId, fileName, key,
+                contentType.trim().toLowerCase(), bytes.length);
+        ImageRow committed = repository.markCommitted(row.id());
         activity.touch(projectId);
         return toDto(committed);
     }

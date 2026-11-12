@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,25 @@ class SampleSeedTest {
     @Disabled("The English sample is still the Glass Garden until it is rewritten")
     void englishHasTheSameRelations() {
         assertThat(relations(english)).isEqualTo(relations(korean));
+    }
+
+    @Test
+    void koreanDescribesEveryRelation() {
+        assertThat(korean.relations())
+                .filteredOn(link -> link.description() == null || link.description().isBlank())
+                .extracting(link -> link.from() + " - " + link.to())
+                .isEmpty();
+    }
+
+    @Test
+    void koreanPicturesEveryCharacterAndItem() {
+        assertThat(korean.settings())
+                .filteredOn(setting -> Set.of("CHARACTER", "ITEM").contains(setting.folderCode()))
+                .hasSize(11)
+                .allMatch(setting -> (setting.key() + ".webp").equals(setting.image()));
+        assertThat(korean.settings())
+                .filteredOn(setting -> !Set.of("CHARACTER", "ITEM").contains(setting.folderCode()))
+                .allMatch(setting -> setting.image() == null);
     }
 
     @Test

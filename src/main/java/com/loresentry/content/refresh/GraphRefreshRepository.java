@@ -106,6 +106,8 @@ public class GraphRefreshRepository {
 
     public static final String SAMPLE_BASELINE = "sample-baseline";
 
+    public static final String SAMPLE_REPLAY = "sample-replay";
+
     public void insertSampleBaseline(UUID projectId, UUID ownerUserId, List<GraphRefreshRequested.File> files) {
         UUID runId = jdbcClient
                 .sql("""

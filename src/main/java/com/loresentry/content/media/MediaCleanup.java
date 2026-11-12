@@ -44,6 +44,21 @@ public class MediaCleanup {
         });
     }
 
+    public void deleteAfterRollback(Collection<String> keys) {
+        if (keys.isEmpty() || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        List<String> uploaded = List.copyOf(keys);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    deleteNow(uploaded);
+                }
+            }
+        });
+    }
+
     /** 키에는 프로젝트 id 가 들어 있으므로 기록하지 않는다. 개수와 예외 종류만 남긴다. */
     void deleteNow(List<String> keys) {
         int failed = 0;

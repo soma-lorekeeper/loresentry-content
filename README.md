@@ -454,6 +454,14 @@ Setting lines read a few line prefixes so the documents show off the editor:
 key setting (`attrs.core`), which the setting check treats as a fact it must
 keep.
 
+A setting with an `image` (a file in `src/main/resources/sample/images/`, all
+seven characters and four items) gets its own copy of that picture: the server
+uploads the bytes to `projects/{projectId}/images/` through
+`MediaStorageService.putImage`, records a `COMMITTED` `image` row and attaches
+it with `FileService.setImage`, the same row and key a browser upload ends with.
+If the transaction rolls back, the uploaded objects are deleted. The pictures
+are 512×512 WebP, the size and format the editor's crop dialog saves.
+
 `not_refreshed` lists the chapters the sample author has "just written". After
 the documents are saved, a baseline graph refresh run is recorded for every
 other document: a `NO_CHANGE` run with `prompt_version = 'sample-baseline'` and
@@ -461,6 +469,17 @@ its `refresh_run_files`. The first refresh of a sample project therefore sends
 only those chapters (28–30), the way a real author refreshes after writing new
 chapters, instead of the whole book. Exclude `prompt_version =
 'sample-baseline'` when counting refresh usage.
+
+`recorded_refresh` holds what graph-rag proposed for those chapters in a real
+production run (body edits as plain text, new setting documents and added
+relations, with documents named by seed key). Right after the baseline the
+sample opens that run the way a request does (`refresh_run_files`, base
+versions, locks; nothing goes to S3 or Kafka) and completes it through
+`RefreshDraftBuilder` with the recorded result, so a new sample already waits
+for review (`READY`, `prompt_version = 'sample-replay'`) and its drafts match
+the production run. Exclude `sample-replay` from usage counts as well. Its chat
+history and 30화 setting check come from ai-chat, which the gateway asks to
+seed right after creating a Korean sample.
 
 `?locale=en` builds the English edition from
 `src/main/resources/sample/glass-garden.en.json` instead. It is still the

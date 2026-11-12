@@ -17,6 +17,7 @@ import com.loresentry.content.web.ContentFailure;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -96,6 +97,19 @@ public class GraphRefreshRequestService {
         return new GraphRefreshResponse(requestId, GraphRefreshResponse.Status.GENERATING, input.files().stream()
                 .map(file -> new GraphRefreshResponse.File(file.fileId(), file.revisionNo()))
                 .toList());
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public UUID openWithoutSending(UUID userId, UUID projectId) {
+        List<UUID> changed = repository.changedFiles(projectId);
+        UUID requestId = repository.insertRun(projectId, userId);
+        Map<UUID, RefreshDocuments.Live> live = documents.read(projectId, changed);
+        List<GraphRefreshRequested.File> files = changed.stream()
+                .map(id -> new GraphRefreshRequested.File(id, live.get(id).revisionNo()))
+                .toList();
+        repository.insertRunFiles(requestId, files);
+        captureAndLock(projectId, requestId, files);
+        return requestId;
     }
 
     /**
